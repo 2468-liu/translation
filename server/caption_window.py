@@ -172,7 +172,7 @@ class _Caption:
         self.width = max(round(760 * scale), self.font_line.measure("实时字幕") + 120)
         self.width = min(self.width, max(420, self.screen_width - 80))
         self.width_locked = False
-        self.height = self.font_line.metrics("linespace") + 28
+        self.height = self.font_line.metrics("linespace") + 38
         screen_h = self.root.winfo_screenheight()
         x = max(0, (self.screen_width - self.width) // 2)
         y = max(0, screen_h - self.height - 120)
@@ -191,6 +191,23 @@ class _Caption:
             pady=0,
         )
         self.close.bind("<Button-1>", lambda _event: self.hide())
+        self.text_only_var = tk.BooleanVar(value=self.text_only)
+        self.text_only_control = tk.Checkbutton(
+            self.root,
+            text="只有字",
+            variable=self.text_only_var,
+            command=lambda: self.apply_text_only(bool(self.text_only_var.get())),
+            fg="#ffffff",
+            bg="#000000",
+            activeforeground="#ffffff",
+            activebackground="#000000",
+            selectcolor="#000000",
+            font=("Microsoft YaHei", 9),
+            bd=0,
+            highlightthickness=0,
+            padx=2,
+            pady=0,
+        )
 
         self._drag = None
         self._resize_origin = None
@@ -264,6 +281,12 @@ class _Caption:
         self.root.configure(bg=bg)
         self.canvas.configure(bg=bg)
         self.close.configure(bg=bg)
+        self.text_only_control.configure(
+            bg=bg,
+            activebackground=bg,
+            selectcolor=bg,
+        )
+        self.text_only_control.place(x=8, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -296,7 +319,7 @@ class _Caption:
         display_body = "\n".join(display_lines)
         line_h = max(1, self.font_line.metrics("linespace"))
         lines = len(display_lines)
-        height = 10 + lines * line_h + 8
+        height = 30 + lines * line_h + 8
         if height != self.height:
             delta = height - self.height
             self.height = height
@@ -311,7 +334,7 @@ class _Caption:
 
     def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
         x = self.width / 2
-        y = 6
+        y = 25
         self.canvas.create_text(
             x,
             y,
@@ -378,6 +401,7 @@ class _Caption:
 
     def apply_text_only(self, enabled: bool) -> None:
         self.text_only = enabled
+        self.text_only_var.set(enabled)
         self._apply_colors()
 
     def apply_font(self, px: int) -> None:

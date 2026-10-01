@@ -22,9 +22,12 @@ class ExtensionBoundaryTests(unittest.TestCase):
 
     def test_text_only_control_is_in_caption_window_header(self):
         caption = (ROOT / "extension" / "caption.js").read_text(encoding="utf-8")
+        tk_caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
 
         self.assertIn('<label id="textOnlyControl">只有字', caption)
         self.assertNotIn('<label>只有字 <input id="textOnly"', caption)
+        self.assertIn('text_only_control = tk.Checkbutton', tk_caption)
+        self.assertIn('self.text_only_control.place(x=8, y=3', tk_caption)
 
 
 if __name__ == "__main__":
