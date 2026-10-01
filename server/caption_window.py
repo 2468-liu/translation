@@ -136,11 +136,12 @@ class _Caption:
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_line = tkfont.Font(family="Microsoft YaHei", size=-self.font_px)
-        self.width = max(round(560 * scale), self.font_line.measure("实时字幕") + 120)
+        self.screen_width = self.root.winfo_screenwidth()
+        self.width = max(round(760 * scale), self.font_line.measure("实时字幕") + 120)
+        self.width = min(self.width, max(420, self.screen_width - 80))
         self.height = self.font_line.metrics("linespace") + 28
-        screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        x = max(0, (screen_w - self.width) // 2)
+        x = max(0, (self.screen_width - self.width) // 2)
         y = max(0, screen_h - self.height - 120)
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
@@ -151,8 +152,10 @@ class _Caption:
             self.root,
             text="×",
             fg="#ffffff",
-            font=("Segoe UI", 16),
+            font=("Segoe UI", 11),
             cursor="hand2",
+            padx=2,
+            pady=0,
         )
         self.close.bind("<Button-1>", lambda _event: self.hide())
 
@@ -236,14 +239,29 @@ class _Caption:
 
     def _show_close(self) -> None:
         if self.visible:
-            self.close.place(relx=1, x=-8, y=2, anchor="ne")
+            self.close.place(relx=1, x=-5, y=3, anchor="ne")
+
+    def _fit_width(self, text: str, wrap: int) -> int:
+        measured = self.font_line.measure(text.replace("\n", ""))
+        if measured <= wrap * 3:
+            return self.width
+        target = int(measured / 3) + 36
+        return min(max(self.width, target), max(420, self.screen_width - 80))
 
     def _paint(self) -> None:
         self.canvas.delete("all")
         body = self.line or ("实时字幕" if self.visible else "")
         if not body:
             return
-        wrap = max(120, self.width - 48)
+        wrap = max(240, self.width - 48)
+        fitted = self._fit_width(body, wrap)
+        if fitted != self.width:
+            self.width = fitted
+            x = self.root.winfo_x()
+            center = x + self.root.winfo_width() / 2
+            left = max(0, min(round(center - self.width / 2), self.screen_width - self.width))
+            self.root.geometry(f"{self.width}x{self.height}+{left}+{self.root.winfo_y()}")
+            wrap = self.width - 48
         line_h = max(1, self.font_line.metrics("linespace"))
         lines = self._line_count(body, wrap)
         height = 10 + lines * line_h + 8
@@ -273,7 +291,7 @@ class _Caption:
                 used = width
             else:
                 used += width
-        return min(lines, 6)
+        return min(lines, 3)
 
     def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
         x = self.width / 2

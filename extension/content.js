@@ -59,6 +59,9 @@
           0 -1px 1px #000,
           1px 0 1px #000,
           -1px 0 1px #000;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        text-wrap: pretty;
       }
       #source {
         margin: 0 0 4px;
@@ -72,6 +75,10 @@
         font-weight: 560;
         line-height: 1.35;
         letter-spacing: 0.01em;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow: hidden;
       }
       .partial { opacity: 0.72; }
       .hidden { display: none; }
