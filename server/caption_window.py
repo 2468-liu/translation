@@ -53,6 +53,7 @@ WS_MAXIMIZEBOX = 0x00010000
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
+WS_EX_NOACTIVATE = 0x08000000
 EDGE = 12
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
@@ -94,14 +95,7 @@ def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str
             current = candidate
     if current or not lines:
         lines.append(current)
-    if len(lines) <= max_lines:
-        return lines
-    visible = lines[:max_lines]
-    last = visible[-1]
-    while last and measure(last + "…") > width:
-        last = last[:-1]
-    visible[-1] = (last + "…") if last else "…"
-    return visible
+    return lines[-max_lines:]
 
 
 def _port_busy() -> bool:
@@ -247,7 +241,7 @@ class _Caption:
         style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
         set_long(hwnd, GWL_STYLE, style)
         exstyle = get_long(hwnd, GWL_EXSTYLE)
-        extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+        extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
         if self.text_only:
             extra |= WS_EX_LAYERED
         set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
