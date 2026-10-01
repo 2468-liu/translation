@@ -1,0 +1,7 @@
+title: Twenty Years of Creative Commons (in Sixty Seconds)
+authors: Ryan Junell and Glenn Otis Brown for Creative Commons
+license: CC BY 4.0
+page: https://commons.wikimedia.org/wiki/File:Twenty_Years_of_Creative_Commons_(in_Sixty_Seconds).ogg
+file: cc-sixty-seconds-480p.webm
+note: Wikimedia VP9 480p transcode of the original 1080p Ogg, about 60 seconds. For local ASR and subtitle verification only.
+attribution: "Twenty Years of Creative Commons (in Sixty Seconds)" by Ryan Junell and Glenn Otis Brown for Creative Commons, licensed under CC BY 4.0.

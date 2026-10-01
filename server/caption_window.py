@@ -1,0 +1,946 @@
+"""Parentless subtitle window. No title bar, no minimize, text only by default."""
+
+from __future__ import annotations
+
+import json
+import queue
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+import tkinter.font as tkfont
+from pathlib import Path
+
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+CAPTION_PORT = 8766
+# The 3-minute blog is a reference, not a schedule. There the gap between
+# spoken pieces had a 3.25s median and a typical line was about 13 characters.
+# Other videos sit on either side of that, so the curve below is the comfort
+# center and live utterance gaps scale it between PACE_MIN and PACE_MAX.
+# Length bands at pace 1 (a 13-character line is about 2.4s, under that 3.25s gap):
+#   1–3 chars   glance, fixed 1.0s
+#   4–8 chars   short clause, 150ms for each extra character
+#   9–18 chars  reference band, 130ms each (blog-like lines)
+#   19+ chars   long line, 80ms each; absolute cap HOLD_ABS_MAX_MS
+REF_GAP_S = 3.25
+PACE_MIN = 0.62
+PACE_MAX = 1.48
+PACE_MIN_GAPS = 3
+READABLE_RATIO = 0.70
+HOLD_ABS_MIN_MS = 800
+HOLD_ABS_MAX_MS = 4200
+SETTLE_MS = 450
+_MIN_LENGTH_RATIO = 0.75
+_MIN_SIMILARITY = 0.72
+_KEY = "#010203"
+_COMMANDS: queue.Queue = queue.Queue()
+_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+HWND_TOPMOST = -1
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_SYSMENU = 0x00080000
+WS_MINIMIZEBOX = 0x00020000
+WS_MAXIMIZEBOX = 0x00010000
+WS_EX_LAYERED = 0x00080000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TOPMOST = 0x00000008
+EDGE = 12
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+SWP_SHOWWINDOW = 0x0040
+
+_LANG = {
+    "en": "英语",
+    "ja": "日语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "zh": "中文",
+}
+
+
+def _port_busy() -> bool:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("127.0.0.1", CAPTION_PORT))
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+
+
+def _listen(commands: queue.Queue) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", CAPTION_PORT))
+    while True:
+        data, _addr = sock.recvfrom(65535)
+        try:
+            message = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        commands.put((message.get("kind"), message.get("value")))
+
+
+def _enable_dpi() -> float:
+    if not ctypes:
+        return 1.0
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+    try:
+        hdc = ctypes.windll.user32.GetDC(0)
+        dpi = int(ctypes.windll.gdi32.GetDeviceCaps(hdc, 88))
+        ctypes.windll.user32.ReleaseDC(0, hdc)
+        return max(1.0, dpi / 96.0)
+    except Exception:
+        return 1.0
+
+
+class _Caption:
+    def __init__(self, scale: float) -> None:
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.text_only = True
+        self.visible = False
+        self.closed = False
+        self.have_translation = False
+        self.status = ""
+        self.line = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._pending = ""
+        self._hold_job = None
+        self._gaps: list[float] = []
+        self._last_segment_at = 0.0
+        self._next_utterance_at = 0.0
+        self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
+        self.font_px = 20
+        self.font_line = tkfont.Font(family="Microsoft YaHei", size=-self.font_px)
+        self.width = max(round(560 * scale), self.font_line.measure("实时字幕") + 120)
+        self.height = self.font_line.metrics("linespace") + 28
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = max(0, (screen_w - self.width) // 2)
+        y = max(0, screen_h - self.height - 120)
+        self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
+
+        self.canvas = tk.Canvas(self.root, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+
+        self.close = tk.Label(
+            self.root,
+            text="×",
+            fg="#ffffff",
+            font=("Segoe UI", 16),
+            cursor="hand2",
+        )
+        self.close.bind("<Button-1>", lambda _event: self.hide())
+
+        self._drag = None
+        self._resize_origin = None
+        self.canvas.bind("<Motion>", self._hover)
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<ButtonPress-3>", self._press_resize)
+        self.canvas.bind("<B3-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-3>", self._release)
+        self.root.bind("<Enter>", lambda _event: self._show_close())
+        self.root.bind("<Leave>", lambda _event: self.close.place_forget())
+        self._apply_colors()
+        self.root.after(50, self._pump)
+        self.root.after(300, self._pin)
+
+    def hwnd(self) -> int:
+        self.root.update_idletasks()
+        child = int(self.root.winfo_id())
+        if not ctypes:
+            return child
+        parent = ctypes.windll.user32.GetParent(child)
+        return int(parent or child)
+
+    def _strip_frame(self) -> None:
+        if not ctypes:
+            return
+        hwnd = self.hwnd()
+        user32 = ctypes.windll.user32
+        get_long = user32.GetWindowLongPtrW
+        set_long = user32.SetWindowLongPtrW
+        get_long.restype = ctypes.c_ssize_t
+        get_long.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        set_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        style = get_long(hwnd, GWL_STYLE)
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        set_long(hwnd, GWL_STYLE, style)
+        exstyle = get_long(hwnd, GWL_EXSTYLE)
+        extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+        if self.text_only:
+            extra |= WS_EX_LAYERED
+        set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
+        user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+        )
+        if self.text_only:
+            self.root.attributes("-transparentcolor", _KEY)
+
+    def _pin(self) -> None:
+        if ctypes and self.visible:
+            ctypes.windll.user32.SetWindowPos(
+                self.hwnd(),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        self.root.after(300, self._pin)
+
+    def _apply_colors(self) -> None:
+        bg = _KEY if self.text_only else "#000000"
+        self.root.configure(bg=bg)
+        self.canvas.configure(bg=bg)
+        self.close.configure(bg=bg)
+        if self.text_only:
+            self.root.attributes("-transparentcolor", _KEY)
+        else:
+            self.root.attributes("-transparentcolor", "")
+        self._paint()
+
+    def _show_close(self) -> None:
+        if self.visible:
+            self.close.place(relx=1, x=-8, y=2, anchor="ne")
+
+    def _paint(self) -> None:
+        self.canvas.delete("all")
+        body = self.line or ("实时字幕" if self.visible else "")
+        if not body:
+            return
+        wrap = max(120, self.width - 48)
+        line_h = max(1, self.font_line.metrics("linespace"))
+        lines = self._line_count(body, wrap)
+        height = 10 + lines * line_h + 8
+        if height != self.height:
+            delta = height - self.height
+            self.height = height
+            if self.visible:
+                self.root.update_idletasks()
+                x = self.root.winfo_x()
+                y = max(0, self.root.winfo_y() - delta)
+                self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
+            else:
+                self.root.geometry(f"{self.width}x{self.height}")
+        self._draw(body, self.font_line, wrap)
+
+    def _line_count(self, text: str, wrap: int) -> int:
+        lines = 1
+        used = 0
+        for ch in text:
+            if ch == "\n":
+                lines += 1
+                used = 0
+                continue
+            width = self.font_line.measure(ch)
+            if used and used + width > wrap:
+                lines += 1
+                used = width
+            else:
+                used += width
+        return min(lines, 6)
+
+    def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
+        x = self.width / 2
+        y = 6
+        if self.text_only:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    self.canvas.create_text(
+                        x + dx,
+                        y + dy,
+                        text=text,
+                        anchor="n",
+                        justify="center",
+                        fill="#000000",
+                        font=font,
+                        width=wrap,
+                    )
+        self.canvas.create_text(
+            x,
+            y,
+            text=text,
+            anchor="n",
+            justify="center",
+            fill="#ffffff",
+            font=font,
+            width=wrap,
+        )
+
+    def _edges(self, event) -> tuple[bool, bool]:
+        width = max(self.canvas.winfo_width(), 1)
+        return event.x >= width - EDGE, False
+
+    def _hover(self, event) -> None:
+        if self._resize_origin or self._drag:
+            return
+        on_x, on_y = self._edges(event)
+        if on_x:
+            cursor = "sb_h_double_arrow"
+        else:
+            cursor = "arrow"
+        self.canvas.configure(cursor=cursor)
+
+    def _press(self, event) -> None:
+        on_x, on_y = self._edges(event)
+        if on_x or on_y:
+            self._begin_resize(event, on_x, on_y)
+            return
+        self._resize_origin = None
+        self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+
+    def _press_resize(self, event) -> None:
+        self._begin_resize(event, True, False)
+
+    def _begin_resize(self, event, on_x: bool, on_y: bool) -> None:
+        self._drag = None
+        self.width = self.root.winfo_width()
+        self.height = self.root.winfo_height()
+        self._resize_origin = (event.x_root, event.y_root, self.width, self.height, on_x, on_y)
+
+    def _motion(self, event) -> None:
+        if self._resize_origin:
+            x0, y0, width, height, on_x, on_y = self._resize_origin
+            if on_x:
+                self.width = max(120, width + event.x_root - x0)
+            if on_y:
+                self.height = max(36, height + event.y_root - y0)
+            self.root.geometry(f"{self.width}x{self.height}")
+            self._paint()
+            return
+        if not self._drag:
+            return
+        x = event.x_root - self._drag[0]
+        y = event.y_root - self._drag[1]
+        self.root.geometry(f"+{x}+{y}")
+
+    def _release(self, _event) -> None:
+        self._drag = None
+        self._resize_origin = None
+
+    def apply_text_only(self, enabled: bool) -> None:
+        self.text_only = enabled
+        self._apply_colors()
+
+    def apply_font(self, px: int) -> None:
+        size = clamped_font_px(px, self.font_px)
+        if size is None:
+            return
+        self.font_px = size
+        self.font_line = tkfont.Font(family="Microsoft YaHei", size=-size)
+        if self.line or self.visible:
+            self._paint()
+
+    def arm(self) -> None:
+        # A new capture may show the next non-empty line. Do not reveal an empty bar.
+        self.closed = False
+
+    def show(self) -> None:
+        self.closed = False
+        self.visible = True
+        self.root.deiconify()
+        self._strip_frame()
+        self._paint()
+
+    def hide(self) -> None:
+        self.visible = False
+        self.closed = True
+        self.line = ""
+        self.status = ""
+        self._pending = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._gaps.clear()
+        self._last_segment_at = 0.0
+        self._next_utterance_at = 0.0
+        self.have_translation = False
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        self.close.place_forget()
+        self.root.withdraw()
+
+    def set_status(self, lang: str) -> None:
+        name = _LANG.get(lang or "", "")
+        self.status = f"{name} → 中文" if name and name != "中文" else ""
+
+    def begin_segment(self) -> None:
+        now = time.monotonic()
+        if self._last_segment_at:
+            gap = now - self._last_segment_at
+            if 0.45 <= gap <= 8.0:
+                self._gaps.append(gap)
+                del self._gaps[:-6]
+        self._last_segment_at = now
+        if self.line and self._growth_stopped_at and now > self._growth_stopped_at + 0.2:
+            self._next_utterance_at = now
+        self.have_translation = False
+        if self._pending:
+            self._arm_hold()
+
+    def _pace(self) -> float:
+        return pace_scale(self._gaps)
+
+    def show_source(self, text: str) -> None:
+        if self.line or self.have_translation or self.closed:
+            return
+        cleaned = _collapse_repeats((text or "").strip())
+        if not cleaned:
+            return
+        self._growth_stopped_at = time.monotonic()
+        self._settle_until = 0.0
+        self._apply_line(cleaned)
+
+    def set_text(self, text: str) -> None:
+        cleaned = _collapse_repeats((text or "").strip())
+        if not cleaned:
+            return
+        self.have_translation = True
+        action, line, pending, anchor, settle, _deadline = step_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            cleaned,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        if action == "drop":
+            return
+        self._pending = pending
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            self._apply_line(line)
+        self._arm_hold()
+
+    def _swap_deadline(self) -> float:
+        return swap_deadline(
+            self._growth_stopped_at,
+            self._settle_until,
+            self.line,
+            self._pace(),
+            self._next_utterance_at,
+        )
+
+    def _arm_hold(self) -> None:
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        if not self._pending:
+            return
+        wait = int(round((self._swap_deadline() - time.monotonic()) * 1000))
+        self._hold_job = self.root.after(max(50, wait), self._flush_pending)
+
+    def _flush_pending(self) -> None:
+        self._hold_job = None
+        action, line, pending, anchor, settle, _deadline = flush_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        self._pending = pending
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            self._apply_line(line)
+        if action == "wait" or self._pending:
+            self._arm_hold()
+
+    def _apply_line(self, text: str) -> None:
+        self.line = (text or "").strip()
+        action = caption_action(self.closed, self.line, self.visible)
+        if action == "withdraw":
+            self.visible = False
+            self.root.withdraw()
+            return
+        if action == "stay":
+            return
+        if action == "paint":
+            self._paint()
+            return
+        self.show()
+
+    def _pump(self) -> None:
+        while True:
+            try:
+                kind, value = _COMMANDS.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "text":
+                self.set_text(value or "")
+            elif kind == "asr":
+                pass
+            elif kind == "note":
+                self.show_source(value or "")
+            elif kind == "segment":
+                self.begin_segment()
+            elif kind == "status":
+                self.set_status(value or "")
+            elif kind == "style":
+                self.apply_text_only(bool(value))
+            elif kind == "font":
+                self.apply_font(value)
+            elif kind == "arm":
+                self.arm()
+            elif kind == "raise":
+                if self.line:
+                    self.show()
+            elif kind == "hide":
+                self.hide()
+        self.root.after(50, self._pump)
+
+
+def _main() -> None:
+    app = _Caption(_enable_dpi())
+    print("caption window ready", flush=True)
+    app.root.mainloop()
+
+
+def start_caption() -> None:
+    if _port_busy():
+        return
+    root = Path(__file__).resolve().parents[1]
+    kwargs = {}
+    if sys.platform == "win32":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0
+        kwargs["startupinfo"] = startup
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    subprocess.Popen(
+        [sys.executable, "-m", "server.caption_window"],
+        cwd=root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
+
+
+def _collapse_repeats(text: str) -> str:
+    out = []
+    run = 0
+    prev = ""
+    for ch in text:
+        if ch == prev and ch.strip():
+            run += 1
+            if run >= 3:
+                continue
+        else:
+            prev = ch
+            run = 1
+        out.append(ch)
+    return "".join(out)
+
+
+def _read_units(text: str) -> int:
+    units = 0
+    in_word = False
+    for ch in (text or "").strip():
+        if ch.isspace() or ch in "，。！？、；：,.!?;:…—-「」\"'（）()【】":
+            in_word = False
+            continue
+        if ord(ch) < 128 and (ch.isalnum() or ch == "'"):
+            if not in_word:
+                units += 1
+                in_word = True
+            continue
+        in_word = False
+        units += 1
+    return units
+
+
+def _reference_hold_ms(count: int) -> int:
+    if count <= 3:
+        return 1000
+    if count <= 8:
+        return 1000 + (count - 3) * 150
+    if count <= 18:
+        return 1750 + (count - 8) * 130
+    return 3050 + (count - 18) * 80
+
+
+def pace_scale(gaps: list[float]) -> float:
+    usable = [gap for gap in gaps if 0.45 <= gap <= 8.0]
+    if len(usable) < PACE_MIN_GAPS:
+        return 1.0
+    ordered = sorted(usable[-6:])
+    mid = ordered[len(ordered) // 2]
+    return max(PACE_MIN, min(PACE_MAX, mid / REF_GAP_S))
+
+
+def hold_ms(text: str, pace: float = 1.0) -> int:
+    count = _read_units(text)
+    if count <= 0:
+        return HOLD_ABS_MIN_MS
+    scale = 1.0 if pace == 1.0 else max(PACE_MIN, min(PACE_MAX, pace))
+    scaled = int(round(_reference_hold_ms(count) * scale))
+    return max(HOLD_ABS_MIN_MS, min(HOLD_ABS_MAX_MS, scaled))
+
+
+def swap_deadline(
+    growth_stopped_at: float,
+    settle_until: float,
+    line: str = "",
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> float:
+    full = growth_stopped_at + hold_ms(line, pace) / 1000.0
+    deadline = max(full, settle_until)
+    if next_utterance_at <= growth_stopped_at:
+        return deadline
+    readable_ms = max(
+        HOLD_ABS_MIN_MS,
+        int(round(READABLE_RATIO * _reference_hold_ms(max(1, _read_units(line))))),
+    )
+    readable_at = growth_stopped_at + readable_ms / 1000.0
+    return min(deadline, max(readable_at, next_utterance_at, settle_until))
+
+
+def classify_caption(current: str, new: str) -> str:
+    if not new:
+        return "empty"
+    if not current:
+        return "grow"
+    if new == current:
+        return "same"
+    if len(new) > len(current) and new.startswith(current):
+        return "grow"
+    if len(new) < len(current) and current.startswith(new):
+        return "rewind"
+    if _is_char_edit(current, new):
+        return "char"
+    return "sentence"
+
+
+def _is_char_edit(current: str, new: str) -> bool:
+    current_len = len(current)
+    new_len = len(new)
+    if current_len == 0 or new_len == 0:
+        return False
+    if new_len < _MIN_LENGTH_RATIO * current_len or current_len < _MIN_LENGTH_RATIO * new_len:
+        return False
+    longest = max(current_len, new_len)
+    distance = _edit_distance(current, new)
+    if distance / longest > 1.0 - _MIN_SIMILARITY:
+        return False
+    lcs_ratio = _lcs_len(current, new) / longest
+    edit_ratio = 1.0 - distance / longest
+    return max(lcs_ratio, edit_ratio) >= _MIN_SIMILARITY
+
+
+def _edit_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+    previous = list(range(len(right) + 1))
+    for i, ca in enumerate(left, 1):
+        current = [i]
+        for j, cb in enumerate(right, 1):
+            current.append(min(current[-1] + 1, previous[j] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def _lcs_len(left: str, right: str) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    for ca in left:
+        current = [0]
+        for j, cb in enumerate(right, 1):
+            if ca == cb:
+                current.append(previous[j - 1] + 1)
+            else:
+                current.append(max(previous[j], current[-1]))
+        previous = current
+    return previous[-1]
+
+
+def _shadow_pending(line: str, pending: str) -> str:
+    if not pending or not line:
+        return ""
+    if classify_caption(line, pending) in ("same", "rewind"):
+        return ""
+    if len(pending) < _MIN_LENGTH_RATIO * len(line):
+        return ""
+    return pending
+
+
+def step_caption(
+    line: str,
+    pending: str,
+    growth_stopped_at: float,
+    settle_until: float,
+    text: str,
+    now: float,
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[str, str, str, float, float, float]:
+    deadline = swap_deadline(growth_stopped_at, settle_until, line, pace, next_utterance_at)
+    if not text:
+        return ("drop", line, pending, growth_stopped_at, settle_until, deadline)
+    if not line:
+        return ("grow", text, "", now, 0.0, swap_deadline(now, 0.0, text, pace))
+    kind = classify_caption(line, text)
+    if kind in ("same", "rewind", "empty"):
+        return ("drop", line, pending, growth_stopped_at, settle_until, deadline)
+    if kind == "grow":
+        return ("grow", text, _shadow_pending(text, pending), now, 0.0, swap_deadline(now, 0.0, text, pace))
+    if kind == "char":
+        settle = max(settle_until, now + SETTLE_MS / 1000.0)
+        return (
+            "char",
+            text,
+            _shadow_pending(text, pending),
+            growth_stopped_at,
+            settle,
+            swap_deadline(growth_stopped_at, settle, text, pace, next_utterance_at),
+        )
+    chosen = text
+    if pending and classify_caption(pending, text) in ("same", "rewind"):
+        chosen = pending
+    if now >= deadline:
+        return ("swap", chosen, "", now, 0.0, swap_deadline(now, 0.0, chosen, pace))
+    return ("defer", line, chosen, growth_stopped_at, settle_until, deadline)
+
+
+def flush_caption(
+    line: str,
+    pending: str,
+    growth_stopped_at: float,
+    settle_until: float,
+    now: float,
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[str, str, str, float, float, float]:
+    deadline = swap_deadline(growth_stopped_at, settle_until, line, pace, next_utterance_at)
+    if not pending:
+        return ("idle", line, "", growth_stopped_at, settle_until, deadline)
+    if now < deadline:
+        return ("wait", line, pending, growth_stopped_at, settle_until, deadline)
+    kind = classify_caption(line, pending)
+    if kind in ("same", "rewind", "empty"):
+        return ("drop", line, "", growth_stopped_at, settle_until, deadline)
+    if kind == "char":
+        settle = max(settle_until, now + SETTLE_MS / 1000.0)
+        return (
+            "char",
+            pending,
+            "",
+            growth_stopped_at,
+            settle,
+            swap_deadline(growth_stopped_at, settle, pending, pace, next_utterance_at),
+        )
+    if kind == "grow":
+        return ("grow", pending, "", now, 0.0, swap_deadline(now, 0.0, pending, pace))
+    return ("swap", pending, "", now, 0.0, swap_deadline(now, 0.0, pending, pace))
+
+
+def _self_check() -> None:
+    base = "这是一次实时字幕测试"
+    fixed = "这是一次实时字幕测误"
+    other = "完全不同的一句字幕内容"
+    assert classify_caption("这是一次", "这是一次实时") == "grow"
+    assert classify_caption(base, "这是一次实时") == "rewind"
+    assert classify_caption(base, fixed) == "char"
+    assert classify_caption(base, other) == "sentence"
+
+    action, line, pending, anchor, settle, deadline = step_caption("", "", 0.0, 0.0, "这是一次", 10.0)
+    assert action == "grow" and line == "这是一次" and pending == ""
+    action, line, pending, anchor, settle, deadline = step_caption(
+        line, pending, anchor, settle, base, 10.5
+    )
+    assert action == "grow" and line == base and anchor == 10.5 and settle == 0.0
+    hold_deadline = deadline
+    assert hold_deadline == swap_deadline(10.5, 0.0, base)
+    assert hold_ms(base) == _reference_hold_ms(_read_units(base))
+    assert hold_ms("你好") == 1000
+    assert hold_ms("这是十三字的一行参考字幕") > hold_ms(base)
+    assert pace_scale([]) == 1.0 and pace_scale([1.6, 1.5]) == 1.0
+    fast = pace_scale([1.6, 1.5, 1.7])
+    slow = pace_scale([5.0, 5.5, 6.0])
+    assert PACE_MIN <= fast < 1.0 < slow <= PACE_MAX
+    assert hold_ms(base, fast) < hold_ms(base) < hold_ms(base, slow)
+    assert HOLD_ABS_MIN_MS <= hold_ms("你", fast) <= HOLD_ABS_MAX_MS
+    full = swap_deadline(10.0, 0.0, base)
+    pulled = swap_deadline(10.0, 0.0, base, 1.0, 10.4)
+    assert pulled < full
+    assert pulled >= 10.0 + HOLD_ABS_MIN_MS / 1000.0
+    assert swap_deadline(10.0, 0.0, base, 1.0, full + 1.0) == full
+
+    action, line2, pending2, anchor2, settle2, deadline2 = step_caption(
+        line, pending, anchor, settle, "这是一次实时", 11.0
+    )
+    assert action == "drop" and line2 == base and anchor2 == 10.5 and deadline2 == hold_deadline
+
+    char_at = 11.2
+    action, line3, pending3, anchor3, settle3, deadline3 = step_caption(
+        base, "", 10.5, 0.0, fixed, char_at
+    )
+    assert action == "char" and line3 == fixed and pending3 == ""
+    assert anchor3 == 10.5
+    assert deadline3 - hold_deadline <= SETTLE_MS / 1000.0 + 0.02
+    assert deadline3 != char_at + hold_ms(base) / 1000.0
+    action, line4, _pending4, anchor4, _settle4, deadline4 = step_caption(
+        line3, pending3, anchor3, settle3, fixed, 11.4
+    )
+    assert action == "drop" and line4 == fixed and anchor4 == anchor3 and deadline4 == deadline3
+
+    late = 10.5 + hold_ms(base) / 1000.0 - 0.2
+    action, _line_late, _pending_late, anchor_late, _settle_late, deadline_late = step_caption(
+        base, "", 10.5, 0.0, fixed, late
+    )
+    assert action == "char" and anchor_late == 10.5
+    assert 0 <= deadline_late - hold_deadline <= SETTLE_MS / 1000.0 + 0.02
+
+    sent_at = 11.0
+    action, line5, pending5, anchor5, settle5, deadline5 = step_caption(
+        base, "", 10.5, 0.0, other, sent_at
+    )
+    assert action == "defer" and line5 == base and pending5 == other
+    assert anchor5 == 10.5 and settle5 == 0.0
+    assert deadline5 == hold_deadline and sent_at < deadline5
+    action, line6, pending6, anchor6, settle6, deadline6 = flush_caption(
+        line5, pending5, anchor5, settle5, deadline5 - 0.05
+    )
+    assert action == "wait" and line6 == base and pending6 == other
+    action, line7, pending7, anchor7, _settle7, _deadline7 = flush_caption(
+        line6, pending6, anchor6, settle6, deadline5
+    )
+    assert action == "swap" and line7 == other and pending7 == ""
+    assert anchor7 == deadline5
+
+    assert caption_action(True, "第二句", False) == "stay"
+    assert caption_action(False, "第二句", False) == "show"
+    assert caption_action(False, "", False) == "withdraw"
+    assert caption_action(False, "   ", True) == "withdraw"
+    assert caption_action(False, "第二句", True) == "paint"
+    assert clamped_font_px(12) == 16
+    assert clamped_font_px(48) == 40
+    assert clamped_font_px(28, 28) is None
+    assert clamped_font_px(32, 20) == 32
+    assert clamped_font_px("nope") is None
+
+
+def caption_action(closed: bool, text: str, visible: bool) -> str:
+    line = (text or "").strip()
+    if not line:
+        return "stay" if closed else "withdraw"
+    if closed:
+        return "stay"
+    return "paint" if visible else "show"
+
+
+def clamped_font_px(px, current=None):
+    try:
+        size = int(px)
+    except (TypeError, ValueError):
+        return None
+    size = max(16, min(40, size))
+    if current is not None and size == int(current):
+        return None
+    return size
+
+
+def _send(kind: str, value) -> None:
+    try:
+        payload = json.dumps({"kind": kind, "value": value}, ensure_ascii=False).encode("utf-8")
+        _SOCK.sendto(payload, ("127.0.0.1", CAPTION_PORT))
+    except OSError:
+        return
+
+
+def update_caption(payload: dict) -> None:
+    kind = payload.get("type")
+    if kind == "segment_start":
+        _send("segment", "")
+    elif kind == "translation":
+        _send("text", payload.get("text") or "")
+    elif kind == "capture-error":
+        _send("text", payload.get("error") or payload.get("message") or "")
+    elif kind == "status" and payload.get("level") == "warn":
+        _send("text", payload.get("message") or "")
+
+
+def note_caption(text: str) -> None:
+    _send("note", text)
+
+
+def hide_caption() -> None:
+    _send("hide", None)
+
+
+def set_text_only(enabled: bool) -> None:
+    _send("style", enabled)
+
+
+def set_font_size(px: int) -> None:
+    try:
+        size = int(px)
+    except (TypeError, ValueError):
+        return
+    _send("font", size)
+
+
+def arm_caption() -> None:
+    _send("arm", None)
+
+
+def raise_caption() -> None:
+    _send("raise", None)
+
+
+if __name__ == "__main__":
+    threading.Thread(target=_listen, args=(_COMMANDS,), daemon=True).start()
+    _main()
