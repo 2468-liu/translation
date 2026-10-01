@@ -1,5 +1,5 @@
 const DEFAULTS = {
-  captionTextOnly: false,
+  captionTextOnly: true,
   captionBilingual: false,
 };
 
@@ -34,6 +34,7 @@ function mountCaption() {
       display: flex;
       justify-content: flex-start;
     }
+    #textOnlyControl { margin-right: 8px; }
     #panel { display: none; gap: 10px; align-items: center; }
     #app.open #panel, #app:hover #panel { display: flex; }
     #more {
@@ -70,9 +71,9 @@ function mountCaption() {
   document.body.innerHTML = `
     <div id="app">
       <header>
+        <label id="textOnlyControl">只有字 <input id="textOnly" type="checkbox" /></label>
         <button id="more" type="button" aria-label="字幕设置">···</button>
         <div id="panel">
-          <label>只有字 <input id="textOnly" type="checkbox" /></label>
           <label>双语 <input id="bilingual" type="checkbox" /></label>
           <button id="close" type="button">关闭</button>
         </div>

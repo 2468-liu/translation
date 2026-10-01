@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "description": "从播放器读取声音，在本机字幕条上显示译文。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApZhAPn0xPQERDSdoLe6VWDiHvqz1UTl5s4qu0PnGorgLgB3wUXP1tHlIXG9GH0FN14ygWQ07x1sx4YK08EGKsUgLffsIaZz8MYFkibTYPSw1SPQ0+pnv3M5BqtF3Y7zUrTnrSUktAWHJuo1/cBE52gE2io+RGXjQvCdGkx97EZuu2tbL8oQeWqtcYPNo23mEPqRtcit3YgVKAry/EzFneRXxAB+Avk1zkvRNLQepDjkiYwluHPOZJSxg5Gxyyfen9Shscjx5/euDF7RSFA5gTjgHpthIY00ltRMN4yEEjZYARINnbIUbH5DQgBtdPkx5hGzga+4M5sEP/15UtMZBXQIDAQAB",
-  "permissions": ["offscreen", "tabCapture", "activeTab", "storage", "scripting", "nativeMessaging"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": ["offscreen", "tabCapture", "storage", "nativeMessaging"],
   "background": {
     "service_worker": "background.js"
   },

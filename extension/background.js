@@ -118,22 +118,6 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   }
 });
 
-async function silencePage(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: () => {
-        document.querySelectorAll("#live-subtitle-host").forEach((node) => node.remove());
-        if (window.__liveSubtitle && window.__liveSubtitle.destroy) window.__liveSubtitle.destroy();
-        if (window.__subtitleAudio && window.__subtitleAudio.stop) window.__subtitleAudio.stop();
-        window.__subtitleAudio = null;
-      },
-    });
-  } catch (_error) {
-    // the tab may already be closed
-  }
-}
-
 function clampFont(px) {
   const size = Number(px);
   if (!Number.isFinite(size)) return 20;
@@ -143,7 +127,6 @@ function clampFont(px) {
 async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, apiModel }) {
   captureError = "";
   await ensureBackend();
-  await silencePage(tabId);
   // Chrome keeps a tab captured until its tracks end. Release the previous
   // consumer before asking for another id, or the same tab stays dead.
   await releaseCapture();
@@ -172,11 +155,10 @@ async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, ap
     language: language || "auto",
     videoWindowId: windowId || null,
   });
-  await applyCaptionStyle(false);
+  await applyCaptionStyle();
 }
 
 async function stop() {
-  const stored = await chrome.storage.session.get("tabId");
   if (await chrome.offscreen.hasDocument()) {
     try {
       await sendWhenReady({ type: "stop-capture" });
@@ -186,21 +168,6 @@ async function stop() {
   }
   if (await chrome.offscreen.hasDocument()) {
     await chrome.offscreen.closeDocument();
-  }
-  if (stored.tabId) {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: stored.tabId, allFrames: true },
-        func: () => {
-          document.querySelectorAll("#live-subtitle-host").forEach((node) => node.remove());
-          if (window.__liveSubtitle && window.__liveSubtitle.destroy) window.__liveSubtitle.destroy();
-          if (window.__subtitleAudio && window.__subtitleAudio.stop) window.__subtitleAudio.stop();
-          window.__subtitleAudio = null;
-        },
-      });
-    } catch (_error) {
-      // the tab may already be closed
-    }
   }
   await closeOverlay();
   await chrome.storage.session.set({ running: false });
@@ -240,25 +207,6 @@ async function ensureOffscreen() {
     reasons: ["USER_MEDIA", "AUDIO_PLAYBACK"],
     justification: "Capture tab audio and stream it to the local translator",
   });
-}
-
-async function injectCaption(tabId) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content.js"],
-  });
-}
-
-async function showCaption(tabId) {
-  const stored = await chrome.storage.session.get("tabId");
-  const target = tabId || stored.tabId;
-  if (!target) return;
-  await injectCaption(target);
-  try {
-    await chrome.tabs.sendMessage(target, { type: "overlay-show" });
-  } catch (_error) {
-    // the script's own listener is registered by the injection above
-  }
 }
 
 function forwardCaption(_payload) {}
@@ -307,7 +255,7 @@ async function openOverlay(windowId) {
   await chrome.storage.session.set({ overlayWindowId: created.id });
 }
 
-async function applyCaptionStyle(removePageCaption) {
+async function applyCaptionStyle() {
   const saved = await chrome.storage.local.get({ captionTextOnly: true, captionFontPx: 20 });
   const fontPx = clampFont(saved.captionFontPx);
   chrome.runtime.sendMessage({
@@ -315,20 +263,6 @@ async function applyCaptionStyle(removePageCaption) {
     textOnly: saved.captionTextOnly !== false,
     fontPx,
   }).catch(() => {});
-  if (!removePageCaption) return;
-  const stored = await chrome.storage.session.get("tabId");
-  if (!stored.tabId) return;
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: stored.tabId },
-      func: () => {
-        document.querySelectorAll("#live-subtitle-host").forEach((node) => node.remove());
-        if (window.__liveSubtitle && window.__liveSubtitle.destroy) window.__liveSubtitle.destroy();
-      },
-    });
-  } catch (_error) {
-    // the tab may already be closed
-  }
 }
 
 async function closeOverlay() {
