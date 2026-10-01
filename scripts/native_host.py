@@ -17,7 +17,7 @@ HOST_NAME = "translation_backend"
 
 def project_root() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent.parent
+        return Path(sys.executable).resolve().parents[2]
     return Path(__file__).resolve().parents[1]
 
 

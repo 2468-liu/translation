@@ -17,7 +17,7 @@
 
 Chrome 扩展不能直接创建本地进程。首次使用需要构建并注册 Native Messaging host；完成后日常使用不需要手动运行 PowerShell。
 
-1. 在 Chrome 的扩展管理页打开开发者模式，加载 `extension`，复制扩展 ID。
+1. 在 Chrome 的扩展管理页打开开发者模式，加载 `extension`。Manifest 已固定扩展 ID，不需要手动复制 ID。
 2. 在项目根目录安装构建工具：
 
 ```powershell
@@ -30,13 +30,13 @@ D:\minanconda\envs\pytorch\python.exe -m pip install pyinstaller
 powershell -ExecutionPolicy Bypass -File scripts\build_native_host.ps1
 ```
 
-4. 使用刚才复制的扩展 ID 注册 host：
+4. 注册 host：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_native_host.ps1 -ExtensionId <扩展ID>
+powershell -ExecutionPolicy Bypass -File scripts\install_native_host.ps1
 ```
 
-扩展 ID 变化后需要重新执行第 4 步。host 只接受来自该扩展的本地消息，并以进程树方式管理 Python 服务和 llama-server。
+如果以后更换扩展公钥，可用 `-ExtensionId` 覆盖默认值。host 只接受来自该扩展的本地消息，并以进程树方式管理 Python 服务和 llama-server。
 
 ## 兼容启动命令（排障）
 

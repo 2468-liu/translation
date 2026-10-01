@@ -1,6 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ExtensionId
+    [string]$ExtensionId = "mgnbcjdhnfiiooeldkpbndgmffgapdll"
 )
 
 $ErrorActionPreference = "Stop"
