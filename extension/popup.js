@@ -1,5 +1,4 @@
 const toggle = document.getElementById("toggle");
-const show = document.getElementById("show");
 const status = document.getElementById("status");
 const language = document.getElementById("language");
 const textOnly = document.getElementById("textOnly");
@@ -25,7 +24,7 @@ function showApiFields() {
 }
 
 async function refresh() {
-  const stored = await chrome.storage.session.get(["running", "language", "overlayWindowId"]);
+  const stored = await chrome.storage.session.get(["running", "language"]);
   const theme = await chrome.storage.local.get({
     captionTextOnly: false,
     captionFontPx: 20,
@@ -53,7 +52,6 @@ async function refresh() {
   if (stored.language) language.value = stored.language;
   toggle.textContent = running ? "终止后端" : "开始";
   toggle.classList.toggle("stop", running);
-  show.hidden = !running;
   status.textContent = running ? "正在采集。关闭字幕窗不会停止后端。" : "未开始";
 }
 
@@ -79,23 +77,6 @@ apiEnabled.addEventListener("change", saveApi);
 for (const field of [apiUrl, apiKey, apiModel]) {
   field.addEventListener("change", saveApi);
 }
-
-show.addEventListener("click", async () => {
-  show.disabled = true;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const response = await chrome.runtime.sendMessage({
-      type: "show-overlay",
-      windowId: tab && tab.windowId,
-    });
-    if (!response || !response.ok) throw new Error((response && response.error) || "打不开字幕窗");
-  } catch (error) {
-    status.textContent = String(error.message || error);
-  } finally {
-    show.disabled = false;
-    await refresh();
-  }
-});
 
 toggle.addEventListener("click", async () => {
   toggle.disabled = true;

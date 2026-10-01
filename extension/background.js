@@ -26,25 +26,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     );
     return true;
   }
-  if (message.type === "show-overlay") {
-    chrome.runtime.sendMessage({ type: "raise-caption" }).catch(() => {});
-    sendResponse({ ok: true });
-    return false;
-  }
-  if (message.type === "focus-video") {
-    focusVideo().then(
-      () => sendResponse({ ok: true }),
-      (error) => sendResponse({ ok: false, error: String(error) })
-    );
-    return true;
-  }
-  if (message.type === "overlay-closed") {
-    closeOverlay().then(
-      () => sendResponse({ ok: true }),
-      (error) => sendResponse({ ok: false, error: String(error) })
-    );
-    return true;
-  }
   if (message.type === "capture-error") {
     captureError = message.error || "";
   }
@@ -72,7 +53,6 @@ function nativeConnection() {
   });
   return nativePort;
 }
-
 function nativeRequest(type, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const requestId = ++nativeRequestId;
@@ -90,7 +70,6 @@ function nativeRequest(type, timeoutMs = 120000) {
     }
   });
 }
-
 async function ensureBackend() {
   const response = await nativeRequest("ensure");
   if (!response || !response.ok || !response.ready) {
@@ -109,13 +88,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (!changes.captionTextOnly && !changes.captionFontPx) return;
   applyCaptionStyle(Boolean(changes.captionTextOnly));
-});
-
-chrome.windows.onRemoved.addListener(async (windowId) => {
-  const stored = await chrome.storage.session.get("overlayWindowId");
-  if (stored.overlayWindowId === windowId) {
-    await chrome.storage.session.remove("overlayWindowId");
-  }
 });
 
 function clampFont(px) {
@@ -169,7 +141,6 @@ async function stop() {
   if (await chrome.offscreen.hasDocument()) {
     await chrome.offscreen.closeDocument();
   }
-  await closeOverlay();
   await chrome.storage.session.set({ running: false });
   await shutdownBackend();
 }
@@ -211,50 +182,6 @@ async function ensureOffscreen() {
 
 function forwardCaption(_payload) {}
 
-async function openOverlay(windowId) {
-  const stored = await chrome.storage.session.get("overlayWindowId");
-  if (stored.overlayWindowId) {
-    try {
-      await chrome.windows.update(stored.overlayWindowId, {
-        state: "normal",
-        focused: true,
-        drawAttention: true,
-      });
-      return;
-    } catch (_error) {
-      await chrome.storage.session.remove("overlayWindowId");
-    }
-  }
-  let anchor = null;
-  if (windowId) {
-    try {
-      anchor = await chrome.windows.get(windowId);
-    } catch (_error) {
-      anchor = null;
-    }
-  }
-  if (!anchor) {
-    anchor = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-  }
-  const saved = await chrome.storage.local.get({ captionWidth: 640, captionHeight: 168 });
-  const width = saved.captionWidth || 640;
-  const height = saved.captionHeight || 168;
-  const left = Math.max(0, Math.round((anchor.left || 0) + ((anchor.width || 1200) - width) / 2));
-  const top = Math.max(0, Math.round((anchor.top || 0) + (anchor.height || 800) - height - 120));
-  const spec = {
-    url: chrome.runtime.getURL("overlay.html"),
-    type: "popup",
-    width,
-    height,
-    left,
-    top,
-    focused: true,
-    state: "normal",
-  };
-  const created = await chrome.windows.create(spec);
-  await chrome.storage.session.set({ overlayWindowId: created.id });
-}
-
 async function applyCaptionStyle() {
   const saved = await chrome.storage.local.get({ captionTextOnly: false, captionFontPx: 20 });
   const fontPx = clampFont(saved.captionFontPx);
@@ -265,34 +192,3 @@ async function applyCaptionStyle() {
   }).catch(() => {});
 }
 
-async function closeOverlay() {
-  const stored = await chrome.storage.session.get("overlayWindowId");
-  if (!stored.overlayWindowId) return;
-  try {
-    await chrome.windows.remove(stored.overlayWindowId);
-  } catch (_error) {
-    // already closed
-  }
-  await chrome.storage.session.remove("overlayWindowId");
-}
-
-async function closeStrayOverlays() {
-  const wins = await chrome.windows.getAll({ populate: true });
-  await Promise.all(
-    wins
-      .filter((win) => (win.tabs || []).some((tab) => (tab.url || "").includes("/overlay.html")))
-      .map((win) => chrome.windows.remove(win.id).catch(() => {}))
-  );
-}
-
-closeStrayOverlays();
-
-async function focusVideo() {
-  const stored = await chrome.storage.session.get("videoWindowId");
-  if (!stored.videoWindowId) return;
-  try {
-    await chrome.windows.update(stored.videoWindowId, { focused: true });
-  } catch (_error) {
-    // video window may have been closed
-  }
-}
