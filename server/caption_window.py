@@ -73,12 +73,7 @@ _LANG = {
 
 
 def fit_caption_width(measured: int, current: int, screen_width: int, locked: bool) -> int:
-    maximum = max(420, screen_width - 80)
-    if locked:
-        return current
-    if measured <= max(240, current - 48) * 2:
-        return current
-    return min(max(current, measured // 2 + 36), maximum)
+    return current
 
 
 def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str]:

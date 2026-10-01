@@ -101,8 +101,10 @@ toggle.addEventListener("click", async () => {
   try {
     const running = toggle.classList.contains("stop");
     if (running) {
+      status.textContent = "正在终止后端并释放模型…";
       await chrome.runtime.sendMessage({ type: "stop" });
     } else {
+      status.textContent = "正在启动本地服务和模型，请稍候…";
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) throw new Error("没有可用标签页");
       const api = apiPayload();

@@ -10,11 +10,9 @@ class CaptionLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(lines), 2)
         self.assertTrue("".join(lines).startswith("这是一个很长的实时字幕"))
 
-    def test_manual_width_never_auto_expands(self):
+    def test_width_never_auto_expands(self):
         self.assertEqual(fit_caption_width(1800, 760, 1920, locked=True), 760)
-
-    def test_auto_width_is_screen_bounded(self):
-        self.assertEqual(fit_caption_width(2400, 760, 1200, locked=False), 1120)
+        self.assertEqual(fit_caption_width(2400, 760, 1200, locked=False), 760)
 
     def test_empty_caption_has_no_lines(self):
         self.assertEqual(wrap_caption("", 400, lambda text: len(text) * 20), [])
