@@ -1,5 +1,5 @@
 const DEFAULTS = {
-  captionTextOnly: true,
+  captionTextOnly: false,
   captionBilingual: false,
 };
 
@@ -34,6 +34,9 @@ function mountCaption() {
       display: flex;
       justify-content: flex-start;
     }
+    #app.text-only #textOnlyControl,
+    #app.text-only #more,
+    #app.text-only #panel { display: none !important; }
     #textOnlyControl { margin-right: 8px; }
     #panel { display: none; gap: 10px; align-items: center; }
     #app.open #panel, #app:hover #panel { display: flex; }
@@ -110,6 +113,7 @@ function mountCaption() {
     sourceEl.classList.toggle("partial", !state.sourceFinal);
     zhEl.textContent = state.zh || "正在听…";
     zhEl.classList.toggle("partial", Boolean(state.zh) && !state.zhFinal);
+    textOnlyInput.checked = state.textOnly;
   }
 
   chrome.storage.local.get(DEFAULTS).then((saved) => {
@@ -138,7 +142,9 @@ function mountCaption() {
     paint();
   });
   textOnlyInput.addEventListener("change", () => {
-    chrome.storage.local.set({ captionTextOnly: textOnlyInput.checked });
+    state.textOnly = textOnlyInput.checked;
+    chrome.storage.local.set({ captionTextOnly: state.textOnly });
+    paint();
   });
   bilingualInput.addEventListener("change", () => {
     chrome.storage.local.set({ captionBilingual: bilingualInput.checked });

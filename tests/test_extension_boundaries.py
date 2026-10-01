@@ -13,6 +13,7 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertNotIn("scripting", manifest["permissions"])
         self.assertNotIn("activeTab", manifest["permissions"])
         self.assertNotIn("host_permissions", manifest)
+        self.assertNotIn("web_accessible_resources", manifest)
 
     def test_background_does_not_inject_content_script(self):
         background = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
@@ -25,6 +26,8 @@ class ExtensionBoundaryTests(unittest.TestCase):
         tk_caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
 
         self.assertIn('<label id="textOnlyControl">只有字', caption)
+        self.assertIn("#app.text-only #textOnlyControl", caption)
+        self.assertIn("chrome.storage.local.set({ captionTextOnly: state.textOnly })", caption)
         self.assertNotIn('<label>只有字 <input id="textOnly"', caption)
         self.assertIn('text_only_control = tk.Checkbutton', tk_caption)
         self.assertIn('self.text_only_control.place(x=8, y=3', tk_caption)

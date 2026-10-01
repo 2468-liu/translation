@@ -132,7 +132,7 @@ async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, ap
   await releaseCapture();
   await ensureOffscreen();
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-  const saved = await chrome.storage.local.get({ captionTextOnly: true, captionFontPx: 20 });
+  const saved = await chrome.storage.local.get({ captionTextOnly: false, captionFontPx: 20 });
   const fontPx = clampFont(saved.captionFontPx);
   const response = await sendWhenReady({
     type: "start-capture",
@@ -256,7 +256,7 @@ async function openOverlay(windowId) {
 }
 
 async function applyCaptionStyle() {
-  const saved = await chrome.storage.local.get({ captionTextOnly: true, captionFontPx: 20 });
+  const saved = await chrome.storage.local.get({ captionTextOnly: false, captionFontPx: 20 });
   const fontPx = clampFont(saved.captionFontPx);
   chrome.runtime.sendMessage({
     type: "caption-style",

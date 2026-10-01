@@ -152,7 +152,7 @@ class _Caption:
         self.root.withdraw()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.text_only = True
+        self.text_only = False
         self.visible = False
         self.closed = False
         self.have_translation = False
@@ -286,7 +286,10 @@ class _Caption:
             activebackground=bg,
             selectcolor=bg,
         )
-        self.text_only_control.place(x=8, y=3, anchor="nw")
+        if self.text_only:
+            self.text_only_control.place_forget()
+        else:
+            self.text_only_control.place(x=8, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:

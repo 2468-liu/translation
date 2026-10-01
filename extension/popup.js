@@ -27,7 +27,7 @@ function showApiFields() {
 async function refresh() {
   const stored = await chrome.storage.session.get(["running", "language", "overlayWindowId"]);
   const theme = await chrome.storage.local.get({
-    captionTextOnly: true,
+    captionTextOnly: false,
     captionFontPx: 20,
     apiEnabled: false,
     apiUrl: "",
@@ -59,6 +59,7 @@ async function refresh() {
 
 textOnly.addEventListener("change", () => {
   chrome.storage.local.set({ captionTextOnly: textOnly.checked });
+  status.textContent = textOnly.checked ? "已切换为只有字，字幕框控制区已隐藏。" : "已显示字幕框控制区。";
 });
 
 fontSize.addEventListener("input", () => {
