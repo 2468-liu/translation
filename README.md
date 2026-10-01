@@ -13,20 +13,47 @@
 
 `lid-lite-25` 和 `tongue` 只给文字分类，不能代替 Whisper。没有识别就没有字可译。把 Whisper 退回 CPU 会把“慢半句”加回来。
 
-启动：
+## 一次性安装本地启动桥接
+
+Chrome 扩展不能直接创建本地进程。首次使用需要构建并注册 Native Messaging host；完成后日常使用不需要手动运行 PowerShell。
+
+1. 在 Chrome 的扩展管理页打开开发者模式，加载 `extension`，复制扩展 ID。
+2. 在项目根目录安装构建工具：
+
+```powershell
+D:\minanconda\envs\pytorch\python.exe -m pip install pyinstaller
+```
+
+3. 构建无独立窗口的本地 host：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_native_host.ps1
+```
+
+4. 使用刚才复制的扩展 ID 注册 host：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_native_host.ps1 -ExtensionId <扩展ID>
+```
+
+扩展 ID 变化后需要重新执行第 4 步。host 只接受来自该扩展的本地消息，并以进程树方式管理 Python 服务和 llama-server。
+
+## 兼容启动命令（排障）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 ```
 
-旧流程需要先手动运行上面的脚本，再在 Chrome 重新加载 `extension`，打开视频页并点开始。后续交互改造的目标如下：
+上面的命令仅用于排障或兼容旧流程。正常使用时，在 Chrome 重新加载 `extension` 后打开视频页，直接点扩展里的“开始”即可自动静默启动本地服务。
+
+## 生命周期
 
 - 点扩展里的“开始”时自动启动本地服务，不需要预先运行脚本。
 - 自动启动必须静默，不能弹出 PowerShell 窗口。
 - 字幕窗点 `X` 只关闭当前字幕/采集会话，保留后端服务和模型驻留，方便下一次快速开始。
 - 扩展里的“终止”才停止本地后端并释放模型驻留；再次开始时自动重新启动。
 
-Chrome Manifest V3 扩展不能直接创建 PowerShell 或本地进程，因此自动启动不能靠扩展脚本本身完成。实现时需要一个已安装的本地启动桥接程序（例如 Native Messaging host 或静默 companion launcher），由它负责启动、复用和终止 `scripts\start.ps1` 对应的后端进程。扩展与后端之间还需要增加健康检查和生命周期消息，避免把“字幕窗关闭”误当成“模型退出”。
+扩展与 host 使用 Native Messaging 的 `ensure`、`status` 和 `shutdown` 消息，并检查 WebSocket 与 llama-server 两个端口都已就绪后才开始采集。项目代码本身没有声明额外开源许可证；分发给朋友时应同时保留 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 以及各模型、FFmpeg 和测试素材的原始许可说明。
 
 ## 用例
 

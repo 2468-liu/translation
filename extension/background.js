@@ -1,4 +1,8 @@
 let captureError = "";
+const NATIVE_HOST = "translation_backend";
+let nativePort = null;
+let nativeRequestId = 0;
+const nativeRequests = new Map();
 
 const CAPTION_TYPES = new Set(["asr", "translation", "segment_start", "status", "capture-error"]);
 
@@ -47,6 +51,60 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
+function nativeConnection() {
+  if (nativePort) return nativePort;
+  nativePort = chrome.runtime.connectNative(NATIVE_HOST);
+  nativePort.onMessage.addListener((message) => {
+    const request = nativeRequests.get(message && message.requestId);
+    if (!request) return;
+    nativeRequests.delete(message.requestId);
+    clearTimeout(request.timer);
+    request.resolve(message);
+  });
+  nativePort.onDisconnect.addListener(() => {
+    const error = chrome.runtime.lastError;
+    nativePort = null;
+    for (const request of nativeRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error((error && error.message) || "本地启动桥接已断开"));
+    }
+    nativeRequests.clear();
+  });
+  return nativePort;
+}
+
+function nativeRequest(type, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const requestId = ++nativeRequestId;
+    const timer = setTimeout(() => {
+      nativeRequests.delete(requestId);
+      reject(new Error("本地后端操作超时"));
+    }, timeoutMs);
+    nativeRequests.set(requestId, { resolve, reject, timer });
+    try {
+      nativeConnection().postMessage({ type, requestId });
+    } catch (error) {
+      clearTimeout(timer);
+      nativeRequests.delete(requestId);
+      reject(error);
+    }
+  });
+}
+
+async function ensureBackend() {
+  const response = await nativeRequest("ensure");
+  if (!response || !response.ok || !response.ready) {
+    throw new Error((response && response.error) || "本地后端启动失败");
+  }
+}
+
+async function shutdownBackend() {
+  const response = await nativeRequest("shutdown", 15000);
+  if (!response || !response.ok) {
+    throw new Error((response && response.error) || "本地后端停止失败");
+  }
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (!changes.captionTextOnly && !changes.captionFontPx) return;
@@ -84,6 +142,7 @@ function clampFont(px) {
 
 async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, apiModel }) {
   captureError = "";
+  await ensureBackend();
   await silencePage(tabId);
   // Chrome keeps a tab captured until its tracks end. Release the previous
   // consumer before asking for another id, or the same tab stays dead.
@@ -145,6 +204,7 @@ async function stop() {
   }
   await closeOverlay();
   await chrome.storage.session.set({ running: false });
+  await shutdownBackend();
 }
 
 async function sendWhenReady(message) {

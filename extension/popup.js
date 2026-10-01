@@ -51,10 +51,10 @@ async function refresh() {
     running = false;
   }
   if (stored.language) language.value = stored.language;
-  toggle.textContent = running ? "停止" : "开始";
+  toggle.textContent = running ? "终止后端" : "开始";
   toggle.classList.toggle("stop", running);
   show.hidden = !running;
-  status.textContent = running ? "正在采集。字幕在屏幕最上层。" : "未开始";
+  status.textContent = running ? "正在采集。关闭字幕窗不会停止后端。" : "未开始";
 }
 
 textOnly.addEventListener("change", () => {

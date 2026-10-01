@@ -33,7 +33,7 @@ if (Test-Port 8080) {
             "-c", "1024",
             "-t", "4",
             "-np", "1"
-        )
+        ) -WindowStyle Hidden
         Write-Host "starting llama-server $($gguf.Name)"
     }
 }

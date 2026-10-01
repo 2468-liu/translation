@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "·",
-  "version": "0.9.3",
+  "name": "本地实时字幕",
+  "version": "1.0.0",
   "description": "从播放器读取声音，在本机字幕条上显示译文。",
-  "permissions": ["offscreen", "tabCapture", "activeTab", "storage", "scripting"],
+  "permissions": ["offscreen", "tabCapture", "activeTab", "storage", "scripting", "nativeMessaging"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
