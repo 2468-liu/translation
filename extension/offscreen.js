@@ -182,9 +182,19 @@ async function startCapture(message) {
   if (audioContext.state === "suspended") await audioContext.resume();
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(audioContext.destination);
+  const highpass = audioContext.createBiquadFilter();
+  highpass.type = "highpass";
+  highpass.frequency.value = 80;
+  highpass.Q.value = 0.7;
+  const lowpass = audioContext.createBiquadFilter();
+  lowpass.type = "lowpass";
+  lowpass.frequency.value = 7600;
+  lowpass.Q.value = 0.7;
+  source.connect(highpass);
+  highpass.connect(lowpass);
   await audioContext.audioWorklet.addModule(chrome.runtime.getURL("pcm-worklet.js"));
   const worklet = new AudioWorkletNode(audioContext, "pcm-processor");
-  source.connect(worklet);
+  lowpass.connect(worklet);
   await openSocket(message);
   worklet.port.onmessage = (event) => {
     if (!capturing || !socket || socket.readyState !== WebSocket.OPEN) return;

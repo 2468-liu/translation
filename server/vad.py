@@ -17,6 +17,7 @@ from .config import (
 
 FRAME = 512  # 32ms at 16kHz
 MAX_UTTERANCE_MS = 20_000
+NON_SPEECH_GAIN = 0.0
 
 
 class _Silero:
@@ -136,7 +137,7 @@ class UtteranceSplitter:
                     self.since_partial_ms = 0
                     events.append(("partial", self._copy()))
             elif self.in_speech:
-                self.utterance.append(frame)
+                self.utterance.append(frame * NON_SPEECH_GAIN)
                 self.silence_ms += self.frame_ms
                 self.since_partial_ms += self.frame_ms
                 if self.silence_ms >= VAD_MIN_SILENCE_MS:

@@ -55,6 +55,17 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 
 扩展与 host 使用 Native Messaging 的 `ensure`、`status` 和 `shutdown` 消息，并检查 WebSocket 与 llama-server 两个端口都已就绪后才开始采集。项目代码本身没有声明额外开源许可证；分发给朋友时应同时保留 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 以及各模型、FFmpeg 和测试素材的原始许可说明。
 
+## 测试
+
+项目测试使用 `pytorch` Conda 环境中的 pytest：
+
+```powershell
+conda activate pytorch
+python -m pytest -q
+```
+
+采样会先经过浏览器端的语音频段滤波，再由服务端 VAD 压低句中非语音帧。电影音乐和剪辑音效无法保证被完全分离；若背景声被模型误判为语音，仍应优先使用更清晰的音轨或外部降噪输入。
+
 ## 用例
 
 写在 `scripts/bench_mt.py` 的 `CASES` 里。每句预热 1 次，再测 3 次，表内是中位数。测一个模型时只让它占显卡。

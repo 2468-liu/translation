@@ -29,10 +29,10 @@ function mountCaption() {
     header {
       position: absolute;
       top: 6px;
-      right: 8px;
+      right: auto;
       left: 8px;
       display: flex;
-      justify-content: flex-end;
+      justify-content: flex-start;
     }
     #panel { display: none; gap: 10px; align-items: center; }
     #app.open #panel, #app:hover #panel { display: flex; }
