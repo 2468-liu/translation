@@ -62,6 +62,10 @@
         max-width: 100%;
         overflow-wrap: anywhere;
         text-wrap: pretty;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
       }
       #source {
         margin: 0 0 4px;
@@ -75,10 +79,6 @@
         font-weight: 560;
         line-height: 1.35;
         letter-spacing: 0.01em;
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
-        overflow: hidden;
       }
       .partial { opacity: 0.72; }
       .hidden { display: none; }
@@ -346,6 +346,7 @@
       return;
     }
     if (message.type === "segment_start") {
+      state.hidden = false;
       state.source = "";
       state.zh = "";
       state.sourceFinal = true;
@@ -354,18 +355,21 @@
       return;
     }
     if (message.type === "asr") {
+      state.hidden = false;
       state.source = message.text || "";
       state.sourceFinal = Boolean(message.final);
       render(Boolean(message.final));
       return;
     }
     if (message.type === "translation") {
+      state.hidden = false;
       state.zh = message.text || "";
       state.zhFinal = Boolean(message.final);
       render(Boolean(message.final));
       return;
     }
     if (message.type === "capture-error") {
+      state.hidden = false;
       state.zh = message.error || "采集失败";
       state.zhFinal = true;
       render(true);

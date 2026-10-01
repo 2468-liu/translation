@@ -72,6 +72,43 @@ _LANG = {
 }
 
 
+def fit_caption_width(measured: int, current: int, screen_width: int, locked: bool) -> int:
+    maximum = max(420, screen_width - 80)
+    if locked:
+        return current
+    if measured <= max(240, current - 48) * 2:
+        return current
+    return min(max(current, measured // 2 + 36), maximum)
+
+
+def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str]:
+    if not text:
+        return []
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        if char == "\n":
+            lines.append(current)
+            current = ""
+            continue
+        candidate = current + char
+        if current and measure(candidate) > width:
+            lines.append(current)
+            current = char
+        else:
+            current = candidate
+    if current or not lines:
+        lines.append(current)
+    if len(lines) <= max_lines:
+        return lines
+    visible = lines[:max_lines]
+    last = visible[-1]
+    while last and measure(last + "…") > width:
+        last = last[:-1]
+    visible[-1] = (last + "…") if last else "…"
+    return visible
+
+
 def _port_busy() -> bool:
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -139,6 +176,7 @@ class _Caption:
         self.screen_width = self.root.winfo_screenwidth()
         self.width = max(round(760 * scale), self.font_line.measure("实时字幕") + 120)
         self.width = min(self.width, max(420, self.screen_width - 80))
+        self.width_locked = False
         self.height = self.font_line.metrics("linespace") + 28
         screen_h = self.root.winfo_screenheight()
         x = max(0, (self.screen_width - self.width) // 2)
@@ -243,10 +281,7 @@ class _Caption:
 
     def _fit_width(self, text: str, wrap: int) -> int:
         measured = self.font_line.measure(text.replace("\n", ""))
-        if measured <= wrap * 3:
-            return self.width
-        target = int(measured / 3) + 36
-        return min(max(self.width, target), max(420, self.screen_width - 80))
+        return fit_caption_width(measured, self.width, self.screen_width, self.width_locked)
 
     def _paint(self) -> None:
         self.canvas.delete("all")
@@ -262,8 +297,10 @@ class _Caption:
             left = max(0, min(round(center - self.width / 2), self.screen_width - self.width))
             self.root.geometry(f"{self.width}x{self.height}+{left}+{self.root.winfo_y()}")
             wrap = self.width - 48
+        display_lines = wrap_caption(body, wrap, self.font_line.measure)
+        display_body = "\n".join(display_lines)
         line_h = max(1, self.font_line.metrics("linespace"))
-        lines = self._line_count(body, wrap)
+        lines = len(display_lines)
         height = 10 + lines * line_h + 8
         if height != self.height:
             delta = height - self.height
@@ -275,42 +312,11 @@ class _Caption:
                 self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
             else:
                 self.root.geometry(f"{self.width}x{self.height}")
-        self._draw(body, self.font_line, wrap)
-
-    def _line_count(self, text: str, wrap: int) -> int:
-        lines = 1
-        used = 0
-        for ch in text:
-            if ch == "\n":
-                lines += 1
-                used = 0
-                continue
-            width = self.font_line.measure(ch)
-            if used and used + width > wrap:
-                lines += 1
-                used = width
-            else:
-                used += width
-        return min(lines, 3)
+        self._draw(display_body, self.font_line, wrap)
 
     def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
         x = self.width / 2
         y = 6
-        if self.text_only:
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    if dx == 0 and dy == 0:
-                        continue
-                    self.canvas.create_text(
-                        x + dx,
-                        y + dy,
-                        text=text,
-                        anchor="n",
-                        justify="center",
-                        fill="#000000",
-                        font=font,
-                        width=wrap,
-                    )
         self.canvas.create_text(
             x,
             y,
@@ -349,6 +355,8 @@ class _Caption:
 
     def _begin_resize(self, event, on_x: bool, on_y: bool) -> None:
         self._drag = None
+        if on_x:
+            self.width_locked = True
         self.width = self.root.winfo_width()
         self.height = self.root.winfo_height()
         self._resize_origin = (event.x_root, event.y_root, self.width, self.height, on_x, on_y)
