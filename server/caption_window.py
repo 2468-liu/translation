@@ -673,8 +673,10 @@ class _Caption:
             return action
         if action == "defer":
             if self._defer_t0:
-                if pending != self._defer_text:
-                    # Another sentence arrived before this one could be shown.
+                # A translation arrives one character at a time, so most of these
+                # are the same sentence growing. Only a different sentence means
+                # the one that was waiting never made it to the screen.
+                if classify_caption(self._defer_text, pending) == "sentence":
                     perf.emit(
                         "caption",
                         "overwrite",
