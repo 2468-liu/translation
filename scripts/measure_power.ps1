@@ -23,7 +23,15 @@ param(
     [Parameter(Mandatory = $true)][string] $Name,
     [switch] $AudioNative,
     [switch] $SkipReplay,
-    [int] $IntervalSeconds = 1
+    [int] $IntervalSeconds = 1,
+    # Samples before the run is treated as settled. The first seconds of a replay
+    # are the model warming up and the card clocking up, and they belong to no
+    # configuration.
+    [int] $WarmupSeconds = 30,
+    # Play the material for this long with no caption service at all, as the
+    # floor the other arms sit on. ffmpeg decodes to a null sink: the video
+    # pipeline and the display work, nothing is recognised or translated.
+    [int] $BaselineSeconds = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,7 +51,7 @@ $sampler = {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $lines = New-Object System.Collections.Generic.List[string]
     while ($true) {
-        $row = & nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,memory.used --format=csv,noheader,nounits
+        $row = & nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,memory.used,temperature.gpu,clocks.sm --format=csv,noheader,nounits
         if ($LASTEXITCODE -eq 0 -and $row) {
             $lines.Add(($row -join " "))
             Set-Content -Path $Path -Value $lines
@@ -58,7 +66,14 @@ $job = Start-Job -ScriptBlock $sampler -ArgumentList $raw, $IntervalSeconds
 Write-Host "sampling GPU every ${IntervalSeconds}s -> $raw"
 
 try {
-    if (-not $SkipReplay) {
+    if ($BaselineSeconds -gt 0) {
+        $ffmpeg = (Get-ChildItem "tools\ffmpeg\ffmpeg-*\bin\ffmpeg.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1).FullName
+        if (-not $ffmpeg) { throw "ffmpeg not found for the baseline arm" }
+        Write-Host "baseline: decoding samples/blog_3min.mp4 to a null sink for ${BaselineSeconds}s"
+        & $ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i "samples\blog_3min.mp4" -t $BaselineSeconds -f null -
+    }
+    elseif (-not $SkipReplay) {
         & .\scripts\replay.ps1 $Name -AudioNative:$AudioNative *>&1 |
             Where-Object { $_ -notmatch "^audio in:|SoundcardRuntimeWarning|warnings\.warn|^\s+\d+\.\d+s " }
     }
@@ -82,4 +97,4 @@ finally {
 $apps = & nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader
 $total = & nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
 
-& $Python scripts\summarize_power.py $raw $Name --apps $apps --total $total
+& $Python scripts\summarize_power.py $raw $Name --apps $apps --total $total --warmup $WarmupSeconds

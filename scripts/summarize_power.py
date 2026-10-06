@@ -4,9 +4,13 @@ Reports the mean, p95 and maximum rather than a single figure: a card that idles
 between sentences and peaks while decoding has an average that describes neither
 state, and the peak is what a laptop has to cool.
 
-Memory comes in two columns on purpose. Per-process is what the models cost; the
-whole-card figure includes the desktop compositor and the browser, which on a 4GB
-card is the difference between fitting and not.
+The first samples are dropped. They cover the model warming up and the card
+climbing to its clocks, which belong to no configuration, and including them
+makes a short run read as cooler than a long one.
+
+Per-process memory is requested but frequently unavailable: under WDDM on Windows
+nvidia-smi answers N/A for it, so the honest report is that the number could not
+be had rather than the whole-card figure relabelled as a process figure.
 """
 
 from __future__ import annotations
@@ -16,85 +20,131 @@ import statistics
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
 
+def read_samples(path: Path) -> list[dict]:
+    """timestamp, power, util, memory.used, temperature, sm clock.
 
-def read_samples(path: Path) -> list[tuple[float, float, float]]:
-    """timestamp, power.draw, utilization.gpu, memory.used -- in that order.
-
-    Three numbers, not four: the query does not ask for total memory, and reading
-    a column that was never requested yields an empty trace that looks like a
-    machine that drew no power at all.
+    Six columns, matching the query that produced the file. Reading a column the
+    query never asked for yields an empty trace that looks like a machine that
+    drew no power at all.
     """
     rows = []
     for row in csv.reader(path.read_text(encoding="utf-8").splitlines()):
         if len(row) < 4:
             continue
-        try:
-            power, util, used = (float(cell) for cell in row[1:4])
-        except ValueError:
-            continue
-        rows.append((power, util, used))
+        values = []
+        for cell in row[1:]:
+            try:
+                values.append(float(cell))
+            except ValueError:
+                values.append(float("nan"))
+        while len(values) < 5:
+            values.append(float("nan"))
+        rows.append(
+            {
+                "power": values[0],
+                "util": values[1],
+                "mem": values[2],
+                "temp": values[3],
+                "clock": values[4],
+            }
+        )
     return rows
 
 
 def pct(values: list[float], q: float) -> float:
-    if not values:
+    clean = [v for v in values if v == v]
+    if not clean:
         return float("nan")
-    return sorted(values)[min(len(values) - 1, int(q * len(values)))]
+    return sorted(clean)[min(len(clean) - 1, int(q * len(clean)))]
+
+
+def stat(label: str, values: list[float], unit: str = "", scale: float = 1.0) -> None:
+    clean = [v for v in values if v == v]
+    if not clean:
+        print(f"   {label:16} not reported")
+        return
+    print(
+        f"   {label:16} mean {statistics.mean(clean) * scale:7.1f}   "
+        f"p95 {pct(clean, 0.95) * scale:7.1f}   max {max(clean) * scale:7.1f}  {unit}"
+    )
+
+
+def app_memory(apps: str) -> float | None:
+    """Per-process MiB, or None when the driver does not report it."""
+    total = 0.0
+    seen = False
+    for line in apps.splitlines():
+        if "," not in line:
+            continue
+        cell = line.split(",")[1].strip().replace("MiB", "").strip()
+        try:
+            total += float(cell)
+        except ValueError:
+            # N/A, which is what WDDM reports. Not zero: unavailable is not empty.
+            return None
+        seen = True
+    return total if seen else None
 
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        raise SystemExit("usage: summarize_power.py <csv> <name> [--apps ..] [--total ..]")
+        raise SystemExit("usage: summarize_power.py <csv> <name> [flags]")
     path = Path(argv[0])
     name = argv[1]
-    apps = ""
-    total = ""
-    for flag in argv[2:]:
-        if flag == "--apps" and argv.index(flag) + 1 < len(argv):
-            apps = argv[argv.index(flag) + 1]
-        if flag == "--total" and argv.index(flag) + 1 < len(argv):
-            total = argv[argv.index(flag) + 1]
+    apps = total = ""
+    warmup = 0
+    rest = argv[2:]
+    for index, flag in enumerate(rest):
+        nxt = rest[index + 1] if index + 1 < len(rest) else ""
+        if flag == "--apps":
+            apps = nxt
+        elif flag == "--total":
+            total = nxt
+        elif flag == "--warmup":
+            warmup = int(nxt or 0)
 
     rows = read_samples(path)
     if not rows:
         raise SystemExit(f"no usable samples in {path}")
-    power = [r[0] for r in rows]
-    util = [r[1] for r in rows]
-    used = [r[2] for r in rows]
-    busy = [u for u in util if u > 0]
-
-    app_mb = sum(float(line.split(",")[1]) for line in apps.splitlines() if "," in line)
-    total_mb = float(total.split(",")[0]) if "," in total else float("nan")
-    cap_mb = float(total.split(",")[1]) if "," in total else float("nan")
+    dropped = min(warmup, max(0, len(rows) - 1))
+    rows = rows[dropped:]
+    if not rows:
+        raise SystemExit(f"{path}: warmup of {warmup}s left no samples")
 
     print(f"== {name}")
-    print(f"   samples          {len(rows)}")
     print(
-        f"   board power W    mean {statistics.mean(power):6.1f}   "
-        f"p95 {pct(power, 0.95):6.1f}   max {max(power):6.1f}"
+        f"   samples          {len(rows)} kept, {dropped} dropped as warmup"
+        f"   (raw {len(read_samples(path))})"
     )
-    print(
-        f"   gpu util %       mean {statistics.mean(util):6.1f}   "
-        f"p95 {pct(util, 0.95):6.1f}   max {max(util):6.1f}"
-    )
-    # The duty cycle, over the seconds the card was doing nothing as well as the
-    # ones it was busy. Averaging over busy seconds alone would flatter a
-    # pipeline that idles politely between sentences.
+    stat("board power W", [r["power"] for r in rows])
+    stat("gpu util %", [r["util"] for r in rows])
+    stat("sm clock MHz", [r["clock"] for r in rows])
+    stat("temperature C", [r["temp"] for r in rows])
+    stat("card memory MiB", [r["mem"] for r in rows])
+
+    busy = [r["util"] for r in rows if r["util"] == r["util"] and r["util"] > 0]
     if busy:
         print(
-            f"   busy fraction    {len(busy) / len(util) * 100:6.1f}% of samples,"
-            f" util {statistics.mean(busy):.0f}% while busy"
+            f"   {'busy fraction':16} {len(busy) / len(rows) * 100:7.1f}% of samples,"
+            f" {statistics.mean(busy):.0f}% mean utilisation while busy"
         )
-    print(
-        f"   card memory MiB  mean {statistics.mean(used):6.0f}   max {max(used):6.0f}"
-        f"   of {cap_mb:.0f}"
-    )
-    print(
-        f"   compute procs    {app_mb:6.0f} MiB"
-        f"   (rest of card: {total_mb - app_mb:.0f} MiB)"
-    )
+
+    per_process = app_memory(apps)
+    if per_process is None:
+        print(
+            f"   {'compute procs':16} not reported by this driver (WDDM answers N/A);"
+            " only whole-card memory is available"
+        )
+    else:
+        whole = None
+        if "," in total:
+            try:
+                whole = float(total.split(",")[0].strip().replace("MiB", "").strip())
+            except ValueError:
+                whole = None
+        rest_of_card = f", rest of card {whole - per_process:.0f} MiB" if whole else ""
+        print(f"   {'compute procs':16} {per_process:7.0f} MiB{rest_of_card}")
     print(f"   trace            {path}")
     return 0
 

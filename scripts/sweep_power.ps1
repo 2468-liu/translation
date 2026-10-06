@@ -20,11 +20,10 @@
 #>
 [CmdletBinding()]
 param(
-    [int[]] $PartialIntervals = @(250, 500, 1000, 0),
-    # Rounds per arm. One replay of this material has been seen to differ from
-    # itself by a factor of two, so one is a sample rather than a measurement.
-    [int] $WhisperRuns = 1,
-    [int] $AudioRuns = 3,
+    # Rounds per arm, interleaved rather than run to completion one after
+    # another. One replay of this material has been seen to differ from itself by
+    # a factor of two, so one round is a sample rather than a measurement.
+    [int] $Rounds = 2,
     [string] $Config = "server\config.py"
 )
 
@@ -75,30 +74,39 @@ function Ensure-TranslationModel {
 
 Ensure-TranslationModel
 
-foreach ($ms in $PartialIntervals) {
-    Set-PartialInterval $ms
-    $base = if ($ms -eq 0) { "pw-whisper-closed" } else { "pw-whisper$ms" }
-    for ($i = 1; $i -le $WhisperRuns; $i++) {
-        $label = if ($WhisperRuns -eq 1) { $base } else { "$base-$([char]([int][char]'a' + $i - 1))" }
+# The arms, in the order they run. Interleaved on purpose: running each
+# configuration to completion before starting the next lets the card's thermal
+# state drift with the order, and a difference between two arms then contains
+# however warm the second one was. Round-robin puts the drift in shared
+# comparison instead of in one arm.
+$arms = @(
+    @{ name = "pw-baseline-video"; kind = "baseline" }
+    @{ name = "pw-whisper250"; kind = "whisper"; partial = 250 }
+    @{ name = "pw-audio-a"; kind = "audio" }
+    @{ name = "pw-whisper500"; kind = "whisper"; partial = 500 }
+    @{ name = "pw-whisper-closed"; kind = "whisper"; partial = 0 }
+    @{ name = "pw-whisper1000"; kind = "whisper"; partial = 1000 }
+)
+
+for ($round = 1; $round -le $Rounds; $round++) {
+    foreach ($arm in $arms) {
+        $label = if ($Rounds -eq 1) { $arm.name } else { "$($arm.name)-r$round" }
         Write-Host ""
-        Write-Host "===== $label ====="
+        Write-Host "===== $label (round $round/$Rounds) ====="
         try {
-            & .\scripts\measure_power.ps1 -Name $label
+            if ($arm.kind -eq "baseline") {
+                # Video only: no caption service, nothing on 8080. This is the
+                # floor every other arm sits on top of -- the decoder, the
+                # compositor and the panel are all drawing whatever they draw.
+                & .\scripts\measure_power.ps1 -Name $label -BaselineSeconds 200
+            }
+            else {
+                if ($arm.kind -eq "whisper") { Set-PartialInterval $arm.partial }
+                & .\scripts\measure_power.ps1 -Name $label -AudioNative:($arm.kind -eq "audio")
+            }
         }
         catch {
             Write-Warning "$label failed: $_"
         }
-    }
-}
-
-for ($i = 1; $i -le $AudioRuns; $i++) {
-    $label = if ($AudioRuns -eq 1) { "pw-audio" } else { "pw-audio-$([char]([int][char]'a' + $i - 1))" }
-    Write-Host ""
-    Write-Host "===== $label ====="
-    try {
-        & .\scripts\measure_power.ps1 -Name $label -AudioNative
-    }
-    catch {
-        Write-Warning "$label failed: $_"
     }
 }
