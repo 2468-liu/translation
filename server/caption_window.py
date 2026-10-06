@@ -186,8 +186,11 @@ class _Caption:
         self._defer_t0 = 0.0
         self._defer_text = ""
         self._defer_chars = 0
+        self._segment_seq = 0
+        self._wait_segment = 0
         self._line_since = 0.0
         self._prev_chars = 0
+        self._held_paint = False
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_color = "#ffffff"
@@ -433,6 +436,7 @@ class _Caption:
                 since_send=perf.wall_ms(self._trace_sent),
                 since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
                 chars=len(display_body),
+                held=1 if self._held_paint else 0,
             )
             self._trace_sent = 0.0
             self._trace_recv = 0.0
@@ -586,6 +590,8 @@ class _Caption:
         self._close_wait("", "hide")
         self._line_since = 0.0
         self._prev_chars = 0
+        self._held_paint = False
+        self._wait_segment = self._segment_seq
         self.have_translation = False
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
@@ -599,6 +605,7 @@ class _Caption:
 
     def begin_segment(self) -> None:
         now = time.monotonic()
+        self._segment_seq += 1
         if self._last_segment_at:
             gap = now - self._last_segment_at
             if 0.45 <= gap <= 8.0:
@@ -628,6 +635,7 @@ class _Caption:
         """Start, or move, the window in which this sentence is kept off screen."""
         if not self._defer_t0:
             perf.emit("caption", "defer", chars=len(pending))
+            self._wait_segment = self._segment_seq
         self._defer_t0 = time.monotonic() if not self._defer_t0 else self._defer_t0
         self._defer_text = pending
         self._defer_chars = len(pending)
@@ -672,10 +680,15 @@ class _Caption:
         if action == "drop":
             return action
         if action == "defer":
-            # A translation arrives one character at a time, so most of these are
-            # the waiting sentence growing. Only a different sentence means the
-            # one on hold never made it to the screen.
-            if previous and classify_caption(previous, pending) == "sentence":
+            # A translation arrives one character at a time, so most of what
+            # arrives while a sentence waits is that same sentence growing or
+            # being revised. Text from the next utterance can only appear after a
+            # segment boundary, and only then does the waiting sentence get lost.
+            if (
+                previous
+                and self._segment_seq != self._wait_segment
+                and classify_caption(previous, pending) == "sentence"
+            ):
                 perf.emit(
                     "caption",
                     "overwrite",
@@ -733,7 +746,12 @@ class _Caption:
         if action in ("grow", "swap"):
             self._next_utterance_at = 0.0
         if action in ("grow", "char", "swap"):
-            self._apply_line(line)
+            # Name the action here too. Without it a paint that came out of the
+            # hold is reported as whatever the last packet was, and every swap
+            # that had to wait looks like a defer.
+            self._held_paint = True
+            self._apply_line(line, action)
+            self._held_paint = False
         if action == "wait" or self._pending:
             self._arm_hold()
 
