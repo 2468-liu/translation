@@ -46,7 +46,20 @@ if ($AudioNative) {
         "-ngl", "99", "-c", "2048", "-t", "4", "--jinja", "-lv", "4"
     ) -NoNewWindow `
         -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
-    Start-Sleep -Seconds $StartupWait
+    # Loading the weights takes far longer than the Python service does, so the
+    # socket can stay closed well past the usual wait. Poll instead of sleeping:
+    # the port answering means the model is actually resident.
+    $ready = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Seconds 5
+        if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+            $ready = $true
+            break
+        }
+        Write-Host "  waiting for llama-server ($((($i + 1) * 5))s)"
+    }
+    if (-not $ready) { throw "llama-server did not come up on 8080" }
+    Write-Host "  llama-server ready"
 }
 
 # The logs still on disk belong to the PREVIOUS run, so that is the name they
