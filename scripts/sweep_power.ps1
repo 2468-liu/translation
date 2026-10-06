@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Trace GPU power across both pipelines on the same material.
 
@@ -35,7 +35,7 @@ function Start-IdleModel([string] $Which) {
     Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 2
     if ($Which -eq "hy") { Ensure-TranslationModel; return }
-    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
+    $Llama = (& .\scripts\resolve_llama.ps1 | Select-Object -Last 1).path
     $gguf = (Get-ChildItem "models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
     $mmproj = (Get-ChildItem "models\gemma4-e2b\*mmproj*.gguf" | Select-Object -First 1).FullName
     Write-Host "starting llama-server (gemma audio model, projector on CPU, idle)"
@@ -83,7 +83,7 @@ function Ensure-TranslationModel {
         Write-Host "llama-server already on 8080"
         return
     }
-    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
+    $Llama = (& .\scripts\resolve_llama.ps1 | Select-Object -Last 1).path
     $gguf = (Get-ChildItem "models\hy-mt2-1.8b\*.gguf" | Select-Object -First 1).FullName
     Write-Host "starting llama-server ($([System.IO.Path]::GetFileName($gguf)))"
     Start-Process -FilePath $Llama -ArgumentList @(

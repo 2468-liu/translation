@@ -33,10 +33,18 @@ if ($AudioNative) {
 }
 Start-Sleep -Seconds 2
 
+# The backend is resolved rather than hardcoded, and the version goes into this
+# run's meta. Resolved for every run, not just the audio one: a backend that
+# changes between arms makes two runs incomparable for the same reason a
+# config.py edit used to, and the whisper arms are served by whatever is already
+# on 8080, which is exactly the thing that goes unrecorded.
+$backend = & .\scripts\resolve_llama.ps1 | Select-Object -Last 1
+$Llama = $backend.path
+$LlamaVersion = $backend.version
+
 if ($AudioNative) {
     # Start llama-server here rather than via start.ps1, which also launches the
     # Python service. Same arguments, so both entry points stay in step.
-    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
     $gguf = (Get-ChildItem "$Root\models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
     $mmproj = (Get-ChildItem "$Root\models\gemma4-e2b\*mmproj*.gguf" | Select-Object -First 1).FullName
     Write-Host "starting llama-server (audio model, projector on CPU)"
@@ -161,6 +169,7 @@ print(json.dumps({
     code = $stamp
     when = (Get-Date).ToString("o")
     audio_native = [bool]$AudioNative
+    llama_version = $LlamaVersion
     thresholds = ($effective -join "").Trim()
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
