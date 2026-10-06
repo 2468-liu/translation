@@ -47,6 +47,15 @@ class Session:
     measured against each other with the same tooling.
     """
 
+    # Defaults on the class, not only in __init__. A field initialised in one
+    # reset path and read in another raises AttributeError the first time the
+    # other path runs, which is how three replays of the audio arm produced no
+    # translations at all: _last_audio_final was set in reset_for_media and read
+    # on a session that had never been reset.
+    _last_audio_final: str = ""
+    shown_translation: str = ""
+    shown_source: str = ""
+
     def __init__(self, asr: AsrEngine | None = None, tuning=None):
         self.audio_native = asr is None
         self.asr = asr

@@ -138,11 +138,18 @@ class SplitterLimitTests(unittest.TestCase):
     def test_splitter_uses_its_tuning_not_module_constants(self):
         from server.vad import UtteranceSplitter
 
-        speech = [True] * 9 + [False] * 22  # 288ms speech, then 704ms silence
-        splitter = UtteranceSplitter(FakeVad(speech), tuning=audio_model_tuning())
+        # Silence long enough for whichever closing threshold is configured.
+        # Pinned to the tuning rather than to a frame count: 704ms of silence
+        # closes a 400ms threshold and leaves a 1000ms one still waiting, so a
+        # test written against one setting silently stops testing the other.
+        t = audio_model_tuning()
+        frame_ms = FRAME * 1000 / 16000
+        silent_frames = int(t.min_silence_ms / frame_ms) + 4
+        speech = [True] * 9 + [False] * silent_frames
+        splitter = UtteranceSplitter(FakeVad(speech), tuning=t)
         payload = np.concatenate(
             [np.ones(FRAME, dtype=np.float32) for _ in range(9)]
-            + [np.zeros(FRAME, dtype=np.float32) for _ in range(22)]
+            + [np.zeros(FRAME, dtype=np.float32) for _ in range(silent_frames)]
         )
         kinds = [k for k, _a, _f in splitter.push(payload)]
         self.assertIn("end", kinds)
