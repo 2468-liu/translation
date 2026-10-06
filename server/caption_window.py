@@ -186,8 +186,8 @@ class _Caption:
         self._defer_t0 = 0.0
         self._defer_text = ""
         self._defer_chars = 0
-        self._last_paint_at = 0.0
-        self._prev_paint_action = ""
+        self._line_since = 0.0
+        self._prev_chars = 0
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_color = "#ffffff"
@@ -412,17 +412,18 @@ class _Caption:
                 self.root.geometry(f"{self.width}x{self.height}")
         self._draw(display_body, self.font_line, wrap)
         now = time.monotonic()
-        if self._last_paint_at:
-            # How long the previous line stayed up. A run of short gaps means the
-            # next sentence is cutting the one on screen short.
+        if self._line_since and self._trace_action == "swap":
+            # How long the sentence that was just replaced stayed up. Streaming
+            # repaints do not count: the clock starts when a sentence appears.
             perf.emit(
                 "caption",
                 "dwell",
-                gap=round((now - self._last_paint_at) * 1000.0, 1),
-                chars=len(self.line),
-                prev=self._prev_paint_action,
+                gap=round((now - self._line_since) * 1000.0, 1),
+                lost=self._prev_chars,
+                shown=len(self.line),
             )
-        self._last_paint_at = now
+        if self._trace_action in ("grow", "swap"):
+            self._line_since = now
         if self._trace_sent:
             # First draw after a packet: this is "actually on screen".
             perf.emit(
@@ -433,7 +434,6 @@ class _Caption:
                 since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
                 chars=len(display_body),
             )
-            self._prev_paint_action = self._trace_action
             self._trace_sent = 0.0
             self._trace_recv = 0.0
             self._trace_action = ""
@@ -584,8 +584,8 @@ class _Caption:
         self._trace_recv = 0.0
         self._trace_action = ""
         self._close_wait("", "hide")
-        self._last_paint_at = 0.0
-        self._prev_paint_action = ""
+        self._line_since = 0.0
+        self._prev_chars = 0
         self.have_translation = False
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
@@ -625,13 +625,12 @@ class _Caption:
         self._apply_line(cleaned, "note")
 
     def _open_wait(self, pending: str) -> None:
-        """Start the clock on how long this sentence is kept off the screen."""
-        if self._defer_t0:
-            return
-        self._defer_t0 = time.monotonic()
+        """Start, or move, the window in which this sentence is kept off screen."""
+        if not self._defer_t0:
+            perf.emit("caption", "defer", chars=len(pending))
+        self._defer_t0 = time.monotonic() if not self._defer_t0 else self._defer_t0
         self._defer_text = pending
         self._defer_chars = len(pending)
-        perf.emit("caption", "defer", chars=len(pending))
 
     def _close_wait(self, pending: str, action: str) -> None:
         """Close the wait once nothing is pending any more.
@@ -659,6 +658,7 @@ class _Caption:
         if not cleaned:
             return "empty"
         self.have_translation = True
+        previous = self._pending
         action, line, pending, anchor, settle, _deadline = step_caption(
             self.line,
             self._pending,
@@ -672,20 +672,20 @@ class _Caption:
         if action == "drop":
             return action
         if action == "defer":
-            if self._defer_t0:
-                # A translation arrives one character at a time, so most of these
-                # are the same sentence growing. Only a different sentence means
-                # the one that was waiting never made it to the screen.
-                if classify_caption(self._defer_text, pending) == "sentence":
-                    perf.emit(
-                        "caption",
-                        "overwrite",
-                        held=round((time.monotonic() - self._defer_t0) * 1000.0, 1),
-                        chars=len(pending),
-                        lost=self._defer_chars,
-                    )
-            else:
-                self._open_wait(pending)
+            # A translation arrives one character at a time, so most of these are
+            # the waiting sentence growing. Only a different sentence means the
+            # one on hold never made it to the screen.
+            if previous and classify_caption(previous, pending) == "sentence":
+                perf.emit(
+                    "caption",
+                    "overwrite",
+                    held=round((time.monotonic() - self._defer_t0) * 1000.0, 1)
+                    if self._defer_t0
+                    else -1.0,
+                    chars=len(pending),
+                    lost=len(previous),
+                )
+            self._open_wait(pending)
         self._pending = pending
         self._growth_stopped_at = anchor
         self._settle_until = settle
@@ -742,6 +742,7 @@ class _Caption:
         # tell an immediate redraw apart from a held one.
         if action:
             self._trace_action = action
+        self._prev_chars = len(self.line)
         self.line = (text or "").strip()
         action = caption_action(self.closed, self.line, self.visible)
         if action == "withdraw":

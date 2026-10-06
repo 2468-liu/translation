@@ -57,6 +57,37 @@ class PipelineLanguageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.language, "ja")
         self.assertTrue(session.language_locked)
 
+    async def test_closing_event_reports_a_final_translation(self):
+        """An unchanged closing text still has to be marked as final.
+
+        Skipping the repeat translation is right, but skipping the message
+        entirely leaves every recorder without a single final event, which is
+        how per-sentence quality came back empty across six replays.
+        """
+        session = Session(FakeAsr([("hello", "en", 0.99), ("hello", "en", 0.99)]))
+        sent: list[dict] = []
+        scheduled: list[tuple] = []
+        session._schedule_translate = (
+            lambda text, final, language, generation, send: scheduled.append(
+                (text, final, language)
+            )
+        )
+
+        async def send(payload: dict) -> None:
+            sent.append(payload)
+
+        try:
+            # The recogniser returns the same source text a second time, so the
+            # repeat translation is skipped -- but the final must still go out.
+            session.last_translated = "hello"
+            session.last_translation = "你好"
+            await session._run("end", np.ones(16000, dtype=np.float32), send)
+        finally:
+            await session.close()
+
+        finals = [p for p in sent if p.get("type") == "translation" and p["final"]]
+        self.assertEqual([p["text"] for p in finals], ["你好"])
+
     async def test_new_media_clears_auto_language_and_caption_context(self):
         session = Session(FakeAsr([]))
         try:

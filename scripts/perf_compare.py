@@ -30,6 +30,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # Inside one replay the client sends audio every 100ms, so there is never a
 # long silence; two replays are always separated by a 17s restart pause.
 GAP_S = 10.0
+# A replay is ~185s and emits thousands of lines. Anything shorter is a restart
+# artefact or a leftover, never a run worth measuring.
+MIN_EVENTS = 200
 
 
 def code_identity(override: str | None = None) -> str:
@@ -84,19 +87,26 @@ def load(path: Path) -> list[tuple[float, str, dict[str, str]]]:
     return rows
 
 
-def first_block(rows, gap: float = GAP_S):
-    """Trim to the first contiguous burst of events."""
+def first_block(rows, gap: float = GAP_S, min_events: int = MIN_EVENTS):
+    """Trim to the first contiguous burst that is big enough to be a replay.
+
+    Short blocks are not replays. A restart leaves an ASR warm-up, and a stray
+    pytest run leaves a handful of lines, either of which would otherwise be
+    picked as "the run" and produce confident nonsense.
+    """
     if not rows:
         return rows
-    start = rows[0][0]
-    end = start
-    out = []
-    for wall, tag, fields in rows:
-        if wall - end > gap:
-            break
-        end = wall
-        out.append((wall, tag, fields))
-    return out
+    start = 0
+    while start < len(rows):
+        end = start
+        last = rows[start][0]
+        while end < len(rows) and rows[end][0] - last <= gap:
+            last = rows[end][0]
+            end += 1
+        if end - start >= min_events:
+            return rows[start:end]
+        start = end
+    return rows[:0]
 
 
 def numbers(rows, tag: str, field: str) -> list[float]:

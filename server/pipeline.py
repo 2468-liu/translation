@@ -246,6 +246,18 @@ class Session:
         if not should_translate:
             return
         if text == self.last_translated:
+            if final and self.last_translation:
+                # The closing event still has to reach whoever is recording, even
+                # though there is nothing new to translate. Re-send what is
+                # already on screen; the caption window reads it as the same
+                # line and drops it, so this costs one packet and no work.
+                await send(
+                    {
+                        "type": "translation",
+                        "text": self.last_translation,
+                        "final": True,
+                    }
+                )
             return
         self.last_translated = text
         self._schedule_translate(text, final, current_language, generation, send)
