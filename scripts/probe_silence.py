@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.audit_quality import cjk_ratio, find_loop, fragments  # noqa: E402
+from scripts.audit_quality import _resolve, cjk_ratio, find_loop, fragments  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,28 +67,6 @@ def enqueues(name: str) -> list[tuple[float, float]]:
 
 def perf_log_for(name: str) -> Path:
     return _resolve("perf", ".log", "perf.log", name)
-
-
-def _resolve(stem: str, ext: str, live_name: str, name: str) -> Path:
-    """Find a run's log, archived or still pending.
-
-    A replay's logs are only renamed once the next one starts, so the most recent
-    run is still sitting under the un-suffixed name. Reading it here means the
-    last run of a sweep does not have to be waited on.
-    """
-    archived = ROOT / "logs" / f"{stem}.{name}{ext}"
-    if archived.exists():
-        return archived
-    pending = ROOT / "logs" / "run.pending.json"
-    live = ROOT / "logs" / live_name
-    if live.exists() and pending.exists():
-        try:
-            recorded = json.loads(pending.read_text(encoding="utf-8-sig")).get("name")
-        except (json.JSONDecodeError, OSError):
-            recorded = None
-        if recorded == name:
-            return live
-    return archived
 
 
 def log_for(name: str) -> Path:

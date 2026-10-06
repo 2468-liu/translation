@@ -1,4 +1,4 @@
-r"""Report translation-quality failures in a replay log.
+﻿r"""Report translation-quality failures in a replay log.
 
 Latency metrics answer whether the caption arrives quickly. They say nothing
 about whether what arrives is a translation. On the audio-native path the model
@@ -22,7 +22,37 @@ import statistics
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from server.config import AUDIO_CHINESE_SHARE_MIN  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _resolve(stem: str, ext: str, live_name: str, name: str) -> Path:
+    """Find a run's log, archived or still pending.
+
+    A replay's logs are only renamed once the next one starts, so the most recent
+    run is still sitting under the un-suffixed name. Reading it here means the
+    last run of a sweep does not have to be waited on -- and without this, every
+    tool reports the newest run as missing.
+
+    Lives here rather than in probe_silence because that module imports from this
+    one, and a resolver both need would otherwise be an import cycle.
+    """
+    archived = ROOT / "logs" / f"{stem}.{name}{ext}"
+    if archived.exists():
+        return archived
+    pending = ROOT / "logs" / "run.pending.json"
+    live = ROOT / "logs" / live_name
+    if live.exists() and pending.exists():
+        try:
+            recorded = json.loads(pending.read_text(encoding="utf-8-sig")).get("name")
+        except (json.JSONDecodeError, OSError):
+            recorded = None
+        if recorded == name:
+            return live
+    return archived
 
 # A phrase that shows up this many times, separated by a comma, is a loop and
 # not a sentence. Two is the threshold: "湖畔，湖岸" is legitimate contrast, the
@@ -50,7 +80,15 @@ def fragments(events: list[dict]) -> list[dict]:
 
 
 def cjk_ratio(text: str) -> float:
-    letters = [c for c in text if not c.isspace()]
+    """Share of letters that are Chinese -- the guard's own measure.
+
+    Was a separate definition here, and the two drifted the way they did before:
+    this one counted non-whitespace characters, the guard counts letters. A
+    correct translation quoting an English title then scored below 0.5 here and
+    was reported as untranslated while the guard let it through -- the audit
+    contradicting the thing it audits.
+    """
+    letters = [c for c in (text or "") if c.isalpha()]
     if not letters:
         return 0.0
     return sum(1 for c in letters if _CJK.match(c)) / len(letters)
@@ -76,7 +114,10 @@ def find_loop(text: str) -> str | None:
 
 
 def check(name: str) -> dict | None:
-    path = ROOT / "logs" / f"blog_3min_test.{name}.json"
+    # Through the shared resolver, so the most recent run is readable while its
+    # logs are still un-suffixed. Otherwise the newest run always looks missing
+    # and the audit appears to have nothing new to say.
+    path = _resolve("blog_3min_test", ".json", "blog_3min_test.json", name)
     if not path.exists():
         return None
     frags = fragments(json.loads(path.read_text(encoding="utf-8"))["events"])
@@ -86,7 +127,7 @@ def check(name: str) -> dict | None:
         loop = find_loop(text)
         if loop:
             rows.append(("loop", frag["at"], text, loop))
-        elif cjk_ratio(text) < 0.5:
+        elif cjk_ratio(text) < AUDIO_CHINESE_SHARE_MIN:
             rows.append(("untranslated", frag["at"], text, f"cjk {cjk_ratio(text):.0%}"))
     return {"run": name, "frags": frags, "rows": rows}
 
