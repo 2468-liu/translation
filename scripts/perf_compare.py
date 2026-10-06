@@ -21,6 +21,7 @@ git was clean.
 from __future__ import annotations
 
 import bisect
+import hashlib
 import json
 import subprocess
 import sys
@@ -160,6 +161,11 @@ def series(name: str, values: list[float]) -> str:
     )
 
 
+def signature(text: str) -> str:
+    """Same digest the caption window puts in ``caption.paint``."""
+    return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
+
+
 def first_translation_wall(events: list[dict], audio_sec: float) -> float | None:
     for event in events:
         if event.get("type") != "translation":
@@ -261,6 +267,38 @@ def main(argv: list[str]) -> int:
             f"audio_end >1000ms          {slow}/{len(lags)} "
             f"({slow / max(1, len(lags)) * 100:.0f}%)"
         )
+
+    # --- coverage: did each utterance's text ever reach the screen? --------
+    # A fragment overwritten while waiting never appears, so the caption window
+    # is the only place that can answer this. Match each painted line back to the
+    # translation that produced it.
+    if test_path and test_path.exists() and caption:
+        payload = json.loads(test_path.read_text(encoding="utf-8"))
+        events = payload.get("events") or []
+        finals = [
+            e
+            for e in events
+            if e.get("type") == "translation" and e.get("final") and str(e.get("text") or "")
+        ]
+        painted = {r[2].get("sig") for r in caption if r[1] == "caption.paint"}
+        painted.discard("")
+        painted.discard(None)
+        if finals and painted:
+            # A translation streams out character by character, so the line on
+            # screen is usually a prefix of the final text rather than all of
+            # it. Accept any prefix the window actually drew.
+            hits = 0
+            for event in finals:
+                text = str(event.get("text")).strip()
+                while text:
+                    if signature(text) in painted:
+                        hits += 1
+                        break
+                    text = text[:-1]
+            print(
+                f"coverage (prefix match) {hits}/{len(finals)} "
+                f"({hits / len(finals) * 100:.0f}%)"
+            )
 
     # --- end to end: first new translation of a sentence -> on screen ----
     if test_path and test_path.exists() and caption:

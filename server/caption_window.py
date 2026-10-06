@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -437,6 +438,10 @@ class _Caption:
                 since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
                 chars=len(display_body),
                 held=1 if self._held_paint else 0,
+                # A hash of what was actually shown, so a recorder can tell
+                # whether this fragment's translation reached the screen at all.
+                # Length alone is not enough: two fragments share one.
+                sig=_signature(display_body),
             )
             self._trace_sent = 0.0
             self._trace_recv = 0.0
@@ -964,6 +969,11 @@ def swap_deadline(
     )
     readable_at = growth_stopped_at + readable_ms / 1000.0
     return min(deadline, max(readable_at, next_utterance_at, settle_until))
+
+
+def _signature(text: str) -> str:
+    """Short stable digest of a line, for matching probes against a recording."""
+    return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
 
 
 def classify_caption(current: str, new: str) -> str:
