@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import subprocess
 import sys
@@ -179,25 +180,44 @@ def _overlap(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
-def _sentence_translation(translations: list[dict], end: float) -> str | None:
+def _sentence_translation(
+    translations: list[dict], asr_finals: list[dict], end: float
+) -> str | None:
     """Rebuild one sentence from the final translations of its utterance(s).
 
     The soft cut in ``vad.py`` can close a long sentence as two utterances, so
-    the first final in the window may only cover the first half. Finals inside
-    the window are joined in arrival order; one that merely repeats what we
-    already have is skipped, and one that shares almost nothing replaces it.
+    the first final for a sentence may only cover its first half and the halves
+    have to be joined. Character overlap cannot tell a continuation from the
+    next sentence -- the two halves of a short Chinese sentence barely overlap
+    -- so membership comes from the ASR side: an utterance sends its ``asr``
+    message before its ``translation``, and a translation belongs to whichever
+    utterance end most recently preceded it.
     """
+    marks = sorted(float(e["audio_sec"]) for e in asr_finals)
+    if not marks:
+        return None
+    low, high = end - 3.0, end + 2.0
     picked = ""
     for event in translations:
         if not event.get("final"):
             continue
-        at = event["audio_sec"]
-        if not (end - 3.0 <= at < end + 2.0):
+        at = float(event["audio_sec"])
+        slot = bisect.bisect_right(marks, at) - 1
+        if slot < 0 or not low <= marks[slot] < high:
             continue
         text = str(event.get("text") or "")
-        if not text or (picked and text.startswith(picked)):
+        if not text:
             continue
-        picked = text if (picked and _overlap(picked, text) < 0.45) else picked + text
+        if not picked:
+            picked = text
+        elif text.startswith(picked) or picked.startswith(text):
+            # The same sentence repeated, or a shorter revision of it.
+            if len(text) > len(picked):
+                picked = text
+        elif _overlap(picked, text) >= 0.45:
+            picked = text
+        else:
+            picked += text
     return picked or None
 
 
@@ -229,7 +249,7 @@ def _summarize(events: list[dict], timing: list[dict]) -> dict:
                 "source": row["text"],
                 "asr": None if asr is None else asr.get("text"),
                 "asr_ratio": None if asr is None else round(_overlap(row["text"].lower(), str(asr.get("text") or "").lower()), 3),
-                "translation": _sentence_translation(translations, end),
+                "translation": _sentence_translation(translations, asr_final, end),
                 "lag_ms": None
                 if first is None
                 else int(max(0.0, first["audio_sec"] - end) * 1000),
