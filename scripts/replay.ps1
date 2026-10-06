@@ -42,6 +42,20 @@ $env:PYTHONUNBUFFERED = "1"
 $env:TRANSLATION_PERF = "1"
 Remove-Item Env:TRANSLATION_PERF_LOG -ErrorAction SilentlyContinue
 
+# Stamp the run now, while the tree still looks the way it did when the audio
+# played. perf_compare reading git later would only report where HEAD is when
+# the numbers are analysed, which is not the same thing.
+$sha = (& git rev-parse --short HEAD).Trim()
+$dirty = if ((& git status --porcelain).Trim()) { "+dirty" } else { "" }
+$stamp = "$sha$dirty"
+"logs\run.$Name.meta" | Out-Null
+@{
+    name = $Name
+    code = $stamp
+    when = (Get-Date).ToString("o")
+} | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
+Write-Host "code $stamp"
+
 Write-Host "starting server"
 Start-Process -FilePath $Python -ArgumentList "-m", "server" -NoNewWindow | Out-Null
 Start-Sleep -Seconds $StartupWait
@@ -52,6 +66,13 @@ Write-Host "server pid $($listening.OwningProcess)"
 
 Write-Host "replaying samples/blog_3min.mp4 (~3.5 min)"
 & $Python scripts\blog_video_test.py play
+$replayExit = $LASTEXITCODE
+
+# A replay that died partway still leaves a log behind, and measuring that would
+# report a short window with no indication anything was wrong.
+if ($replayExit -ne 0 -or -not (Test-Path "logs\blog_3min_test.json")) {
+    throw "replay did not finish (exit $replayExit); logs left in place, not measuring them"
+}
 
 Write-Host ""
-& $Python scripts\perf_compare.py $Name logs\perf.log logs\perf_caption.log logs\blog_3min_test.json
+& $Python scripts\perf_compare.py $Name logs\perf.log logs\perf_caption.log logs\blog_3min_test.json --code $stamp
