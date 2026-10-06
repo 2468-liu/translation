@@ -854,3 +854,24 @@ ctxfix3      43     0     0     0    0.0%
 - **三种基线**按驻留模型分开：只播视频 / 播+混元空转 / 播+E2B 空转。模型只是驻留也要画约 10.6 W。
 - **交错顺序** round-robin，丢弃前 30 s 预热。
 - **补 750 ms 一臂**找拐点。
+
+### 16.5 投影层一直在 CPU 上，Gemma 的整组数字都是"负载放在 CPU 时"的
+
+`--mmproj-device none` 的语义在 help 里写得很直接：**`none = don't offload`**，而**默认本来就是 GPU**（`follows --device`）。所以这不是"显存不够只好卸载"，是**主动关掉的**。
+
+理由写在 `config.py` 里：`it was measured at 3774 MiB of 4096`，只剩 320 MiB。而第 16.1 节刚更正过：nvidia-smi 读数是 **1842 MiB**，余量约 2254 MiB。投影层文件 **532 MB**（`gemma-4-E2B-it-qat-q4_8-unquantized.mmproj-Q8_0.gguf`）。
+
+```
+现在（投影层在 CPU）        1842 MiB
+投影层上 GPU（+532）      ≈2374 MiB / 4096     余量 ≈1722 MiB
+```
+
+> **更正本报告另一处**：16.1 节把 `CPU compute buffer size = 101 MiB` 当成了投影层大小。101 MiB 是计算缓冲，投影层权重是 532 MB。
+
+**影响范围比显存大。** 投影层就是音频编码器，它在 CPU 上意味着 **prefill 有一部分是 CPU 工作**。由此：
+
+1. **CPU 采样从"可选"变成阻塞项**——不是因为要更精确，是因为音频臂的省电被"把活挪到 CPU"污染了。
+2. **此前"投机解码结构性无益，因为 prefill 是 CPU 瓶颈"这个机制从没被测过**，而且被反驳了：2.52.0 上 MTP 快 8~16%，而那组测量**正是在投影层位于 CPU 时做的**。若 prefill 真被 CPU 卡住，draft 多出来的那遍 prefill 只会更亏。
+3. **Gemma 全部数字是"负载放在 CPU 时"的**，不是错的，是**带条件的**。
+
+`scripts/sweep_mmproj.ps1` 只改这一个变量（后端固定 2.47.0、MTP off、上下文 0、静音 1000ms），交错 3 轮。重测后 15.x 与本节的 Gemma 数字全部需要按投影层位置重述。

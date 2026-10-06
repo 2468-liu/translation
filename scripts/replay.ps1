@@ -47,9 +47,21 @@ if ($AudioNative) {
     # Python service. Same arguments, so both entry points stay in step.
     $gguf = (Get-ChildItem "$Root\models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
     $mmproj = (Get-ChildItem "$Root\models\gemma4-e2b\*mmproj*.gguf" | Select-Object -First 1).FullName
-    Write-Host "starting llama-server (audio model, projector on CPU)"
+    # Where the projector runs, and it is a real choice rather than a fallback.
+    #
+    # "none" means don't offload it at all -- the projector stays on the CPU --
+    # and it was set because the card was believed to be at 3774 of 4096 MiB,
+    # leaving 320. That figure was wrong by half; nvidia-smi reads 1842 and the
+    # projector is 532 MiB, so on the GPU it would sit at about 2374 of 4096.
+    #
+    # The default is still CPU so the sweep in flight stays comparable. Every
+    # Gemma number measured before this existed carries "projector on CPU" as a
+    # load condition and has to be read that way.
+    $mmprojDevice = if ($env:TRANSLATION_MMPROJ_DEVICE) { $env:TRANSLATION_MMPROJ_DEVICE } else { "none" }
+    $mmprojWhere = if ($mmprojDevice -eq "none") { "projector on CPU" } else { "projector on $mmprojDevice" }
+    Write-Host "starting llama-server (audio model, $mmprojWhere)"
     Start-Process -FilePath $Llama -ArgumentList @(
-        "-m", $gguf, "--mmproj", $mmproj, "--mmproj-device", "none",
+        "-m", $gguf, "--mmproj", $mmproj, "--mmproj-device", $mmprojDevice,
         "--host", "127.0.0.1", "--port", "8080",
         "-ngl", "99", "-c", "2048", "-t", "4", "--jinja", "-lv", "4"
     ) -NoNewWindow `
@@ -170,6 +182,7 @@ print(json.dumps({
     when = (Get-Date).ToString("o")
     audio_native = [bool]$AudioNative
     llama_version = $LlamaVersion
+    mmproj_device = if ($env:TRANSLATION_MMPROJ_DEVICE) { $env:TRANSLATION_MMPROJ_DEVICE } else { "none" }
     thresholds = ($effective -join "").Trim()
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
