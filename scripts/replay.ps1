@@ -45,8 +45,9 @@ Remove-Item Env:TRANSLATION_PERF_LOG -ErrorAction SilentlyContinue
 # Stamp the run now, while the tree still looks the way it did when the audio
 # played. perf_compare reading git later would only report where HEAD is when
 # the numbers are analysed, which is not the same thing.
-$sha = (& git rev-parse --short HEAD).Trim()
-$dirty = if ((& git status --porcelain).Trim()) { "+dirty" } else { "" }
+# PowerShell hands back an array of lines, so join before trimming.
+$sha = ((& git rev-parse --short HEAD) -join "").Trim()
+$dirty = if ((& git status --porcelain) -join "") { "+dirty" } else { "" }
 $stamp = "$sha$dirty"
 "logs\run.$Name.meta" | Out-Null
 @{
