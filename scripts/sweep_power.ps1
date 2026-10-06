@@ -30,9 +30,12 @@ Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
 
 function Set-PartialInterval([int] $Ms) {
     $text = Get-Content $Config -Raw
-    $next = [regex]::Replace($text, "PARTIAL_INTERVAL_MS = \d+", "PARTIAL_INTERVAL_MS = $Ms")
-    if ($next -eq $text) { throw "PARTIAL_INTERVAL_MS not found in $Config" }
-    Set-Content $Config -Value $next -Encoding utf8 -NoNewline
+    $pattern = "PARTIAL_INTERVAL_MS = \d+"
+    # Match, not "the text changed". Asking whether the file differs reports a
+    # miss whenever the requested value is already the current one, which is the
+    # first level of every sweep and stops the run before it starts.
+    if (-not [regex]::IsMatch($text, $pattern)) { throw "PARTIAL_INTERVAL_MS not found in $Config" }
+    Set-Content $Config -Value ([regex]::Replace($text, $pattern, "PARTIAL_INTERVAL_MS = $Ms")) -Encoding utf8 -NoNewline
     $seen = [regex]::Match((Get-Content $Config -Raw), "PARTIAL_INTERVAL_MS = (\d+)").Groups[1].Value
     if ($seen -ne "$Ms") { throw "wanted $Ms, config reads $seen" }
     Write-Host ""

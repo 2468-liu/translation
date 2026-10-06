@@ -31,9 +31,12 @@ Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
 function Set-MinSilence([int] $Ms) {
     if (-not (Test-Path $Config)) { throw "missing $Config" }
     $text = Get-Content $Config -Raw
-    $next = [regex]::Replace($text, "GEMMA_MIN_SILENCE_MS = \d+", "GEMMA_MIN_SILENCE_MS = $Ms")
-    if ($next -eq $text) { throw "GEMMA_MIN_SILENCE_MS not found in $Config" }
-    Set-Content $Config -Value $next -Encoding utf8 -NoNewline
+    $pattern = "GEMMA_MIN_SILENCE_MS = \d+"
+    # Match, not "the text changed". Asking whether the file differs reports a
+    # miss whenever the requested value is already the current one, which would
+    # stop a sweep that re-runs a level it has already set.
+    if (-not [regex]::IsMatch($text, $pattern)) { throw "GEMMA_MIN_SILENCE_MS not found in $Config" }
+    Set-Content $Config -Value ([regex]::Replace($text, $pattern, "GEMMA_MIN_SILENCE_MS = $Ms")) -Encoding utf8 -NoNewline
     # Read it back rather than trusting the write: a sweep that silently ran the
     # wrong threshold would look exactly like a sweep that found no difference.
     $seen = [regex]::Match((Get-Content $Config -Raw), "GEMMA_MIN_SILENCE_MS = (\d+)").Groups[1].Value
