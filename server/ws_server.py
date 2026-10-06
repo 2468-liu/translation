@@ -89,7 +89,7 @@ def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
             break
 
 
-async def handle(ws, asr: AsrEngine) -> None:
+async def handle(ws, asr: AsrEngine | None) -> None:
     session = Session(asr)
     caption_enabled = True
     caption_text_only = False
@@ -198,7 +198,15 @@ async def handle(ws, asr: AsrEngine) -> None:
 async def main() -> None:
     if os.environ.get("TRANSLATION_AUDIO_ONLY") != "1":
         start_caption()
-    asr = AsrEngine()
+    # Two pipelines, one protocol. With AUDIO_NATIVE=1 the audio goes straight
+    # to a model that translates it, and no recogniser is loaded at all -- which
+    # is what fits the audio model and a translation model onto a 4GB card.
+    asr: AsrEngine | None = None
+    if os.environ.get("TRANSLATION_AUDIO_NATIVE") == "1":
+        print("pipeline: audio-native (no ASR)")
+    else:
+        asr = AsrEngine()
+        print("pipeline: whisper + text model")
     print(f"WebSocket ws://{WS_HOST}:{WS_PORT}/ws")
     async with serve(
         lambda ws: handle(ws, asr),

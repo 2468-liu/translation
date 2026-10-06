@@ -1,4 +1,4 @@
-"""Speech gate. Prefers Silero ONNX; falls back to RMS energy."""
+﻿"""Speech gate. Prefers Silero ONNX; falls back to RMS energy."""
 
 from __future__ import annotations
 
@@ -13,9 +13,18 @@ from .config import (
     VAD_MIN_SPEECH_MS,
     VAD_THRESHOLD,
     PARTIAL_INTERVAL_MS,
+    GEMMA_MAX_UTTERANCE_MS,
+    GEMMA_MIN_SILENCE_MS,
+    GEMMA_SOFT_CUT_SILENCE_MS,
+    GEMMA_SOFT_CUT_SPEECH_MS,
+    GEMMA_VAD_SPEECH_PAD_MS,
 )
 
 FRAME = 512  # 32ms at 16kHz
+# Set by the caller. The whisper pipeline and the audio-native model have
+# different limits, and picking the wrong one is either a wasted long context
+# (whisper stitches, so it tolerates 30s) or a hard failure (the audio model
+# does not). See build_tuning().
 MAX_UTTERANCE_MS = 12_000
 NON_SPEECH_GAIN = 0.0
 # An utterance only closes after 400ms of silence, but the words are already
@@ -98,6 +107,69 @@ def load_vad():
     return _VAD
 
 
+class Tuning:
+    """The cut parameters, which differ by downstream model.
+
+    Kept as one object so a pipeline states its limits in one place instead of
+    relying on module constants that whichever import ran last happened to set.
+    """
+
+    def __init__(
+        self,
+        *,
+        min_silence_ms: int,
+        max_utterance_ms: int,
+        speech_pad_ms: int,
+        early_end_ms: int,
+        soft_cut_speech_ms: int,
+        soft_cut_silence_ms: int,
+        partial_interval_ms: int,
+        name: str = "",
+    ):
+        self.min_silence_ms = min_silence_ms
+        self.max_utterance_ms = max_utterance_ms
+        self.speech_pad_ms = speech_pad_ms
+        self.early_end_ms = early_end_ms
+        self.soft_cut_speech_ms = soft_cut_speech_ms
+        self.soft_cut_silence_ms = soft_cut_silence_ms
+        self.partial_interval_ms = partial_interval_ms
+        self.name = name
+
+
+def whisper_tuning() -> Tuning:
+    """Limits for whisper, which re-reads fragments and stitches context."""
+    return Tuning(
+        min_silence_ms=VAD_MIN_SILENCE_MS,
+        max_utterance_ms=MAX_UTTERANCE_MS,
+        speech_pad_ms=VAD_SPEECH_PAD_MS,
+        early_end_ms=EARLY_END_SILENCE_MS,
+        soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+        soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+        partial_interval_ms=PARTIAL_INTERVAL_MS,
+        name="whisper",
+    )
+
+
+def audio_model_tuning() -> Tuning:
+    """Limits for a model that hears and translates in one pass.
+
+    Longer closing silence to cut at sentence boundaries, a much lower ceiling
+    than whisper's 30s window, and no early-close partial: the audio path pays
+    for the whole fragment up front, so a 150ms head start on a re-read is worth
+    much less than not cutting the sentence in half.
+    """
+    return Tuning(
+        min_silence_ms=GEMMA_MIN_SILENCE_MS,
+        max_utterance_ms=GEMMA_MAX_UTTERANCE_MS,
+        speech_pad_ms=GEMMA_VAD_SPEECH_PAD_MS,
+        early_end_ms=GEMMA_MIN_SILENCE_MS,
+        soft_cut_speech_ms=GEMMA_SOFT_CUT_SPEECH_MS,
+        soft_cut_silence_ms=GEMMA_SOFT_CUT_SILENCE_MS,
+        partial_interval_ms=0,
+        name="audio-model",
+    )
+
+
 class UtteranceSplitter:
     """Turn a PCM stream into start / partial / end events.
 
@@ -107,8 +179,9 @@ class UtteranceSplitter:
     reuse that text instead of running ASR on the same audio a second time.
     """
 
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, tuning: "Tuning | None" = None):
         self.engine = engine if engine is not None else load_vad()
+        self.tuning = tuning if tuning is not None else whisper_tuning()
         self.pending = np.zeros(0, dtype=np.float32)
         self.utterance: list[np.ndarray] = []
         self.in_speech = False
@@ -155,11 +228,13 @@ class UtteranceSplitter:
                     # partial only covered part of the sentence: never reuse it.
                     self.early_partial = False
                 self.since_partial_ms += self.frame_ms
-                if self.speech_ms >= MAX_UTTERANCE_MS:
+                t = self.tuning
+                if self.speech_ms >= t.max_utterance_ms:
                     events.append(("end", self._take(), self.early_partial))
                 elif (
-                    self.speech_ms >= VAD_MIN_SPEECH_MS
-                    and self.since_partial_ms >= PARTIAL_INTERVAL_MS
+                    t.partial_interval_ms
+                    and self.speech_ms >= VAD_MIN_SPEECH_MS
+                    and self.since_partial_ms >= t.partial_interval_ms
                 ):
                     self.since_partial_ms = 0
                     events.append(("partial", self._copy(), False))
@@ -167,19 +242,21 @@ class UtteranceSplitter:
                 self.utterance.append(frame * NON_SPEECH_GAIN)
                 self.silence_ms += self.frame_ms
                 self.since_partial_ms += self.frame_ms
+                t = self.tuning
                 if (
-                    not self.early_partial
-                    and EARLY_END_SILENCE_MS <= self.silence_ms < VAD_MIN_SILENCE_MS
+                    t.partial_interval_ms
+                    and not self.early_partial
+                    and t.early_end_ms <= self.silence_ms < t.min_silence_ms
                     and self.speech_ms >= VAD_MIN_SPEECH_MS
-                    and self.since_partial_ms >= PARTIAL_INTERVAL_MS
+                    and self.since_partial_ms >= t.partial_interval_ms
                 ):
                     # The words stopped; only the closing silence is missing.
                     self.early_partial = True
                     self.since_partial_ms = 0
                     events.append(("partial", self._trim(self._copy()), True))
-                if self.silence_ms >= VAD_MIN_SILENCE_MS or (
-                    self.speech_ms >= SOFT_CUT_SPEECH_MS
-                    and self.silence_ms >= SOFT_CUT_SILENCE_MS
+                if self.silence_ms >= t.min_silence_ms or (
+                    self.speech_ms >= t.soft_cut_speech_ms
+                    and self.silence_ms >= t.soft_cut_silence_ms
                 ):
                     if self.speech_ms >= VAD_MIN_SPEECH_MS:
                         events.append(("end", self._trim(self._copy()), self.early_partial))
@@ -209,7 +286,8 @@ class UtteranceSplitter:
         nz = np.nonzero(audio)[0]
         if nz.size == 0:
             return audio
-        keep = int(nz[-1]) + int(SAMPLE_RATE * VAD_SPEECH_PAD_MS / 1000)
+        pad = int(SAMPLE_RATE * self.tuning.speech_pad_ms / 1000)
+        keep = int(nz[-1]) + pad
         return audio[:keep] if keep < audio.size else audio
 
     def _drop(self) -> None:
@@ -219,3 +297,4 @@ class UtteranceSplitter:
         self.silence_ms = 0
         self.since_partial_ms = 0
         self.early_partial = False
+

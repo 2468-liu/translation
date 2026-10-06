@@ -1,4 +1,4 @@
-"""Local realtime subtitle service configuration."""
+﻿"""Local realtime subtitle service configuration."""
 
 from __future__ import annotations
 
@@ -19,6 +19,24 @@ LLAMA_PORT = 8080
 LLAMA_URL = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1/chat/completions"
 LLAMA_MODEL = "hy-mt2-1.8b"
 USE_NLLB = False
+
+# Audio-native model (gemma-audio branch): one model both hears and translates, so
+# whisper and hy-mt2 are no longer loaded. The projector stays on CPU, which is
+# what keeps this inside a 4GB card.
+AUDIO_MODEL_URL = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1/chat/completions"
+AUDIO_MODEL_NAME = "local"
+# The model will answer in English or start reasoning unless told not to. A
+# Chinese instruction was measured producing an empty answer after 585 tokens of
+# thinking; this wording returned 17 tokens and the translation. Pinned, with a
+# test, because getting it wrong is silent.
+AUDIO_SYSTEM_PROMPT = (
+    "Translate the following English speech into Simplified Chinese. "
+    "Output only the Chinese translation."
+)
+# Gemma is a reasoning model. Left on, it spends the whole token budget thinking
+# and returns nothing.
+AUDIO_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+AUDIO_MAX_TOKENS = 400
 
 # Paths — filled after ModelScope download / conversion
 ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
@@ -49,6 +67,28 @@ VAD_THRESHOLD = 0.5
 VAD_MIN_SPEECH_MS = 250
 VAD_MIN_SILENCE_MS = 400
 VAD_SPEECH_PAD_MS = 120
+
+# VAD, retuned for the audio-native model.
+#
+# Two reasons, both measured on samples/blog_3min.mp4 against
+# translate_gemma4_sub-E2B-Q4_K_XL:
+#
+#   * Latency is paid on the whole fragment. First token arrives at roughly
+#     300ms + 250ms per second of audio, so a 12s fragment costs ~1.25s before
+#     any text appears. A long hold buys nothing.
+#   * The model translates what it hears, so cutting mid-sentence costs quality
+#     rather than just costing a re-run.
+#
+# So the closing silence is longer (700ms, was 400ms) to cut at sentence
+# boundaries, but the ceiling is much lower (26s) than whisper's 30s window:
+# there is no context stitching to fall back on.
+GEMMA_MIN_SILENCE_MS = 700
+GEMMA_MAX_UTTERANCE_MS = 26_000
+GEMMA_VAD_SPEECH_PAD_MS = 200
+# Past this much speech, close even if the speaker has not paused. Keeps a
+# rambling speaker from building a fragment whose own latency is unacceptable.
+GEMMA_SOFT_CUT_SPEECH_MS = 12_000
+GEMMA_SOFT_CUT_SILENCE_MS = 700
 
 # Translation
 TRANSLATE_TEMPERATURE = 0.2
@@ -112,3 +152,4 @@ def resolve_llama_runtime(vram_mb: int | None = None) -> tuple[int, int]:
     if vram_mb <= 4096:
         return 60, 1024
     return 99, 1536
+

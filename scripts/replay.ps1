@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Name,
-    [int]$StartupWait = 12
+    [int]$StartupWait = 12,
+    # gemma-audio branch: one model hears and translates, so whisper is not loaded.
+    [switch]$AudioNative
 )
 
 # One replay of samples/blog_3min.mp4 against a freshly restarted server, then
@@ -23,7 +25,29 @@ if (-not (Test-Path $Python)) { throw "python not found: $Python" }
 Write-Host "stopping server and caption window (llama-server on 8080 stays up)"
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+if ($AudioNative) {
+    # The audio model and whisper's model cannot both stay resident on a 4GB
+    # card, and the two pipelines serve different models on 8080.
+    Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 Start-Sleep -Seconds 2
+
+if ($AudioNative) {
+    # Start llama-server here rather than via start.ps1, which also launches the
+    # Python service. Same arguments, so both entry points stay in step.
+    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
+    $gguf = (Get-ChildItem "$Root\models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
+    $mmproj = (Get-ChildItem "$Root\models\gemma4-e2b\*mmproj*.gguf" | Select-Object -First 1).FullName
+    Write-Host "starting llama-server (audio model, projector on CPU)"
+    Start-Process -FilePath $Llama -ArgumentList @(
+        "-m", $gguf, "--mmproj", $mmproj, "--mmproj-device", "none",
+        "--host", "127.0.0.1", "--port", "8080",
+        "-ngl", "99", "-c", "2048", "-t", "4", "--jinja", "-lv", "4"
+    ) -NoNewWindow `
+        -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
+    Start-Sleep -Seconds $StartupWait
+}
 
 # The logs still on disk belong to the PREVIOUS run, so that is the name they
 # have to be archived under. Rotating them into this run's name instead files
@@ -55,6 +79,11 @@ Remove-Item $Pending -Force -ErrorAction SilentlyContinue
 $env:PYTHONUNBUFFERED = "1"
 $env:TRANSLATION_PERF = "1"
 Remove-Item Env:TRANSLATION_PERF_LOG -ErrorAction SilentlyContinue
+if ($AudioNative) {
+    $env:TRANSLATION_AUDIO_NATIVE = "1"
+} else {
+    Remove-Item Env:TRANSLATION_AUDIO_NATIVE -ErrorAction SilentlyContinue
+}
 
 # Stamp the run now, while the tree still looks the way it did when the audio
 # played. perf_compare reading git later would only report where HEAD is when

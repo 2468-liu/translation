@@ -9,15 +9,41 @@ import numpy as np
 
 from . import perf
 from .asr import AsrEngine
-from .config import CONTEXT_SENTENCES, PARTIAL_STABLE_REPEAT, SAMPLE_RATE
+from .audio_mt import stream_audio_translation as audio_stream
+from .config import (
+    AUDIO_CHAT_TEMPLATE_KWARGS,
+    AUDIO_MAX_TOKENS,
+    AUDIO_MODEL_URL,
+    CONTEXT_SENTENCES,
+    PARTIAL_STABLE_REPEAT,
+    SAMPLE_RATE,
+)
 from .translate import collapse_translation_repeats, stream_translation
-from .vad import UtteranceSplitter
+from .vad import UtteranceSplitter, audio_model_tuning, whisper_tuning
 
 
 class Session:
-    def __init__(self, asr: AsrEngine):
+    """One audio connection's work.
+
+    Two shapes, chosen by whether ``asr`` is given:
+
+    * whisper + translation model (main): the VAD's partials feed the
+      recogniser, and the text feeds a text-to-text translator.
+    * audio-native model (gemma-audio branch): there is no recogniser and no text
+      model. Each closed fragment's audio is translated in one pass, and the VAD
+      runs with limits sized for that model's audio window.
+
+    Keeping both in one class rather than two means the WebSocket protocol, the
+    caption window and the perf probes stay identical, so the two branches can be
+    measured against each other with the same tooling.
+    """
+
+    def __init__(self, asr: AsrEngine | None = None, tuning=None):
+        self.audio_native = asr is None
         self.asr = asr
-        self.vad = UtteranceSplitter()
+        if tuning is None:
+            tuning = audio_model_tuning() if self.audio_native else whisper_tuning()
+        self.vad = UtteranceSplitter(tuning=tuning)
         self.jobs: asyncio.Queue = asyncio.Queue()
         self.language: str | None = None
         self.language_locked = False
@@ -194,6 +220,9 @@ class Session:
         reuse: bool = False,
     ) -> None:
         generation = self.media_generation
+        if self.audio_native:
+            await self._run_audio_native(kind, audio, send, qwait, qlen, generation)
+            return
         text, detected, prob = "", None, 0.0
         asr_ms = 0.0
         if kind == "end" and reuse and self._partial_result is not None:
@@ -414,6 +443,74 @@ class Session:
             )
         if (final or promote) and acc.strip():
             self._remember(text, acc)
+
+    async def _run_audio_native(
+        self,
+        kind: str,
+        audio: np.ndarray,
+        send,
+        qwait: float,
+        qlen: int,
+        generation: int,
+    ) -> None:
+        """One audio fragment straight through the model that hears it.
+
+        There is no transcript, so there is nothing to send as ``asr`` and
+        nothing to hold back for a later ``translation``: the model's output is
+        the translation, and it streams, so every chunk goes to the caption as it
+        arrives.
+        """
+        final = kind == "end"
+        # The preceding lines go in as text context. Their audio is not replayed:
+        # it would be re-translated, and re-hearing it costs more prompt tokens
+        # than the words it would add.
+        context = list(self.context[-CONTEXT_SENTENCES:])
+        started = perf.mono()
+        sent_any = False
+        try:
+            async for piece in audio_stream(audio, self.client, context):
+                acc = collapse_translation_repeats(piece)
+                if not acc or not self._caption_accepts(acc):
+                    continue
+                self.shown_translation = acc
+                self.shown_source = ""
+                sent_any = True
+                # Stream the line as it grows. There is no separate final step:
+                # the model has already heard the whole fragment, so its output
+                # is the last word on the subject.
+                await send(
+                    {"type": "translation", "text": acc, "final": final}
+                )
+        except Exception as exc:  # network, model load, malformed stream
+            perf.emit("audio", "error", kind=kind, err=type(exc).__name__)
+            if not self.warned_translate:
+                self.warned_translate = True
+                await send(
+                    {
+                        "type": "status",
+                        "level": "warn",
+                        "message": f"音频翻译失败（{exc.__class__.__name__}）。检查 llama-server 是否带 --mmproj 启动。",
+                    }
+                )
+            return
+        if not sent_any:
+            # Silence, music, or a fragment the model had nothing to say about.
+            # Saying so matters: otherwise the caption simply freezes and the gap
+            # looks like a stall rather than an empty segment.
+            perf.emit(
+                "audio",
+                "empty",
+                kind=kind,
+                total=perf.ms(started),
+                audio_ms=audio.size * 1000.0 / SAMPLE_RATE,
+                qwait=qwait,
+                qlen=qlen,
+            )
+        if generation != self.media_generation:
+            return
+        if final:
+            self.last_text = ""
+            self._remember("", self.shown_translation)
 
     def _caption_accepts(self, acc: str) -> bool:
         shown = self.shown_translation
