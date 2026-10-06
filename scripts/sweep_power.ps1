@@ -24,25 +24,54 @@ param(
     # another. One replay of this material has been seen to differ from itself by
     # a factor of two, so one round is a sample rather than a measurement.
     [int] $Rounds = 2,
-    [string] $Config = "server\config.py"
+    [string] $Python = "D:\minanconda\envs\pytorch\python.exe"
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot) -ErrorAction SilentlyContinue
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
 
+function Start-IdleModel([string] $Which) {
+    Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Seconds 2
+    if ($Which -eq "hy") { Ensure-TranslationModel; return }
+    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
+    $gguf = (Get-ChildItem "models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
+    $mmproj = (Get-ChildItem "models\gemma4-e2b\*mmproj*.gguf" | Select-Object -First 1).FullName
+    Write-Host "starting llama-server (gemma audio model, projector on CPU, idle)"
+    Start-Process -FilePath $Llama -ArgumentList @(
+        "-m", $gguf, "--mmproj", $mmproj, "--mmproj-device", "none",
+        "--host", "127.0.0.1", "--port", "8080", "-ngl", "99", "-c", "2048", "-t", "4", "--jinja", "-lv", "4"
+    ) -NoNewWindow -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Seconds 5
+        if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+            Write-Host "llama-server ready"
+            return
+        }
+    }
+    throw "llama-server did not come up for the idle-model baseline"
+}
+
+function Set-GemmaSilence([int] $Ms) {
+    $env:TRANSLATION_GEMMA_MIN_SILENCE_MS = "$Ms"
+    $seen = & $Python -c "from server.config import GEMMA_MIN_SILENCE_MS; print(GEMMA_MIN_SILENCE_MS)"
+    if ($seen.Trim() -ne "$Ms") { throw "wanted $Ms, config reads $($seen.Trim())" }
+    Write-Host "### GEMMA_MIN_SILENCE_MS = $Ms (confirmed by import)"
+}
+
 function Set-PartialInterval([int] $Ms) {
-    $text = Get-Content $Config -Raw
-    $pattern = "PARTIAL_INTERVAL_MS = \d+"
-    # Match, not "the text changed". Asking whether the file differs reports a
-    # miss whenever the requested value is already the current one, which is the
-    # first level of every sweep and stops the run before it starts.
-    if (-not [regex]::IsMatch($text, $pattern)) { throw "PARTIAL_INTERVAL_MS not found in $Config" }
-    Set-Content $Config -Value ([regex]::Replace($text, $pattern, "PARTIAL_INTERVAL_MS = $Ms")) -Encoding utf8 -NoNewline
-    $seen = [regex]::Match((Get-Content $Config -Raw), "PARTIAL_INTERVAL_MS = (\d+)").Groups[1].Value
-    if ($seen -ne "$Ms") { throw "wanted $Ms, config reads $seen" }
+    # Injected, not written into config.py.
+    #
+    # Rewriting the file made the working tree dirty, so every run after the
+    # first was stamped "+dirty" and no two runs could be compared; it also broke
+    # the vad tests that read these constants while a sweep was in flight, and
+    # nothing recorded which arm a run belonged to beyond the run's name.
+    $env:TRANSLATION_PARTIAL_INTERVAL_MS = "$Ms"
+    $seen = & $Python -c "from server.config import PARTIAL_INTERVAL_MS; print(PARTIAL_INTERVAL_MS)"
+    if ($seen.Trim() -ne "$Ms") { throw "wanted $Ms, config reads $($seen.Trim())" }
     Write-Host ""
-    Write-Host "### PARTIAL_INTERVAL_MS = $Ms (confirmed)"
+    Write-Host "### PARTIAL_INTERVAL_MS = $Ms (confirmed by import)"
 }
 
 function Ensure-TranslationModel {
@@ -81,9 +110,12 @@ Ensure-TranslationModel
 # comparison instead of in one arm.
 $arms = @(
     @{ name = "pw-baseline-video"; kind = "baseline" }
+    @{ name = "pw-baseline-hymt"; kind = "baseline-model"; model = "hy" }
+    @{ name = "pw-baseline-e2b"; kind = "baseline-model"; model = "gemma" }
     @{ name = "pw-whisper250"; kind = "whisper"; partial = 250 }
     @{ name = "pw-audio-a"; kind = "audio" }
     @{ name = "pw-whisper500"; kind = "whisper"; partial = 500 }
+    @{ name = "pw-whisper750"; kind = "whisper"; partial = 750 }
     @{ name = "pw-whisper-closed"; kind = "whisper"; partial = 0 }
     @{ name = "pw-whisper1000"; kind = "whisper"; partial = 1000 }
 )
@@ -98,6 +130,16 @@ for ($round = 1; $round -le $Rounds; $round++) {
                 # Video only: no caption service, nothing on 8080. This is the
                 # floor every other arm sits on top of -- the decoder, the
                 # compositor and the panel are all drawing whatever they draw.
+                Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
+                & .\scripts\measure_power.ps1 -Name $label -BaselineSeconds 200
+            }
+            elseif ($arm.kind -eq "baseline-model") {
+                # One model resident and idle. Split from the video-only floor
+                # because every other arm runs with a model loaded, and a model
+                # that is only resident still draws its idle power -- about
+                # 10.6W here. Measuring it separately is what lets each arm be
+                # read as an increment rather than as a total.
+                Start-IdleModel -Which $arm.model
                 & .\scripts\measure_power.ps1 -Name $label -BaselineSeconds 200
             }
             else {

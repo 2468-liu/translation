@@ -26,10 +26,19 @@ if (Test-Port 8080) {
     # this fit a 4GB card, and it was measured at 3774 MiB of 4096 with no
     # measurable quality loss.
     #
-    # MTP is deliberately off. Measured on an audio request: 15.1 ms/token with
-    # the draft model against 12.9 without, at the same 0.30 acceptance rate --
-    # speculative decoding does not help audio input, it only costs time. Enable
-    # with TRANSLATION_MTP=1 once draft weights are present.
+    # MTP is off, and enabling it breaks audio requests rather than slowing them.
+    #
+    # The earlier reason was wrong. It read "15.1 ms/token with the draft against
+    # 12.9 without, at the same 0.30 acceptance rate" as speculative decoding not
+    # helping audio input. That measurement could not support the conclusion:
+    # with the draft off this server reports no draft counters at all, so there
+    # was no acceptance rate on that side to compare, and with the draft on every
+    # request carrying input_audio is answered 503.
+    #
+    # The draft does load, and fully onto the GPU -- 5 of 5 layers, 78 MiB -- so
+    # this is not a memory problem. scripts/probe_mtp.py shows 13.0-13.1 ms/token
+    # with it off. Leave TRANSLATION_MTP alone unless the 503 goes away; turning
+    # it on makes audio translation fail outright.
     $gguf = Get-ChildItem "$Root\models\gemma4-e2b\translate*.gguf" -ErrorAction SilentlyContinue | Select-Object -First 1
     $mmproj = Get-ChildItem "$Root\models\gemma4-e2b\*mmproj*.gguf" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $gguf) {
@@ -57,7 +66,8 @@ if (Test-Port 8080) {
             $draft = Get-ChildItem "$Root\models\gemma4-e2b\mtp-*.gguf" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($draft) {
                 $args += @("--model-draft", $draft.FullName, "--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
-                Write-Host "MTP draft: enabled (no measured gain on audio)"
+                Write-Warning "MTP draft enabled. Audio requests are answered 503 with it on -- see the note above."
+            }
             } else {
                 Write-Host "MTP draft weights not found; running without"
             }

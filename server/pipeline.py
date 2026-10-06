@@ -16,6 +16,7 @@ from .audio_mt import (
     chinese_share,
 )
 from .config import (
+    AUDIO_CONTEXT_SENTENCES,
     AUDIO_CHAT_TEMPLATE_KWARGS,
     AUDIO_MAX_TOKENS,
     AUDIO_MODEL_URL,
@@ -482,10 +483,12 @@ class Session:
         arrives.
         """
         final = kind == "end"
-        # The preceding lines go in as text context. Their audio is not replayed:
-        # it would be re-translated, and re-hearing it costs more prompt tokens
-        # than the words it would add.
-        context = list(self.context[-CONTEXT_SENTENCES:])
+        # No context, and deliberately. Passing the preceding lines made the two
+        # fragments that fail in every replay fail differently -- one came back
+        # as a transcription of the English, the other as a repeated clause --
+        # while both translate correctly four times out of four when sent alone
+        # (scripts/probe_mtp.py, AUDIO_CONTEXT_SENTENCES).
+        context = list(self.context[-AUDIO_CONTEXT_SENTENCES:]) if AUDIO_CONTEXT_SENTENCES else []
         started = perf.mono()
         sent_any = False
         accepted: list[str] = []

@@ -93,6 +93,7 @@ def main(argv: list[str]) -> int:
     path = Path(argv[0])
     name = argv[1]
     apps = total = ""
+    cpu_path = ""
     warmup = 0
     rest = argv[2:]
     for index, flag in enumerate(rest):
@@ -103,6 +104,8 @@ def main(argv: list[str]) -> int:
             total = nxt
         elif flag == "--warmup":
             warmup = int(nxt or 0)
+        elif flag == "--cpu":
+            cpu_path = nxt
 
     rows = read_samples(path)
     if not rows:
@@ -131,6 +134,17 @@ def main(argv: list[str]) -> int:
         )
 
     per_process = app_memory(apps)
+    cpu = []
+    if cpu_path and Path(cpu_path).exists():
+        for line in Path(cpu_path).read_text(encoding="utf-8").splitlines():
+            try:
+                cpu.append(float(line.strip()))
+            except ValueError:
+                continue
+    if cpu:
+        stat("cpu busy %", cpu[dropped:], scale=1.0)
+    else:
+        print(f"   {'cpu busy %':16} not sampled (no counter or counter unavailable)")
     if per_process is None:
         print(
             f"   {'compute procs':16} not reported by this driver (WDDM answers N/A);"

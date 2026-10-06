@@ -3,7 +3,27 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+
+
+def _env_int(name: str, default: int) -> int:
+    """A threshold that a sweep can set without editing this file.
+
+    Sweeps used to rewrite the constants here, which meant three things went
+    wrong at once: the working tree went dirty so every run's stamp read
+    "+dirty" and no two runs could be compared, eight vad tests that read these
+    constants failed while a sweep was in flight, and a run could inherit the
+    previous arm's value without anything recording it.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
@@ -82,7 +102,7 @@ ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
 ASR_BEAM_SIZE = 1
-PARTIAL_INTERVAL_MS = 250
+PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
 MT_DEVICE = "cuda"
 MT_COMPUTE_TYPE = "int8"
 
@@ -106,7 +126,7 @@ VAD_SPEECH_PAD_MS = 120
 # So the closing silence is longer (700ms, was 400ms) to cut at sentence
 # boundaries, but the ceiling is much lower (26s) than whisper's 30s window:
 # there is no context stitching to fall back on.
-GEMMA_MIN_SILENCE_MS = 1000
+GEMMA_MIN_SILENCE_MS = _env_int("TRANSLATION_GEMMA_MIN_SILENCE_MS", 1000)
 GEMMA_MAX_UTTERANCE_MS = 26_000
 GEMMA_VAD_SPEECH_PAD_MS = 200
 # Past this much speech, close even if the speaker has not paused. Keeps a
@@ -118,6 +138,18 @@ GEMMA_SOFT_CUT_SILENCE_MS = 700
 TRANSLATE_TEMPERATURE = 0.2
 TRANSLATE_MAX_TOKENS = 256
 CONTEXT_SENTENCES = 2
+# The audio-native path sends no context, and this is why.
+#
+# Measured both ways on the two fragments that fail in every replay and translate
+# correctly when sent alone: with the preceding lines in the prompt, the same
+# audio comes back as a transcription of the English, or as a clause repeated
+# until the fragment ends. Without it, four of four runs each produced a correct
+# translation of both.
+#
+# It was already known to be expensive here -- 854ms of first token against 86ms
+# without, plus a hallucinated word -- but the branch kept passing context while
+# the rest of the report treated it as switched off.
+AUDIO_CONTEXT_SENTENCES = 0
 PARTIAL_STABLE_REPEAT = 1  # translate the first partial; later growth follows after it finishes
 
 # llama.cpp GPU layers — probe script writes actual value into runtime.json

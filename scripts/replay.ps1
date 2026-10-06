@@ -139,10 +139,29 @@ if ($trCount -eq 0) {
 
 # Record the run only once it has completed, and mark its logs as pending so the
 # NEXT invocation knows which name to archive them under.
+#
+# The thresholds go in too. The stamp alone was not enough: four runs in one
+# sweep all read "+dirty" because the sweep was rewriting config.py between
+# them, so no two of them could be shown to be the same code, and nothing in the
+# meta said which partial interval any of them had run at.
+$effective = & $Python -c @"
+import json
+from server import config
+print(json.dumps({
+    'partial_interval_ms': config.PARTIAL_INTERVAL_MS,
+    'gemma_min_silence_ms': config.GEMMA_MIN_SILENCE_MS,
+    'gemma_max_utterance_ms': config.GEMMA_MAX_UTTERANCE_MS,
+    'audio_context_sentences': config.AUDIO_CONTEXT_SENTENCES,
+    'audio_repeat_penalty': config.AUDIO_REPEAT_PENALTY,
+    'audio_chinese_share_min': config.AUDIO_CHINESE_SHARE_MIN,
+}))
+"@
 @{
     name = $Name
     code = $stamp
     when = (Get-Date).ToString("o")
+    audio_native = [bool]$AudioNative
+    thresholds = ($effective -join "").Trim()
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
 

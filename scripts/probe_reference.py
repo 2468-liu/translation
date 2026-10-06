@@ -24,7 +24,9 @@ then waits three seconds for the window is not slow because it translates slowly
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -52,7 +54,17 @@ def offset_of(name: str) -> float:
     raise SystemExit(f"{name}: no playback position in its log")
 
 
-def paints(name: str) -> list[float]:
+_PAINT = re.compile(r"^(\S+) caption\.paint .*(?: sig=(\S+))?$")
+
+
+def paints(name: str) -> list[tuple[float, str]]:
+    """(wall, signature of the text shown) for every draw.
+
+    The signature is what makes the last two columns meaningful: without it a
+    paint can only be placed in time, so "the sentence's final text reached the
+    screen" has to be guessed by taking the next draw of any kind, which is
+    usually a different sentence's line.
+    """
     path = _resolve("perf_caption", ".log", "perf_caption.log", name)
     if not path.exists():
         return []
@@ -60,20 +72,31 @@ def paints(name: str) -> list[float]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if " caption.paint " not in line:
             continue
+        head, _, tail = line.partition(" ")
         try:
-            out.append(float(line.split(" ", 1)[0]))
+            wall = float(head)
         except ValueError:
             continue
+        sig = ""
+        for field in tail.split():
+            if field.startswith("sig="):
+                sig = field.split("=", 1)[1]
+        out.append((wall, sig))
     return sorted(out)
 
 
-def packets(name: str) -> list[tuple[float, float]]:
-    """(playback position, wall) for every translation packet."""
+def signature(text: str) -> str:
+    """The caption window's own digest of a line, so the two sides agree."""
+    return hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:12]
+
+
+def packets(name: str) -> list[tuple[float, float, str]]:
+    """(playback position, wall, text) for every translation packet."""
     events = json.loads(
         _resolve("blog_3min_test", ".json", "blog_3min_test.json", name).read_text(encoding="utf-8")
     )["events"]
     return [
-        (float(e["audio_sec"]), float(e["wall"]))
+        (float(e["audio_sec"]), float(e["wall"]), str(e.get("text") or ""))
         for e in events
         if e.get("type") == "translation" and e.get("audio_sec") is not None
     ]
@@ -93,11 +116,18 @@ def measure(name: str, sentences: list[dict]) -> dict:
     to_first: list[float] = []
     display: list[float] = []
     settled: list[float] = []
+    first_shown: list[float] = []
+    final_shown: list[float] = []
     missed = 0
+    # Sentences whose finished text never reached the screen at all. Counted
+    # rather than skipped: a line that arrives late and a line that never
+    # arrives are both coverage gaps, and averaging only the late ones would
+    # flatter the number.
+    never_shown = 0
     for index, row in enumerate(sentences):
         end = row["end"]
         nxt = sentences[index + 1]["start"] if index + 1 < len(sentences) else end + 5.0
-        own = [(a, w) for a, w in stream if row["start"] - GRACE_SEC <= a <= nxt]
+        own = [(a, w, t) for a, w, t in stream if row["start"] - GRACE_SEC <= a <= nxt]
         if not own:
             missed += 1
             continue
@@ -107,12 +137,20 @@ def measure(name: str, sentences: list[dict]) -> dict:
         last_wall = own[-1][1]
         to_first.append((first_wall - began) * 1000.0)
         settled.append((last_wall - ended) * 1000.0)
-        # The first paint after this sentence's first packet. If the window was
-        # holding an earlier line, no paint happens until the hold expires, which
-        # is exactly the delay this column exists to show.
-        after = [p for p in shots if p >= first_wall]
+        after = [p for p in shots if p[0] >= first_wall]
         if after:
-            display.append((after[0] - first_wall) * 1000.0)
+            display.append((after[0][0] - first_wall) * 1000.0)
+            first_shown.append((after[0][0] - began) * 1000.0)
+
+        # The draw that first showed this sentence's finished text. Matched on
+        # the digest the caption window itself computes, so a line the window
+        # trimmed on the way in is correctly reported as not shown.
+        want = signature(own[-1][2])
+        shown = [p for p in shots if p[1] == want]
+        if shown:
+            final_shown.append((shown[0][0] - ended) * 1000.0)
+        else:
+            never_shown += 1
 
     return {
         "sentences": len(sentences),
@@ -120,6 +158,9 @@ def measure(name: str, sentences: list[dict]) -> dict:
         "to_first": to_first,
         "display": display,
         "settled": settled,
+        "first_shown": first_shown,
+        "final_shown": final_shown,
+        "never_shown": never_shown,
     }
 
 
@@ -131,14 +172,16 @@ def main(argv: list[str]) -> int:
     sentences = json.loads(TIMING.read_text(encoding="utf-8"))
 
     header = (
-        f"{'route':22} {'runs':>4} {'sent':>5} {'miss':>5} "
-        f"{'to_first':>17} {'display':>17} {'settled':>17}"
+        f"{'route':20} {'n':>3} {'sent':>4} {'nosh':>5} "
+        f"{'first shown':>16} {'final shown':>16} {'to_first':>9} {'settled':>9}"
     )
     print(header)
     print("-" * len(header))
     for label, runs in groups:
-        pooled: dict[str, list[float]] = {"to_first": [], "display": [], "settled": []}
-        missed = seen = 0
+        pooled: dict[str, list[float]] = {
+            k: [] for k in ("to_first", "display", "settled", "first_shown", "final_shown")
+        }
+        missed = seen = never = 0
         for name in runs:
             try:
                 got = measure(name, sentences)
@@ -148,19 +191,28 @@ def main(argv: list[str]) -> int:
             for key in pooled:
                 pooled[key].extend(got[key])
             missed += got["missed"]
+            never += got["never_shown"]
             seen += got["sentences"]
         if not seen:
             continue
         cells = []
-        for key in ("to_first", "display", "settled"):
+        for key in ("first_shown", "final_shown"):
             v = pooled[key]
-            body = f"{statistics.median(v):.0f} [p90 {pct(v, 0.9):.0f}]" if v else "-"
-            cells.append(f"{body:>17}")
-        print(f"{label:22} {len(runs):>4} {seen:>5} {missed:>5} " + " ".join(cells))
+            body = f"{statistics.median(v):.0f} [{pct(v, 0.9):.0f}]" if v else "-"
+            cells.append(f"{body:>16}")
+        for key in ("to_first", "settled"):
+            v = pooled[key]
+            cells.append(f"{statistics.median(v):>9.0f}" if v else f"{'-':>9}")
+        print(
+            f"{label:20} {len(runs):>3} {seen:>4} {never:>5} "
+            + " ".join(cells)
+        )
     print()
-    print("to_first = speech starts -> first packet      (server)")
-    print("display  = first packet   -> first pixel      (caption window)")
-    print("settled  = speech ends    -> last packet      (both)")
+    print("first shown = speech starts -> first character drawn  (what a viewer sees)")
+    print("final shown = speech ends   -> the finished text drawn")
+    print("to_first    = speech starts -> first packet              (server only)")
+    print("settled     = speech ends   -> last packet               (server only)")
+    print("nosh        = sentences whose finished text never reached the screen")
     print("all zeroed on samples/blog_3min_timing.json, so thresholds do not move them")
     return 0
 

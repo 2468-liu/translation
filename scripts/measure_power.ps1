@@ -42,7 +42,7 @@ $OutDir = "logs\power"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $sampler = {
-    param($Path, $Every)
+    param($Path, $Every, $CpuPath)
     # Absolute, and the directory created here rather than assumed: a background
     # job does not inherit this script's working directory, so a relative path
     # lands somewhere else and Set-Content fails on a missing directory -- which
@@ -50,20 +50,40 @@ $sampler = {
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $lines = New-Object System.Collections.Generic.List[string]
+    $cpu = New-Object System.Collections.Generic.List[string]
     while ($true) {
         $row = & nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,memory.used,temperature.gpu,clocks.sm --format=csv,noheader,nounits
         if ($LASTEXITCODE -eq 0 -and $row) {
             $lines.Add(($row -join " "))
             Set-Content -Path $Path -Value $lines
         }
+        # CPU alongside the GPU, not instead of it.
+        #
+        # The audio path puts the projector on the CPU, so its GPU-only figure
+        # flatters it: work that moved off the card still costs the machine, and
+        # the two share a cooling path on a laptop. typeperf needs no counter
+        # names and works unprivileged.
+        try {
+            $proc = (Get-Counter "\Process(*)\% Processor Time" -ErrorAction Stop).CounterSamples
+            $busy = ($proc | Where-Object { $_.InstanceName -notmatch "^(_total|Idle)" } |
+                Measure-Object -Property CookedValue -Sum).Sum
+            $cpu.Add(("{0:N1}" -f ($busy / [Environment]::ProcessorCount)))
+            Set-Content -Path $CpuPath -Value $cpu
+        }
+        catch {
+            # Recorded once as an empty file so the report can say the CPU column
+            # was wanted and not had, rather than omitting it silently.
+            if (-not (Test-Path $CpuPath)) { Set-Content -Path $CpuPath -Value "" }
+        }
         Start-Sleep -Seconds $Every
     }
 }
 
 $raw = Join-Path (Resolve-Path $OutDir) "$Name.csv"
-Remove-Item $raw -ErrorAction SilentlyContinue
-$job = Start-Job -ScriptBlock $sampler -ArgumentList $raw, $IntervalSeconds
-Write-Host "sampling GPU every ${IntervalSeconds}s -> $raw"
+$cpuRaw = Join-Path (Resolve-Path $OutDir) "$Name.cpu.txt"
+Remove-Item $raw, $cpuRaw -ErrorAction SilentlyContinue
+$job = Start-Job -ScriptBlock $sampler -ArgumentList $raw, $IntervalSeconds, $cpuRaw
+Write-Host "sampling GPU every ${IntervalSeconds}s -> $raw  (cpu -> $cpuRaw)"
 
 try {
     if ($BaselineSeconds -gt 0) {
@@ -97,4 +117,4 @@ finally {
 $apps = & nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader
 $total = & nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
 
-& $Python scripts\summarize_power.py $raw $Name --apps $apps --total $total --warmup $WarmupSeconds
+& $Python scripts\summarize_power.py $raw $Name --apps $apps --total $total --warmup $WarmupSeconds --cpu $cpuRaw
