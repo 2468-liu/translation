@@ -26,6 +26,12 @@ class Session:
         self.stable = 0
         self.last_translated = ""
         self.last_translation = ""
+        # Which source text last_translation belongs to, plus a closing event that
+        # arrived while that text was still being translated. The source is what
+        # makes reuse safe: while a job is in flight, last_translation still holds
+        # the PREVIOUS sentence's text.
+        self.last_translation_src = ""
+        self.pending_final_src = ""
         # Text of the early closing partial (vad.EARLY_END_SILENCE_MS). Only set
         # once that partial has actually been transcribed, so the closing end
         # event can reuse it instead of recognising the same audio twice.
@@ -83,6 +89,9 @@ class Session:
         self.last_translated = ""
         self.last_translation = ""
         self._partial_result = None
+        self.last_translation = ""
+        self.last_translation_src = ""
+        self.pending_final_src = ""
         self.context.clear()
         self.shown_translation = ""
         self.shown_source = ""
@@ -246,18 +255,31 @@ class Session:
         if not should_translate:
             return
         if text == self.last_translated:
-            if final and self.last_translation:
-                # The closing event still has to reach whoever is recording, even
-                # though there is nothing new to translate. Re-send what is
-                # already on screen; the caption window reads it as the same
-                # line and drops it, so this costs one packet and no work.
-                await send(
-                    {
-                        "type": "translation",
-                        "text": self.last_translation,
-                        "final": True,
-                    }
-                )
+            if final:
+                if self.last_translation_src == text and self.last_translation:
+                    # This sentence's translation already finished: re-send what
+                    # is on screen. The caption window reads it as the same line
+                    # and drops it, so this costs one packet and no work.
+                    await send(
+                        {
+                            "type": "translation",
+                            "text": self.last_translation,
+                            "final": True,
+                        }
+                    )
+                else:
+                    # Still streaming. last_translation belongs to the previous
+                    # sentence, so sending it now would label that text as this
+                    # sentence's final and the caption window would swap the
+                    # current line back to it. Remember the request and send the
+                    # real text when the job finishes.
+                    self.pending_final_src = text
+                    perf.emit(
+                        "pipeline",
+                        "promote",
+                        chars=len(text),
+                        held=self.last_translation_src or "-",
+                    )
             return
         self.last_translated = text
         self._schedule_translate(text, final, current_language, generation, send)
@@ -374,15 +396,23 @@ class Session:
         if generation != self.media_generation or job != self.job_id:
             return
         self.last_translation = acc
+        self.last_translation_src = text
+        # A closing event that arrived while this job was streaming is answered
+        # here, with the text that actually belongs to it.
+        promote = self.pending_final_src == text
+        if promote:
+            self.pending_final_src = ""
         # Nothing downstream reads `final`; it exists so a recorder can tell an
         # utterance apart from a mid-sentence piece. `_caption_accepts` is False
         # here for almost every job, because the streaming loop already put the
         # same text on screen, so without this the final message is never sent.
-        if final or self._caption_accepts(acc):
+        if final or promote or self._caption_accepts(acc):
             self.shown_translation = acc
             self.shown_source = text
-            await send({"type": "translation", "text": acc, "final": final})
-        if final and acc.strip():
+            await send(
+                {"type": "translation", "text": acc, "final": bool(final or promote)}
+            )
+        if (final or promote) and acc.strip():
             self._remember(text, acc)
 
     def _caption_accepts(self, acc: str) -> bool:
