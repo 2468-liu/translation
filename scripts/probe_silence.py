@@ -38,35 +38,87 @@ ROOT = Path(__file__).resolve().parents[1]
 SHORT_UNITS = 8
 
 
+def enqueues(name: str) -> list[tuple[float, float]]:
+    """(wall of fragment close, speech length in ms) for each closed fragment.
+
+    Read from the server's own log rather than reconstructed from the client's
+    events. The server knows the length of the audio it was handed; the client
+    only knows where its playback head was when a packet turned up, and its
+    segment_start markers are VAD onsets, which fire once per breath rather than
+    once per sentence -- 26 of 49 of them had no translation of their own.
+    """
+    path = perf_log_for(name)
+    if not path.exists():
+        raise SystemExit(f"missing {path}")
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "pipeline.enqueue" not in line or "kind=end" not in line:
+            continue
+        head, _, tail = line.partition(" ")
+        length = None
+        for field in tail.split():
+            if field.startswith("audio_ms="):
+                length = float(field.split("=", 1)[1])
+        if length is None:
+            continue
+        out.append((float(head), length))
+    return out
+
+
+def perf_log_for(name: str) -> Path:
+    return _resolve("perf", ".log", "perf.log", name)
+
+
+def _resolve(stem: str, ext: str, live_name: str, name: str) -> Path:
+    """Find a run's log, archived or still pending.
+
+    A replay's logs are only renamed once the next one starts, so the most recent
+    run is still sitting under the un-suffixed name. Reading it here means the
+    last run of a sweep does not have to be waited on.
+    """
+    archived = ROOT / "logs" / f"{stem}.{name}{ext}"
+    if archived.exists():
+        return archived
+    pending = ROOT / "logs" / "run.pending.json"
+    live = ROOT / "logs" / live_name
+    if live.exists() and pending.exists():
+        try:
+            recorded = json.loads(pending.read_text(encoding="utf-8-sig")).get("name")
+        except (json.JSONDecodeError, OSError):
+            recorded = None
+        if recorded == name:
+            return live
+    return archived
+
+
+def log_for(name: str) -> Path:
+    return _resolve("blog_3min_test", ".json", "blog_3min_test.json", name)
+
+
 def report(name: str) -> dict:
-    path = ROOT / "logs" / f"blog_3min_test.{name}.json"
+    path = log_for(name)
     if not path.exists():
         raise SystemExit(f"missing {path}")
     events = json.loads(path.read_text(encoding="utf-8"))["events"]
     frags = fragments(events)
-    starts = sorted(
-        (e for e in events if e.get("type") == "segment_start"),
-        key=lambda e: float(e["wall"]),
-    )
+    closed = enqueues(name)
+    if len(closed) != len(frags):
+        raise SystemExit(
+            f"{name}: {len(closed)} fragments closed but {len(frags)} translations"
+            " -- cannot line them up"
+        )
 
-    # Pair by order, one fragment to one utterance.
-    #
-    # Taking the first fragment that merely starts after an utterance does looks
-    # equivalent and is not: while a long sentence is being translated the next
-    # utterance has already begun, so that rule hands the later utterance the
-    # previous sentence's translation and reports the gap between them. It read
-    # a median of 705ms where the real figure is 3.5s.
     blank: list[float] = []
     after_close: list[float] = []
     length: list[float] = []
-    for start, frag in zip(starts, frags):
-        spoken = float(frag["at"]) - float(start["audio_sec"])
-        # The replay runs at 1x, so the fragment closed this far after the
-        # speaker started.
-        closed = float(start["wall"]) + spoken
-        blank.append((frag["start"] - float(start["wall"])) * 1000.0)
-        after_close.append((frag["start"] - closed) * 1000.0)
-        length.append(spoken)
+    for (close_wall, speech_ms), frag in zip(closed, frags):
+        # The model and the display cost whatever happens between the fragment
+        # closing and its first character reaching the screen.
+        after_close.append((frag["start"] - close_wall) * 1000.0)
+        # From the speaker's first word: the speech itself, the pause that had
+        # to elapse before the fragment could close, then the model.
+        blank.append(speech_ms + after_close[-1])
+        length.append(speech_ms)
 
     sizes = [len(f["last"]) for f in frags]
     bad = sum(
@@ -134,8 +186,8 @@ def main(argv: list[str]) -> int:
         rows.append((level, runs, stats))
 
     header = (
-        f"{'sil ms':>7} {'runs':>5} {'frags':>7} {'len med':>7} "
-        f"{'blank med':>16} {'blank p90':>16} {'after close':>15} {'short':>6} {'bad':>5}"
+        f"{'sil ms':>7} {'runs':>5} {'frags':>7} {'speech med':>10} {'blank med':>16} "
+        f"{'blank p90':>16} {'after close':>15} {'short':>6} {'bad':>5}"
     )
     print(header)
     print("-" * len(header))
@@ -149,8 +201,8 @@ def main(argv: list[str]) -> int:
         )
         print(
             f"{level:>7} {len(runs):>5} {frags_s:>7} "
-            f"{spread(col('length_median')):>7} {spread(col('blank_median')):>16} "
-            f"{spread(col('blank_p90')):>16} {spread(col('close_median')):>15} "
+            f"{spread(col('length_median'), 10):>10} {spread(col('blank_median'), 16):>16} "
+            f"{spread(col('blank_p90'), 16):>16} {spread(col('close_median'), 15):>15} "
             f"{sum(col('short')):>6} {sum(col('bad')):>5}"
         )
     if rows:
