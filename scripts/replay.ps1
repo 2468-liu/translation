@@ -25,18 +25,32 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 
-# Files are locked while the server runs, so rotation has to follow the kill.
-$rotate = @(
-    @("logs\perf.log", "logs\perf.$Name.log"),
-    @("logs\perf_caption.log", "logs\perf_caption.$Name.log"),
-    @("logs\blog_3min_test.json", "logs\blog_3min_test.$Name.json")
-)
-foreach ($pair in $rotate) {
-    if (Test-Path $pair[0]) {
-        Move-Item -Force $pair[0] $pair[1]
-        Write-Host "rotated $($pair[0]) -> $($pair[1])"
-    }
+# The logs still on disk belong to the PREVIOUS run, so that is the name they
+# have to be archived under. Rotating them into this run's name instead files
+# every result one run late, which is exactly the kind of quiet mislabelling
+# these logs exist to rule out.
+$Pending = "logs\run.pending.json"
+$previous = $null
+if (Test-Path $Pending) {
+    $previous = (Get-Content $Pending -Raw | ConvertFrom-Json).name
 }
+
+if ($previous) {
+    $rotate = @(
+        @("logs\perf.log", "logs\perf.$previous.log"),
+        @("logs\perf_caption.log", "logs\perf_caption.$previous.log"),
+        @("logs\blog_3min_test.json", "logs\blog_3min_test.$previous.json")
+    )
+    foreach ($pair in $rotate) {
+        if (Test-Path $pair[0]) {
+            Move-Item -Force $pair[0] $pair[1]
+            Write-Host "archived previous run: $($pair[0]) -> $($pair[1])"
+        }
+    }
+} elseif (Test-Path "logs\perf.log") {
+    throw "logs\perf.log exists but logs\run.pending.json does not; cannot tell which run it belongs to"
+}
+Remove-Item $Pending -Force -ErrorAction SilentlyContinue
 
 $env:PYTHONUNBUFFERED = "1"
 $env:TRANSLATION_PERF = "1"
@@ -49,12 +63,6 @@ Remove-Item Env:TRANSLATION_PERF_LOG -ErrorAction SilentlyContinue
 $sha = ((& git rev-parse --short HEAD) -join "").Trim()
 $dirty = if ((& git status --porcelain) -join "") { "+dirty" } else { "" }
 $stamp = "$sha$dirty"
-"logs\run.$Name.meta" | Out-Null
-@{
-    name = $Name
-    code = $stamp
-    when = (Get-Date).ToString("o")
-} | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 Write-Host "code $stamp"
 
 Write-Host "starting server"
@@ -74,6 +82,15 @@ $replayExit = $LASTEXITCODE
 if ($replayExit -ne 0 -or -not (Test-Path "logs\blog_3min_test.json")) {
     throw "replay did not finish (exit $replayExit); logs left in place, not measuring them"
 }
+
+# Record the run only once it has completed, and mark its logs as pending so the
+# NEXT invocation knows which name to archive them under.
+@{
+    name = $Name
+    code = $stamp
+    when = (Get-Date).ToString("o")
+} | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
+@{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
 
 Write-Host ""
 & $Python scripts\perf_compare.py $Name logs\perf.log logs\perf_caption.log logs\blog_3min_test.json --code $stamp
