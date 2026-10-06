@@ -21,6 +21,10 @@
 [CmdletBinding()]
 param(
     [int[]] $PartialIntervals = @(250, 500, 1000, 0),
+    # Rounds per arm. One replay of this material has been seen to differ from
+    # itself by a factor of two, so one is a sample rather than a measurement.
+    [int] $WhisperRuns = 1,
+    [int] $AudioRuns = 3,
     [string] $Config = "server\config.py"
 )
 
@@ -73,22 +77,28 @@ Ensure-TranslationModel
 
 foreach ($ms in $PartialIntervals) {
     Set-PartialInterval $ms
-    $label = if ($ms -eq 0) { "pw-whisper-closed" } else { "pw-whisper$ms" }
+    $base = if ($ms -eq 0) { "pw-whisper-closed" } else { "pw-whisper$ms" }
+    for ($i = 1; $i -le $WhisperRuns; $i++) {
+        $label = if ($WhisperRuns -eq 1) { $base } else { "$base-$([char]([int][char]'a' + $i - 1))" }
+        Write-Host ""
+        Write-Host "===== $label ====="
+        try {
+            & .\scripts\measure_power.ps1 -Name $label
+        }
+        catch {
+            Write-Warning "$label failed: $_"
+        }
+    }
+}
+
+for ($i = 1; $i -le $AudioRuns; $i++) {
+    $label = if ($AudioRuns -eq 1) { "pw-audio" } else { "pw-audio-$([char]([int][char]'a' + $i - 1))" }
     Write-Host ""
     Write-Host "===== $label ====="
     try {
-        & .\scripts\measure_power.ps1 -Name $label
+        & .\scripts\measure_power.ps1 -Name $label -AudioNative
     }
     catch {
         Write-Warning "$label failed: $_"
     }
-}
-
-Write-Host ""
-Write-Host "===== pw-audio ====="
-try {
-    & .\scripts\measure_power.ps1 -Name "pw-audio" -AudioNative
-}
-catch {
-    Write-Warning "pw-audio failed: $_"
 }

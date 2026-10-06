@@ -82,7 +82,7 @@ VAD_SPEECH_PAD_MS = 120
 # So the closing silence is longer (700ms, was 400ms) to cut at sentence
 # boundaries, but the ceiling is much lower (26s) than whisper's 30s window:
 # there is no context stitching to fall back on.
-GEMMA_MIN_SILENCE_MS = 400
+GEMMA_MIN_SILENCE_MS = 1000
 GEMMA_MAX_UTTERANCE_MS = 26_000
 GEMMA_VAD_SPEECH_PAD_MS = 200
 # Past this much speech, close even if the speaker has not paused. Keeps a
