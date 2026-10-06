@@ -8,7 +8,6 @@ import os
 import queue
 import re
 import socket
-from collections import deque
 import subprocess
 import sys
 import threading
@@ -18,6 +17,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 
 from . import perf
+from .translate import CHAR_RUN_MAX, CLAUSE_RUN_MAX, collapse_caption_repeats
 
 try:
     import ctypes
@@ -873,69 +873,14 @@ def start_caption() -> None:
     )
 
 
-# Both rules allow three occurrences and cut the fourth.
-#
-# Repetition is normal in Chinese, and cutting at two turned ordinary lines into
-# fragments: a quotation, a correction, and a list that comes back to its own
-# subject are all things a speaker says. What is not normal is a fourth and fifth
-# -- a decoder that has stopped making progress and is filling the rest of the
-# fragment. Three is where that starts, and it is rare enough to be worth cutting.
-#
-# The two rules exist separately because they see different things. Adjacent
-# characters catch "好好好好" and never catch "在湖边，在湖边", where no two
-# adjacent characters are equal.
-_CHAR_RUN_MAX = 3
-_CLAUSE_RUN_MAX = 3
-_CLAUSE_SEP = "，,、；;：:"
-# How many clauses back a repeat has to fall for it to count.
-_CLAUSE_WINDOW = 4
-
-
-def _collapse_char_runs(text: str) -> str:
-    out = []
-    run = 0
-    prev = ""
-    for ch in text:
-        if ch == prev and ch.strip():
-            run += 1
-            if run > _CHAR_RUN_MAX:
-                continue
-        else:
-            prev = ch
-            run = 1
-        out.append(ch)
-    return "".join(out)
-
-
-def _collapse_clause_runs(text: str) -> str:
-    """Drop clauses the model has already emitted.
-
-    Compares whole clauses separated by punctuation, so the unit being tested is
-    the one a listener would call a repetition. Kept in step with the character
-    rule above: that one cannot see "湖边，湖边" at all, because no two adjacent
-    characters are equal.
-    """
-    parts = re.split(f"([{re.escape(_CLAUSE_SEP)}])", text)
-    # A clause has to have come round again *recently* to count as a repeat.
-    # Counting over the whole line would cut the same phrase reused five clauses
-    # later, which is ordinary in a long sentence and not a failure.
-    recent: deque[str] = deque(maxlen=_CLAUSE_WINDOW)
-    kept: list[str] = []
-    for part in parts:
-        if part in _CLAUSE_SEP or not part.strip():
-            kept.append(part)
-            continue
-        if sum(1 for earlier in recent if earlier == part) >= _CLAUSE_RUN_MAX:
-            # Said this three times over inside the window; everything from here
-            # on is the model circling. Cut rather than guess where it would end.
-            return _collapse_char_runs("".join(kept).rstrip(_CLAUSE_SEP))
-        recent.append(part)
-        kept.append(part)
-    return _collapse_char_runs("".join(kept))
+# The repeat rules live in translate.py and are shared: the generators need the
+# clause rule as much as the window does, and two copies of a threshold drift.
+_CHAR_RUN_MAX = CHAR_RUN_MAX
+_CLAUSE_RUN_MAX = CLAUSE_RUN_MAX
 
 
 def _collapse_repeats(text: str) -> str:
-    return _collapse_clause_runs(text)
+    return collapse_caption_repeats(text)
 
 
 def _read_units(text: str) -> int:

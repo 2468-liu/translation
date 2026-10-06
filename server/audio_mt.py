@@ -1,4 +1,4 @@
-"""Translation by a model that hears the audio itself.
+﻿"""Translation by a model that hears the audio itself.
 
 One request per fragment: the audio goes in, Chinese comes out. Nothing
 transcribes first, so there is no intermediate text to wait for and no second
@@ -25,11 +25,15 @@ import numpy as np
 
 from . import perf
 from .config import (
+    AUDIO_CHARS_PER_SECOND,
     AUDIO_CHAT_TEMPLATE_KWARGS,
     AUDIO_MAX_TOKENS,
     AUDIO_MODEL_NAME,
     AUDIO_MODEL_URL,
+    AUDIO_REPEAT_PENALTY,
     AUDIO_SYSTEM_PROMPT,
+    AUDIO_TOKEN_MARGIN,
+    AUDIO_CHINESE_SHARE_MIN,
     SAMPLE_RATE,
 )
 
@@ -79,17 +83,59 @@ def build_messages(audio_b64: str, context: list[tuple[str, str]] | None = None)
     ]
 
 
+def token_budget(audio_seconds: float) -> int:
+    """How many tokens a fragment of this length is allowed.
+
+    Derived from the audio rather than fixed, so a loop runs out of room early
+    instead of filling whatever the wire allows. Clamped at both ends: a very
+    short fragment still needs room for a full stop and a clause, and a long one
+    still stops at the configured maximum.
+    """
+    want = int(round(audio_seconds * AUDIO_CHARS_PER_SECOND)) + AUDIO_TOKEN_MARGIN
+    return max(64, min(AUDIO_MAX_TOKENS, want))
+
+
 def build_payload(
-    audio_b64: str, context: list[tuple[str, str]] | None = None
+    audio_b64: str,
+    context: list[tuple[str, str]] | None = None,
+    audio_seconds: float = 0.0,
 ) -> dict:
     return {
         "model": AUDIO_MODEL_NAME,
         "messages": build_messages(audio_b64, context),
         "temperature": 0,
-        "max_tokens": AUDIO_MAX_TOKENS,
+        "repeat_penalty": AUDIO_REPEAT_PENALTY,
+        "max_tokens": token_budget(audio_seconds),
         "stream": True,
         "chat_template_kwargs": AUDIO_CHAT_TEMPLATE_KWARGS,
     }
+
+
+def chinese_share(text: str) -> float:
+    """Share of letters that are Chinese.
+
+    The model falls back to transcribing the English when it loses the thread,
+    and it does so reproducibly -- the same two fragments in every run. Counting
+    letters rather than characters keeps punctuation and spacing out of the way.
+
+    Judged as a share of Chinese rather than of foreign letters on purpose: a
+    correct translation that quotes an English title is mostly Latin and would
+    score as untranslated under the other reading.
+    """
+    letters = [c for c in (text or "") if c.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for c in letters if "\u4e00" <= c <= "\u9fff") / len(letters)
+
+
+def looks_untranslated(text: str) -> bool:
+    # Nothing to judge is not a failure. An empty or punctuation-only string
+    # scores zero Chinese letters, and reading that as "transcribed the English"
+    # would make silence look like a bad translation.
+    letters = [c for c in (text or "") if c.isalpha()]
+    if not letters:
+        return False
+    return chinese_share(text) < AUDIO_CHINESE_SHARE_MIN
 
 
 async def stream_audio_translation(
@@ -107,7 +153,9 @@ async def stream_audio_translation(
 
     if audio.size == 0:
         return
-    payload = build_payload(encode_wav(audio), context)
+    payload = build_payload(
+        encode_wav(audio), context, audio.size / float(SAMPLE_RATE)
+    )
     # A long fragment is a long prompt: first token costs roughly 300ms plus
     # 250ms per second of audio, so the read timeout has to clear 26s easily.
     timeout = httpx.Timeout(120.0, connect=5.0)

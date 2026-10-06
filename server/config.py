@@ -37,6 +37,30 @@ AUDIO_SYSTEM_PROMPT = (
 # and returns nothing.
 AUDIO_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
 AUDIO_MAX_TOKENS = 400
+# A fixed token budget is not a length limit, it is a wire: a decoder that has
+# stopped making progress keeps going until the budget runs out, which is how a
+# 3-second fragment came to emit a 40-character clause six times over. Scaling
+# the budget to the audio bounds the damage instead of the symptom.
+#
+# 6 characters per second of speech is roughly what a faithful Chinese rendering
+# of English narration runs to; the margin covers a slow passage without letting
+# a loop fill the fragment.
+AUDIO_CHARS_PER_SECOND = 6.0
+AUDIO_TOKEN_MARGIN = 48
+# A little above 1. Decoding penalty punishes a token the model has just used,
+# which is what a loop is made of. Far enough above 1 to discourage repetition
+# and low enough not to distort wording or break proper nouns, which is what a
+# higher value does.
+AUDIO_REPEAT_PENALTY = 1.05
+# Below this share of Chinese letters, the model transcribed the English instead
+# of translating it.
+#
+# Measured on the two real failures and one real translation that quotes an
+# English title: 0% Chinese for a pure transcription, 51% for a line that
+# translates correctly around a quoted phrase, 100% for clean lines. Judging by
+# the share of foreign letters instead inverts this -- the quoted title is 49%
+# Latin and would have been thrown away as untranslated.
+AUDIO_CHINESE_SHARE_MIN = 0.30
 
 # Paths — filled after ModelScope download / conversion
 ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
@@ -58,7 +82,7 @@ ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
 ASR_BEAM_SIZE = 1
-PARTIAL_INTERVAL_MS = 250
+PARTIAL_INTERVAL_MS = 0
 MT_DEVICE = "cuda"
 MT_COMPUTE_TYPE = "int8"
 

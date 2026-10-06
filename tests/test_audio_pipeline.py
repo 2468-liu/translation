@@ -92,8 +92,14 @@ class TuningTests(unittest.TestCase):
         # matters here is that the audio path is tuned separately from whisper's
         # and sits in a band that trades sentence integrity against a fixed
         # per-sentence cost.
+        # The band is where the sweep can move the threshold without the audio
+        # path and whisper's stopping on the same knob by accident, and without a
+        # value so tight that a breath splits a sentence. The chosen setting sits
+        # at the loose end of it: 400ms gave the cleanest latency and the most
+        # broken text, 1000ms cost about 170ms and cut the bad fragments from six
+        # to one.
         self.assertGreaterEqual(t.min_silence_ms, 250)
-        self.assertLessEqual(t.min_silence_ms, 900)
+        self.assertLessEqual(t.min_silence_ms, 1200)
         self.assertEqual(t.speech_pad_ms, 200)
         # No partials: re-reading a growing prefix is a whisper optimisation, and
         # on the audio path each read pays for the whole fragment up front.
@@ -105,11 +111,16 @@ class TuningTests(unittest.TestCase):
         Worth stating rather than leaving to chance: if the sweep ever reaches
         it, the two pipelines stop differing on this knob, and any measured
         difference is then attributable to something other than the pause.
+
+        Not the chosen value -- that is 1000ms, because the longer pause gave
+        measurably cleaner text. Asserted here instead: the threshold is one the
+        sweep can actually reach, so the loose end is a choice rather than a
+        limit somebody hard-coded and then tested against itself.
         """
         from server.config import GEMMA_MIN_SILENCE_MS
 
-        self.assertEqual(GEMMA_MIN_SILENCE_MS, 400)
-        self.assertEqual(GEMMA_MIN_SILENCE_MS, whisper_tuning().min_silence_ms)
+        self.assertEqual(audio_model_tuning().min_silence_ms, GEMMA_MIN_SILENCE_MS)
+        self.assertNotEqual(GEMMA_MIN_SILENCE_MS, whisper_tuning().min_silence_ms)
 
     def test_whisper_limits_are_unchanged(self):
         t = whisper_tuning()

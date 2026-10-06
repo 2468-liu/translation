@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from collections.abc import AsyncIterator
 
 import httpx
@@ -21,6 +22,68 @@ def collapse_translation_repeats(text: str) -> str:
             break
         cleaned = collapsed
     return cleaned
+
+
+# Both of the rules below allow three occurrences and cut the fourth.
+#
+# Repetition is ordinary in Chinese, and cutting at two turns ordinary lines into
+# fragments: a quotation, a correction, and a list that returns to its own
+# subject each repeat a phrase. What is not ordinary is a fourth and a fifth -- a
+# decoder that has stopped making progress. Three is rare enough to be worth
+# cutting and common enough that cutting earlier would cost real sentences.
+CHAR_RUN_MAX = 3
+CLAUSE_RUN_MAX = 3
+# How many clauses back a repeat has to fall to count. Without a window, the same
+# phrase reused six clauses later is cut as if it were a loop.
+CLAUSE_WINDOW = 4
+CLAUSE_SEP = "，,、；;：:"
+
+
+def collapse_char_runs(text: str) -> str:
+    """Cap a run of one identical character.
+
+    Catches what clause comparison cannot see: no two adjacent characters are
+    equal in a clause loop, but they are all equal here.
+    """
+    out: list[str] = []
+    run = 0
+    prev = ""
+    for ch in text:
+        if ch == prev and ch.strip():
+            run += 1
+            if run > CHAR_RUN_MAX:
+                continue
+        else:
+            prev = ch
+            run = 1
+        out.append(ch)
+    return "".join(out)
+
+
+def collapse_clause_runs(text: str) -> str:
+    """Cut at a clause the model has already said three times over."""
+    parts = re.split(f"([{re.escape(CLAUSE_SEP)}])", text)
+    recent: deque[str] = deque(maxlen=CLAUSE_WINDOW)
+    kept: list[str] = []
+    for part in parts:
+        if part in CLAUSE_SEP or not part.strip():
+            kept.append(part)
+            continue
+        if sum(1 for earlier in recent if earlier == part) >= CLAUSE_RUN_MAX:
+            return collapse_char_runs("".join(kept).rstrip(CLAUSE_SEP))
+        recent.append(part)
+        kept.append(part)
+    return collapse_char_runs("".join(kept))
+
+
+def collapse_caption_repeats(text: str) -> str:
+    """The rule the caption window and the generators both use.
+
+    One implementation, because the two copies drifted: the window grew a clause
+    rule the generators did not have, so a loop was cut on screen and still sent
+    whole.
+    """
+    return collapse_clause_runs(text or "")
 
 def _drop_think(piece: str, thinking: bool) -> tuple[str, bool]:
     out = []

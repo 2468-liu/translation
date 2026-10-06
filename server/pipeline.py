@@ -1,4 +1,4 @@
-"""Per-connection audio session: VAD -> ASR -> streamed translation."""
+﻿"""Per-connection audio session: VAD -> ASR -> streamed translation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,12 @@ import numpy as np
 
 from . import perf
 from .asr import AsrEngine
-from .audio_mt import stream_audio_translation as audio_stream
+from .audio_mt import (
+    chinese_share,
+    looks_untranslated,
+    stream_audio_translation as audio_stream,
+    chinese_share,
+)
 from .config import (
     AUDIO_CHAT_TEMPLATE_KWARGS,
     AUDIO_MAX_TOKENS,
@@ -18,7 +23,11 @@ from .config import (
     PARTIAL_STABLE_REPEAT,
     SAMPLE_RATE,
 )
-from .translate import collapse_translation_repeats, stream_translation
+from .translate import (
+    collapse_caption_repeats,
+    collapse_translation_repeats,
+    stream_translation,
+)
 from .vad import UtteranceSplitter, audio_model_tuning, whisper_tuning
 
 
@@ -121,6 +130,9 @@ class Session:
         self.context.clear()
         self.shown_translation = ""
         self.shown_source = ""
+        # The previous fragment's finished line, so the model handing it back is
+        # recognised as a repeat rather than captioned as a new sentence.
+        self._last_audio_final = ""
         if not self.language_locked:
             self.language = None
 
@@ -467,20 +479,19 @@ class Session:
         context = list(self.context[-CONTEXT_SENTENCES:])
         started = perf.mono()
         sent_any = False
+        accepted: list[str] = []
         try:
             async for piece in audio_stream(audio, self.client, context):
                 acc = collapse_translation_repeats(piece)
                 if not acc or not self._caption_accepts(acc):
                     continue
-                self.shown_translation = acc
-                self.shown_source = ""
+                # Nothing goes to the caption until the fragment is done and the
+                # text has cleared the checks below. On this path a partial is a
+                # guess about audio the model has finished hearing, and the
+                # guesses that reach the screen are the ones that get held,
+                # revised and overwritten.
+                accepted.append(acc)
                 sent_any = True
-                # Stream the line as it grows. There is no separate final step:
-                # the model has already heard the whole fragment, so its output
-                # is the last word on the subject.
-                await send(
-                    {"type": "translation", "text": acc, "final": final}
-                )
         except Exception as exc:  # network, model load, malformed stream
             perf.emit("audio", "error", kind=kind, err=type(exc).__name__)
             if not self.warned_translate:
@@ -508,6 +519,21 @@ class Session:
             )
         if generation != self.media_generation:
             return
+
+        acc = self._settle_audio_text(accepted)
+        if acc:
+            self._last_audio_final = acc
+        if acc:
+            self.shown_translation = acc
+            self.shown_source = ""
+            # Stream the line as it grows. There is no separate final step: the
+            # model has already heard the whole fragment, so its output is the
+            # last word on the subject.
+            for step in self._growth_steps(acc):
+                await send({"type": "translation", "text": step, "final": final})
+        elif sent_any:
+            perf.emit("audio", "rejected", kind=kind, chars=len(accepted[-1]))
+
         if final:
             self.last_text = ""
             self._remember("", self.shown_translation)
@@ -519,6 +545,47 @@ class Session:
         if shown and len(acc) < len(shown) and shown.startswith(acc):
             return False
         return True
+
+    @staticmethod
+    def _growth_steps(text: str) -> list[str]:
+        """The line in the few steps a viewer can read as it arrives.
+
+        One packet per token made the caption window redraw 500 times for a
+        single sentence, which is why the audio path used to measure 114
+        characters a second on screen. This path's whole fragment arrives in
+        about 130ms, so there is nothing to pace: a handful of steps is enough to
+        look like text arriving rather than a block appearing.
+        """
+        length = len(text)
+        if length <= 24:
+            return [text]
+        steps = 4
+        return [text[: length * (i + 1) // steps] for i in range(steps)]
+
+    def _settle_audio_text(self, accepted: list[str]) -> str:
+        """The fragment's finished line, or nothing if it should not be shown.
+
+        Three checks, each answering a failure the logs actually contain. The
+        model transcribes the English instead of translating it -- reproducibly,
+        the same two fragments in every run -- so a line that is mostly Latin
+        letters is dropped rather than captioned. It repeats a clause until the
+        fragment ends, so a line that has looped is cut at the loop. And it can
+        hand back the previous fragment's line, which the caption would then
+        display as though it were new.
+        """
+        if not accepted:
+            return ""
+        text = accepted[-1]
+        if looks_untranslated(text):
+            perf.emit("audio", "untranslated", ratio=round(chinese_share(text), 3))
+            return ""
+        trimmed = collapse_caption_repeats(text)
+        if trimmed != text:
+            perf.emit("audio", "looped", before=len(text), after=len(trimmed))
+        if trimmed and trimmed == self._last_audio_final:
+            perf.emit("audio", "repeat_final")
+            return ""
+        return trimmed
 
     def _remember(self, source: str, translation: str) -> None:
         cleaned = translation.strip()
