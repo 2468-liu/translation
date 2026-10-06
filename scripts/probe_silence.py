@@ -5,12 +5,19 @@ every sentence. The measured relationship is first token at roughly 300ms plus
 250ms per second of audio, which makes waiting longer doubly expensive: the
 caption waits for the pause, then waits for the model.
 
-Three settings span the range -- a tight one that risks cutting sentences, a
-loose one that costs the most time, and the middle -- so the curve can be read
-rather than guessed at. ``run`` drives it:
+Tightening it buys that fixed cost back and risks cutting sentences in half, so
+a level is only worth anything if the quality cost is shown next to the gain.
+Three things move when the threshold moves:
 
-    .\scripts\replay.ps1 sil400 -AudioNative
-    .\scripts\replay.ps1 sil700 -AudioNative
+  blank med/p90  when the caption goes from nothing to visible
+  frags         how many sentences the material is cut into
+  short         fragments under 8 characters, which is what a cut sentence
+                looks like once it reaches the screen
+
+Levels are declared on the command line rather than read from the run name, so
+the provenance of every number stays in the invocation:
+
+    python scripts/probe_silence.py 400=sil400a,sil400b 550=sil550a,sil550b
 """
 
 from __future__ import annotations
@@ -20,27 +27,15 @@ import statistics
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.audit_quality import cjk_ratio, find_loop, fragments  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 
-
-def fragments(events: list[dict]) -> list[dict]:
-    """Group streamed translations back into the fragment each one belongs to.
-
-    A fragment's text only ever grows, so a new fragment starts where the text
-    is not an extension of the previous one, or where the stream paused.
-    """
-    out: list[dict] = []
-    for event in events:
-        if event.get("type") != "translation":
-            continue
-        text = str(event.get("text") or "")
-        wall = float(event["wall"])
-        if out and text.startswith(out[-1]["last"] or "") and wall - out[-1]["end"] < 3:
-            out[-1]["last"] = text
-            out[-1]["end"] = wall
-        else:
-            out.append({"start": wall, "end": wall, "last": text})
-    return out
+# Under this length a fragment is more likely a cut sentence than a short one.
+# The reference material's own shortest complete lines sit at 5-6 characters.
+SHORT_UNITS = 8
 
 
 def report(name: str) -> dict:
@@ -59,39 +54,96 @@ def report(name: str) -> dict:
         if later:
             lag.append((later[0]["start"] - at) * 1000.0)
 
-    burst = [(f["end"] - f["start"]) * 1000.0 for f in frags]
     sizes = [len(f["last"]) for f in frags]
-    gaps = [(frags[i + 1]["start"] - frags[i]["end"]) * 1000.0 for i in range(len(frags) - 1)]
-
-    def p(values: list[float], q: float) -> float:
-        if not values:
-            return float("nan")
-        return sorted(values)[min(len(values) - 1, int(q * len(values)))]
-
+    bad = sum(
+        1 for f in frags if find_loop(f["last"]) or cjk_ratio(f["last"]) < 0.5
+    )
     return {
-        "fragments": len(frags),
-        "silence_ms": p(gaps, 0.5),
+        "frags": len(frags),
         "blank_median": statistics.median(lag) if lag else float("nan"),
-        "blank_p90": p(lag, 0.9),
-        "blank_max": max(lag) if lag else float("nan"),
-        "burst_median": statistics.median(burst) if burst else float("nan"),
+        "blank_p90": pct(lag, 0.9),
         "chars_median": statistics.median(sizes) if sizes else float("nan"),
+        "short": sum(1 for s in sizes if s < SHORT_UNITS),
+        "bad": bad,
     }
 
 
+def pct(values: list[float], q: float) -> float:
+    if not values:
+        return float("nan")
+    return sorted(values)[min(len(values) - 1, int(q * len(values)))]
+
+
+def spread(values: list[float]) -> str:
+    """Median and range, never a single point.
+
+    One replay of this material has been seen to differ from itself by a factor
+    of two, so a lone number here would be noise wearing a decimal.
+    """
+    if not values:
+        return "       -"
+    if len(values) == 1:
+        return f"{values[0]:7.0f}"
+    low, high = min(values), max(values)
+    return f"{statistics.median(values):7.0f} [{low:.0f}-{high:.0f}]"
+
+
+def parse_levels(argv: list[str]) -> list[tuple[str, list[str]]]:
+    levels = []
+    for spec in argv:
+        level, _, names = spec.partition("=")
+        runs = [n for n in names.split(",") if n]
+        if not runs:
+            raise SystemExit(f"no runs given for level {level!r}")
+        levels.append((level.strip(), runs))
+    return levels
+
+
 def main(argv: list[str]) -> int:
-    names = argv or ["audio1", "audio2"]
-    print(f"{'run':10} {'frags':>5} {'chars':>6} {'burst':>7} {'blank med':>10} {'blank p90':>10} {'blank max':>10}")
-    for name in names:
-        try:
-            r = report(name)
-        except SystemExit as exc:
-            print(f"{name}: {exc}")
+    levels = parse_levels(argv)
+    rows = []
+    for level, runs in levels:
+        stats = []
+        for name in runs:
+            try:
+                stats.append(report(name))
+            except SystemExit as exc:
+                print(f"{name}: {exc}")
+        if not stats:
             continue
-        print(
-            f"{name:10} {r['fragments']:5} {r['chars_median']:6.0f} {r['burst_median']:7.0f} "
-            f"{r['blank_median']:10.0f} {r['blank_p90']:10.0f} {r['blank_max']:10.0f}"
+        rows.append(
+            (
+                level,
+                runs,
+                [s["frags"] for s in stats],
+                [s["blank_median"] for s in stats],
+                [s["blank_p90"] for s in stats],
+                [s["chars_median"] for s in stats],
+                [s["short"] for s in stats],
+                [s["bad"] for s in stats],
+            )
         )
+
+    header = (
+        f"{'sil ms':>7} {'runs':>11} {'frags':>7} {'blank med':>16} "
+        f"{'blank p90':>16} {'chars':>7} {'short':>6} {'bad':>5}"
+    )
+    print(header)
+    print("-" * len(header))
+    for level, runs, frags, med, p90, chars, short, bad in rows:
+        frags_s = f"{statistics.median(frags):.0f}" + (
+            f" [{min(frags)}-{max(frags)}]" if len(frags) > 1 else ""
+        )
+        chars_s = f"{statistics.median(chars):.0f}" + (
+            f" [{min(chars):.0f}-{max(chars):.0f}]" if len(chars) > 1 else ""
+        )
+        print(
+            f"{level:>7} {len(runs):>11} {frags_s:>7} {spread(med):>16} "
+            f"{spread(p90):>16} {chars_s:>7} {sum(short):>6} {sum(bad):>5}"
+        )
+    if rows:
+        print()
+        print(f"runs: {', '.join(f'{lv}={len(r)}' for lv, r, *_ in rows)}")
     return 0
 
 
