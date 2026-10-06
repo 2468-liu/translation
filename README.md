@@ -102,15 +102,32 @@ python scripts/loopback_probe.py --seconds 5
 | `pipeline.ttft` | 翻译第一个字回流的时间 |
 | `pipeline.ttotal` | 翻译整段流完的时间，`pieces` 是分片数 |
 | `pipeline.defer` | 上一段翻译还没跑完，这条结果被挂起 |
+| `pipeline.reuse` | `end` 复用了提前 partial 的文本，这次没跑识别 |
 | `ws.send` / `caption.send` | 服务端发出时的 `time.time()`，包里也带了 `sentAt` |
 | `caption.udp` | 字幕窗收到 UDP；`net` 是发到收的时间 |
 | `caption.text` | 字幕窗取出并做完决策；`action` 是 grow/char/swap/defer/drop，`pump` 是收到到取出（轮询 50 ms），`depth` 是取出时还压着几条 |
-| `caption.paint` | 真正画出来；`since_send` 从服务端发出算起，`action` 是这次为什么画 |
+| `caption.paint` | 真正画出来；`since_send` 从服务端发出算起，`action` 是这次为什么画，`held=1` 表示是等 hold 到期才画的 |
+| `caption.defer` | 一句译文开始挂在屏外等待 |
+| `caption.hold` | 这场等待结束；`wait` 是等了多久，`action` 是最后怎么处理的 |
+| `caption.overwrite` | 等这句的时候下一句已经开口，这句被顶掉了；`held` 是等了多久，`lost` 是没上屏的字数 |
+| `caption.dwell` | 一句被下一句换掉时它在屏上待了多久 |
+
+字幕侧这四个事件是调 hold 的判据：`hold` 看等了多久，`overwrite` 看等丢了多少句，`dwell` 看换行是不是太快。
 
 ```powershell
 python scripts/perf_report.py            # 分位数汇总（两个日志一起读）
 python scripts/perf_report.py logs\perf.run1.log   # 指定文件
+.\scripts\replay.ps1 base1               # 重启服务 + 回放一轮 + 出这一轮的指标
+python scripts\audit_reuse.py            # 提前收尾的识别 vs 完整收尾的识别，差多少
 ```
+
+`replay.ps1` 一条命令做完一轮：停服务（llama-server 不动，保持热）、轮转日志、带 `TRANSLATION_PERF=1` 起服务、回放、跑 `perf_compare`。日志文件在服务运行时是锁着的，所以轮转必须放在停服务之后。
+
+跑测试前 `tests/conftest.py` 会把 `TRANSLATION_PERF_LOG` 指到临时文件——否则假识别器（`chars=5 lang=en`）会把几行写进真的 `logs/perf.log`，在下一次回放前面单独成块，被当成一轮读。
+
+`perf_compare.py` 只取日志里第一段**够长**（≥200 行）的连续事件：回放约 185 s、几千行，更短的都是重启预热或残留。
+
+`audit_reuse.py` 是 B 的前提校验：静音 150 ms 提前收尾的识别结果，要和完整收尾的识别结果一致，末尾复用才成立。当前素材 49/49 句完全一致。
 
 llama-server 的启动日志现在重定向到 `logs/llama.out` / `logs/llama.err`。注意 `-ngl` 是否真的落到显卡，只有 `-lv 4` 才会打印（默认 `-lv 3` 看不到）：
 
