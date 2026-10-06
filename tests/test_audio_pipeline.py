@@ -94,11 +94,22 @@ class TuningTests(unittest.TestCase):
         # per-sentence cost.
         self.assertGreaterEqual(t.min_silence_ms, 250)
         self.assertLessEqual(t.min_silence_ms, 900)
-        self.assertNotEqual(t.min_silence_ms, whisper_tuning().min_silence_ms)
         self.assertEqual(t.speech_pad_ms, 200)
         # No partials: re-reading a growing prefix is a whisper optimisation, and
         # on the audio path each read pays for the whole fragment up front.
         self.assertEqual(t.partial_interval_ms, 0)
+
+    def test_the_sweep_can_tighten_the_pause_all_the_way_to_whispers(self):
+        """The tight end of the sweep coincides with whisper's threshold.
+
+        Worth stating rather than leaving to chance: if the sweep ever reaches
+        it, the two pipelines stop differing on this knob, and any measured
+        difference is then attributable to something other than the pause.
+        """
+        from server.config import GEMMA_MIN_SILENCE_MS
+
+        self.assertEqual(GEMMA_MIN_SILENCE_MS, 400)
+        self.assertEqual(GEMMA_MIN_SILENCE_MS, whisper_tuning().min_silence_ms)
 
     def test_whisper_limits_are_unchanged(self):
         t = whisper_tuning()
