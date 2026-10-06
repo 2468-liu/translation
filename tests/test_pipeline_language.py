@@ -79,8 +79,11 @@ class PipelineLanguageTests(unittest.IsolatedAsyncioTestCase):
         try:
             # The recogniser returns the same source text a second time, so the
             # repeat translation is skipped -- but the final must still go out.
+            # last_translation_src says the cached text belongs to this source,
+            # which is what makes reusing it safe.
             session.last_translated = "hello"
             session.last_translation = "你好"
+            session.last_translation_src = "hello"
             await session._run("end", np.ones(16000, dtype=np.float32), send)
         finally:
             await session.close()
