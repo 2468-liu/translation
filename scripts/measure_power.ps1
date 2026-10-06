@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Sample GPU power and utilisation while one replay runs, and record the result.
 
@@ -35,18 +35,24 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $sampler = {
     param($Path, $Every)
-    $samples = @()
+    # Absolute, and the directory created here rather than assumed: a background
+    # job does not inherit this script's working directory, so a relative path
+    # lands somewhere else and Set-Content fails on a missing directory -- which
+    # is invisible unless the job's errors are read.
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $lines = New-Object System.Collections.Generic.List[string]
     while ($true) {
         $row = & nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,memory.used --format=csv,noheader,nounits
         if ($LASTEXITCODE -eq 0 -and $row) {
-            $samples += ,$row
-            $samples | Set-Content -Path $Path
+            $lines.Add(($row -join " "))
+            Set-Content -Path $Path -Value $lines
         }
         Start-Sleep -Seconds $Every
     }
 }
 
-$raw = Join-Path $OutDir "$Name.csv"
+$raw = Join-Path (Resolve-Path $OutDir) "$Name.csv"
 Remove-Item $raw -ErrorAction SilentlyContinue
 $job = Start-Job -ScriptBlock $sampler -ArgumentList $raw, $IntervalSeconds
 Write-Host "sampling GPU every ${IntervalSeconds}s -> $raw"
@@ -59,8 +65,17 @@ try {
 }
 finally {
     Stop-Job $job -ErrorAction SilentlyContinue
-    Receive-Job $job -ErrorAction SilentlyContinue | Out-Null
+    # Read the job's errors rather than discarding them. A sampler that wrote
+    # nothing looks exactly like a machine that drew no power.
+    $problems = Receive-Job $job -ErrorAction SilentlyContinue 2>&1 |
+        Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }
     Remove-Job $job -Force -ErrorAction SilentlyContinue
+    if ($problems) {
+        Write-Warning "sampler reported: $($problems[0])"
+    }
+    if (-not (Test-Path $raw)) {
+        throw "no trace at $raw -- the sampler produced nothing, so this run's power is unknown"
+    }
 }
 
 # Memory is a snapshot: no sample means the card was never asked during the run.

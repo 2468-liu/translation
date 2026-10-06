@@ -42,6 +42,35 @@ function Set-PartialInterval([int] $Ms) {
     Write-Host "### PARTIAL_INTERVAL_MS = $Ms (confirmed)"
 }
 
+function Ensure-TranslationModel {
+    # The whisper route serves its translation model from llama-server on 8080,
+    # and replay.ps1 leaves that server alone so it stays warm between runs. It
+    # therefore has to be started here or every whisper arm records a card that
+    # never translated anything -- which is exactly what happened once already.
+    if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+        Write-Host "llama-server already on 8080"
+        return
+    }
+    $Llama = "C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"
+    $gguf = (Get-ChildItem "models\hy-mt2-1.8b\*.gguf" | Select-Object -First 1).FullName
+    Write-Host "starting llama-server ($([System.IO.Path]::GetFileName($gguf)))"
+    Start-Process -FilePath $Llama -ArgumentList @(
+        "-m", $gguf, "--host", "127.0.0.1", "--port", "8080",
+        "-ngl", "99", "-c", "2048", "-t", "4", "-np", "1", "-lv", "4"
+    ) -NoNewWindow -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Seconds 5
+        if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+            Write-Host "llama-server ready"
+            return
+        }
+        Write-Host "  waiting for llama-server ($((($i + 1) * 5))s)"
+    }
+    throw "llama-server did not come up; the whisper arms would translate nothing"
+}
+
+Ensure-TranslationModel
+
 foreach ($ms in $PartialIntervals) {
     Set-PartialInterval $ms
     $label = if ($ms -eq 0) { "pw-whisper-closed" } else { "pw-whisper$ms" }

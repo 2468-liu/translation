@@ -125,6 +125,18 @@ if ($replayExit -ne 0 -or -not (Test-Path "logs\blog_3min_test.json")) {
     throw "replay did not finish (exit $replayExit); logs left in place, not measuring them"
 }
 
+# A replay that produced no translations at all is a void run, not a run.
+#
+# The whisper route serves its translation model from llama-server on 8080, which
+# replay.ps1 deliberately leaves alone so it stays warm between runs. If that
+# server is not up the ASR half still works, the material still plays, the client
+# still exits 0 -- and the run looks fine while containing nothing but ASR. Four
+# runs were lost to this before the check existed.
+$trCount = (Select-String -Path "logs\blog_3min_test.json" -Pattern '"type":\s*"translation"' -AllMatches).Matches.Count
+if ($trCount -eq 0) {
+    throw "no translations in this run; the translation model was not serving."
+}
+
 # Record the run only once it has completed, and mark its logs as pending so the
 # NEXT invocation knows which name to archive them under.
 @{
