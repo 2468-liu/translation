@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
+import threading
 
 from websockets.asyncio.server import serve
 
+from . import perf
 from .asr import AsrEngine
 from .caption_window import (
     arm_caption,
@@ -14,11 +18,14 @@ from .caption_window import (
     note_caption,
     raise_caption,
     set_font_size,
+    set_font_color,
     set_text_only,
     start_caption,
+    update_caption,
 )
 from .config import WS_HOST, WS_PORT
-from .pipeline import Session, emit_json
+from .loopback import run_loopback
+from .pipeline import Session
 
 
 def style_font_px(data: dict):
@@ -30,62 +37,167 @@ def style_font_px(data: dict):
     return data.get("fontPx")
 
 
+def style_font_color(data: dict):
+    if not isinstance(data, dict) or data.get("type") not in ("config", "style"):
+        return None
+    color = data.get("color")
+    if isinstance(color, str) and len(color) == 7 and color.startswith("#"):
+        try:
+            int(color[1:], 16)
+        except ValueError:
+            return None
+        return color
+    return None
+
+
+STATE_PORT = 8767
+
+
 def _apply_caption_controls(data: dict) -> None:
     if "textOnly" in data:
         set_text_only(bool(data.get("textOnly")))
     font_px = style_font_px(data)
     if font_px is not None:
         set_font_size(font_px)
+    color = style_font_color(data)
+    if color is not None:
+        set_font_color(color)
+
+
+def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", STATE_PORT))
+    while True:
+        data, _ = sock.recvfrom(65535)
+        try:
+            message = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if message.get("kind") != "state":
+            continue
+        value = message.get("value") or {}
+        payload = {"type": "toggle_transparent", "value": bool(value.get("textOnly", False))}
+        if "positionLocked" in value:
+            payload["positionLocked"] = bool(value.get("positionLocked"))
+        if "fontPx" in value:
+            payload["fontPx"] = int(value.get("fontPx"))
+        if "fontColor" in value:
+            payload["fontColor"] = value.get("fontColor")
+        try:
+            asyncio.run_coroutine_threadsafe(send(payload), loop)
+        except RuntimeError:
+            break
 
 
 async def handle(ws, asr: AsrEngine) -> None:
     session = Session(asr)
+    caption_enabled = True
+    caption_text_only = False
+    caption_position_locked = True
+    loopback_stop = asyncio.Event()
+    loopback_task = None
+
+    async def send(payload: dict) -> None:
+        if payload.get("type") in ("translation", "segment_start"):
+            # Server-side reference point: pair it with the caption window's
+            # `caption.paint since_send` line via the shared wall clock.
+            perf.emit(
+                "ws",
+                "send",
+                type=payload.get("type"),
+                final=payload.get("final", False),
+                chars=len(str(payload.get("text") or "")),
+                sent_at=perf.wall(),
+            )
+        if caption_enabled:
+            update_caption(payload)
+        await ws.send(json.dumps(payload, ensure_ascii=False))
+
+    state_listener = threading.Thread(
+        target=_listen_caption_state,
+        args=(asyncio.get_running_loop(), send),
+        daemon=True,
+    )
+    state_listener.start()
+
     print("client connected")
-    worker = asyncio.create_task(session.worker(lambda payload: emit_json(ws, payload)))
+    worker = asyncio.create_task(session.worker(send))
     try:
         async for message in ws:
             if isinstance(message, bytes):
                 for payload in session.push_pcm(message):
-                    await emit_json(ws, payload)
+                    await send(payload)
                 continue
             try:
                 data = json.loads(message)
             except json.JSONDecodeError:
                 continue
             if data.get("type") == "config":
+                caption_enabled = not bool(data.get("audioOnly"))
+                if not caption_enabled:
+                    hide_caption()
+                if loopback_task is None:
+                    loopback_task = asyncio.create_task(
+                        run_loopback(session, send, loopback_stop)
+                    )
                 if "language" in data:
                     session.set_language(data.get("language") or "auto")
                 if any(key in data for key in ("apiEnabled", "apiUrl", "apiKey", "apiModel")):
                     session.set_api(data)
                 _apply_caption_controls(data)
+                if "textOnly" in data:
+                    caption_text_only = bool(data.get("textOnly"))
+                if "positionLocked" in data:
+                    caption_position_locked = bool(data.get("positionLocked"))
                 if session.api_error:
                     notice = {"type": "status", "level": "warn", "message": session.api_error}
                 elif session.api:
                     notice = {"type": "status", "level": "info", "message": "已连接，翻译走外部接口"}
                 else:
                     notice = {"type": "status", "level": "info", "message": "已连接，翻译走混元翻译"}
-                await emit_json(ws, notice)
+                await send(notice)
+            elif data.get("type") == "media-start":
+                session.reset_for_media()
             elif data.get("type") == "note":
                 note_caption(data.get("text") or "")
             elif data.get("type") == "hide":
                 hide_caption()
             elif data.get("type") == "style":
                 _apply_caption_controls(data)
+                if "textOnly" in data:
+                    caption_text_only = bool(data.get("textOnly"))
+                if "positionLocked" in data:
+                    caption_position_locked = bool(data.get("positionLocked"))
+            elif data.get("type") == "toggle_transparent":
+                caption_text_only = bool(data.get("value"))
+                _apply_caption_controls({"type": "style", "textOnly": caption_text_only})
+                await send({"type": "toggle_transparent", "value": caption_text_only})
+            elif data.get("type") == "get_state":
+                await send({
+                    "type": "toggle_transparent",
+                    "value": caption_text_only,
+                    "positionLocked": caption_position_locked,
+                })
             elif data.get("type") == "arm":
                 arm_caption()
             elif data.get("type") == "raise":
                 raise_caption()
             elif data.get("type") == "flush":
                 for payload in session.flush():
-                    await emit_json(ws, payload)
+                    await send(payload)
     finally:
         print("client gone")
+        loopback_stop.set()
+        if loopback_task and not loopback_task.done():
+            loopback_task.cancel()
+        hide_caption()
         worker.cancel()
         await session.close()
 
 
 async def main() -> None:
-    start_caption()
+    if os.environ.get("TRANSLATION_AUDIO_ONLY") != "1":
+        start_caption()
     asr = AsrEngine()
     print(f"WebSocket ws://{WS_HOST}:{WS_PORT}/ws")
     async with serve(

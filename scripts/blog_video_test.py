@@ -179,6 +179,28 @@ def _overlap(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def _sentence_translation(translations: list[dict], end: float) -> str | None:
+    """Rebuild one sentence from the final translations of its utterance(s).
+
+    The soft cut in ``vad.py`` can close a long sentence as two utterances, so
+    the first final in the window may only cover the first half. Finals inside
+    the window are joined in arrival order; one that merely repeats what we
+    already have is skipped, and one that shares almost nothing replaces it.
+    """
+    picked = ""
+    for event in translations:
+        if not event.get("final"):
+            continue
+        at = event["audio_sec"]
+        if not (end - 3.0 <= at < end + 2.0):
+            continue
+        text = str(event.get("text") or "")
+        if not text or (picked and text.startswith(picked)):
+            continue
+        picked = text if (picked and _overlap(picked, text) < 0.45) else picked + text
+    return picked or None
+
+
 def _summarize(events: list[dict], timing: list[dict]) -> dict:
     translations = [e for e in events if e.get("type") == "translation"]
     asr_final = [e for e in events if e.get("type") == "asr" and e.get("final")]
@@ -199,21 +221,15 @@ def _summarize(events: list[dict], timing: list[dict]) -> dict:
     rows = []
     for row in timing:
         end = row["end"]
-        finals = [
-            e
-            for e in translations
-            if e.get("final") and e["audio_sec"] >= end - 0.2 and e["audio_sec"] < end + 8
-        ]
         first = next((e for e in translations if e["audio_sec"] >= row["start"]), None)
         asr = next((e for e in asr_final if e["audio_sec"] >= end - 0.2 and e["audio_sec"] < end + 4), None)
-        picked = finals[0] if finals else None
         rows.append(
             {
                 "i": row["i"],
                 "source": row["text"],
                 "asr": None if asr is None else asr.get("text"),
                 "asr_ratio": None if asr is None else round(_overlap(row["text"].lower(), str(asr.get("text") or "").lower()), 3),
-                "translation": None if picked is None else picked.get("text"),
+                "translation": _sentence_translation(translations, end),
                 "lag_ms": None
                 if first is None
                 else int(max(0.0, first["audio_sec"] - end) * 1000),
@@ -240,6 +256,10 @@ async def _play(timing: list[dict]) -> dict:
 
     async with connect(f"ws://{WS_HOST}:{WS_PORT}/ws") as ws:
         await ws.send(json.dumps({"type": "config", "language": "en"}))
+        # The extension sends this when capture starts (offscreen.js). Without
+        # it the caption window stays closed after the first disconnect and
+        # every later run would record zero paints.
+        await ws.send(json.dumps({"type": "arm"}))
 
         async def reader() -> None:
             async for message in ws:

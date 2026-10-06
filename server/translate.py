@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 
 import httpx
 
 from .config import LLAMA_MODEL, LLAMA_URL, TRANSLATE_MAX_TOKENS, TRANSLATE_TEMPERATURE, USE_NLLB
 from .mt import get_engine, stream_mt
+
+
+def collapse_translation_repeats(text: str) -> str:
+    """Remove pathological 5+ repetitions while preserving ordinary phrasing."""
+    cleaned = text
+    for _ in range(3):
+        collapsed = re.sub(r"(.{1,12}?)(?:\1){4,}", r"\1", cleaned, flags=re.DOTALL)
+        if collapsed == cleaned:
+            break
+        cleaned = collapsed
+    return cleaned
 
 def _drop_think(piece: str, thinking: bool) -> tuple[str, bool]:
     out = []
@@ -97,4 +109,4 @@ async def stream_translation(
                 continue
             visible, thinking = _drop_think(piece, thinking)
             if visible:
-                yield visible
+                yield collapse_translation_repeats(visible)

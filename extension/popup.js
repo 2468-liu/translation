@@ -2,13 +2,16 @@ const toggle = document.getElementById("toggle");
 const status = document.getElementById("status");
 const language = document.getElementById("language");
 const textOnly = document.getElementById("textOnly");
+const audioOnly = document.getElementById("audioOnly");
 const fontSize = document.getElementById("fontSize");
 const fontSizeValue = document.getElementById("fontSizeValue");
+const fontColor = document.getElementById("fontColor");
 const apiEnabled = document.getElementById("apiEnabled");
 const apiFields = document.getElementById("apiFields");
 const apiUrl = document.getElementById("apiUrl");
 const apiKey = document.getElementById("apiKey");
 const apiModel = document.getElementById("apiModel");
+const mediaState = document.getElementById("mediaState");
 
 function apiPayload() {
   return {
@@ -23,20 +26,39 @@ function showApiFields() {
   apiFields.hidden = !apiEnabled.checked;
 }
 
+function paintColorBar(color) {
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    fontColor.style.background = color;
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !Object.prototype.hasOwnProperty.call(changes, "captionTextOnly")) return;
+  const next = Boolean(changes.captionTextOnly.newValue);
+  textOnly.checked = next;
+  const target = next ? "已切换为只有字，字幕框控制区已隐藏。" : "已显示字幕框控制区。";
+  status.textContent = target;
+});
+
 async function refresh() {
   const stored = await chrome.storage.session.get(["running", "language"]);
   const theme = await chrome.storage.local.get({
     captionTextOnly: false,
+    audioOnly: false,
     captionFontPx: 20,
+    captionColor: "#ffffff",
     apiEnabled: false,
     apiUrl: "",
     apiKey: "",
     apiModel: "",
   });
   textOnly.checked = Boolean(theme.captionTextOnly);
+  audioOnly.checked = Boolean(theme.audioOnly);
   const px = Math.max(16, Math.min(40, Number(theme.captionFontPx) || 20));
   fontSize.value = String(px);
   fontSizeValue.textContent = String(px);
+  fontColor.value = theme.captionColor || "#ffffff";
+  paintColorBar(fontColor.value);
   apiEnabled.checked = Boolean(theme.apiEnabled);
   apiUrl.value = theme.apiUrl || "";
   apiKey.value = theme.apiKey || "";
@@ -52,7 +74,11 @@ async function refresh() {
   if (stored.language) language.value = stored.language;
   toggle.textContent = running ? "终止后端" : "开始";
   toggle.classList.toggle("stop", running);
-  status.textContent = running ? "正在采集。关闭字幕窗不会停止后端。" : "未开始";
+  mediaState.textContent = running ? "●" : "○";
+  mediaState.style.color = running ? "#806900" : "#aaa39b";
+  status.textContent = running
+    ? "正在采集。字幕由 Windows 原生置顶窗口显示，不改网页内容或全屏状态。"
+    : "未开始";
 }
 
 textOnly.addEventListener("change", () => {
@@ -60,10 +86,23 @@ textOnly.addEventListener("change", () => {
   status.textContent = textOnly.checked ? "已切换为只有字，字幕框控制区已隐藏。" : "已显示字幕框控制区。";
 });
 
+audioOnly.addEventListener("change", () => {
+  chrome.storage.local.set({ audioOnly: audioOnly.checked });
+  status.textContent = audioOnly.checked
+    ? "已启用仅音频诊断，后端不会创建字幕窗。"
+    : "已恢复显示原生字幕窗。";
+});
+
 fontSize.addEventListener("input", () => {
   const px = Math.max(16, Math.min(40, Number(fontSize.value) || 20));
   fontSizeValue.textContent = String(px);
   chrome.storage.local.set({ captionFontPx: px });
+});
+
+fontColor.addEventListener("input", () => {
+  paintColorBar(fontColor.value);
+  chrome.storage.local.set({ captionColor: fontColor.value });
+  status.textContent = `字幕颜色已设为 ${fontColor.value.toUpperCase()}。`;
 });
 
 function saveApi() {
@@ -86,7 +125,7 @@ toggle.addEventListener("click", async () => {
       status.textContent = "正在终止后端并释放模型…";
       await chrome.runtime.sendMessage({ type: "stop" });
     } else {
-      status.textContent = "正在启动本地服务和模型，请稍候…";
+      status.textContent = "正在启动本地服务和模型，并显示原生置顶字幕…";
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) throw new Error("没有可用标签页");
       const api = apiPayload();
@@ -97,8 +136,8 @@ toggle.addEventListener("click", async () => {
       const response = await chrome.runtime.sendMessage({
         type: "start",
         tabId: tab.id,
-        windowId: tab.windowId,
         language: language.value,
+        audioOnly: audioOnly.checked,
         ...api,
       });
       if (!response || !response.ok) {

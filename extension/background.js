@@ -53,7 +53,7 @@ function nativeConnection() {
   });
   return nativePort;
 }
-function nativeRequest(type, timeoutMs = 120000) {
+function nativeRequest(type, timeoutMs = 120000, extra = {}) {
   return new Promise((resolve, reject) => {
     const requestId = ++nativeRequestId;
     const timer = setTimeout(() => {
@@ -62,7 +62,7 @@ function nativeRequest(type, timeoutMs = 120000) {
     }, timeoutMs);
     nativeRequests.set(requestId, { resolve, reject, timer });
     try {
-      nativeConnection().postMessage({ type, requestId });
+      nativeConnection().postMessage({ type, requestId, ...extra });
     } catch (error) {
       clearTimeout(timer);
       nativeRequests.delete(requestId);
@@ -70,8 +70,8 @@ function nativeRequest(type, timeoutMs = 120000) {
     }
   });
 }
-async function ensureBackend() {
-  const response = await nativeRequest("ensure");
+async function ensureBackend(audioOnly) {
+  const response = await nativeRequest("ensure", 120000, { audioOnly: Boolean(audioOnly) });
   if (!response || !response.ok || !response.ready) {
     throw new Error((response && response.error) || "本地后端启动失败");
   }
@@ -86,7 +86,7 @@ async function shutdownBackend() {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (!changes.captionTextOnly && !changes.captionFontPx) return;
+  if (!changes.captionTextOnly && !changes.captionFontPx && !changes.captionColor) return;
   applyCaptionStyle(Boolean(changes.captionTextOnly));
 });
 
@@ -96,27 +96,29 @@ function clampFont(px) {
   return Math.max(16, Math.min(40, Math.round(size)));
 }
 
-async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, apiModel }) {
+async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel }) {
   captureError = "";
-  await ensureBackend();
+  await ensureBackend(audioOnly);
   // Chrome keeps a tab captured until its tracks end. Release the previous
   // consumer before asking for another id, or the same tab stays dead.
-  await releaseCapture();
   await ensureOffscreen();
-  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-  const saved = await chrome.storage.local.get({ captionTextOnly: false, captionFontPx: 20 });
+  const saved = await chrome.storage.local.get({
+    captionTextOnly: false,
+    captionFontPx: 20,
+    captionColor: "#ffffff",
+  });
   const fontPx = clampFont(saved.captionFontPx);
   const response = await sendWhenReady({
     type: "start-capture",
-    streamId,
-    tabId,
     language: language || "auto",
+    audioOnly: Boolean(audioOnly),
     apiEnabled: Boolean(apiEnabled),
     apiUrl: apiUrl || "",
     apiKey: apiKey || "",
     apiModel: apiModel || "",
     textOnly: saved.captionTextOnly !== false,
     fontPx,
+    color: saved.captionColor,
   });
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "offscreen 启动失败");
@@ -125,7 +127,6 @@ async function start({ tabId, language, windowId, apiEnabled, apiUrl, apiKey, ap
     running: true,
     tabId,
     language: language || "auto",
-    videoWindowId: windowId || null,
   });
   await applyCaptionStyle();
 }
@@ -183,12 +184,18 @@ async function ensureOffscreen() {
 function forwardCaption(_payload) {}
 
 async function applyCaptionStyle() {
-  const saved = await chrome.storage.local.get({ captionTextOnly: false, captionFontPx: 20 });
+  const saved = await chrome.storage.local.get({
+    captionTextOnly: false,
+    captionFontPx: 20,
+    captionColor: "#ffffff",
+  });
   const fontPx = clampFont(saved.captionFontPx);
   chrome.runtime.sendMessage({
     type: "caption-style",
     textOnly: saved.captionTextOnly !== false,
     fontPx,
+    color: saved.captionColor,
   }).catch(() => {});
 }
+
 

@@ -16,8 +16,21 @@ from .config import (
 )
 
 FRAME = 512  # 32ms at 16kHz
-MAX_UTTERANCE_MS = 20_000
+MAX_UTTERANCE_MS = 12_000
 NON_SPEECH_GAIN = 0.0
+# An utterance only closes after 400ms of silence, but the words are already
+# over after the first pause. Emitting one extra partial as soon as the pause
+# reaches 150ms hands the tail to ASR 250ms earlier, and the closing event
+# then reuses that text instead of transcribing the same audio again.
+EARLY_END_SILENCE_MS = 150
+# Once five seconds of speech are in, a200ms pause is already a sentence
+# boundary; holding out for 400ms only delays the closing events, and it caps
+# how long one recogniser call can grow.
+SOFT_CUT_SPEECH_MS = 5_000
+SOFT_CUT_SILENCE_MS = 200
+# Silence frames are zeroed (NON_SPEECH_GAIN), so the tail can be cut back to
+# a120ms release: whisper still hears the last word, the buffer is shorter.
+VAD_SPEECH_PAD_MS = 120
 
 
 class _Silero:
@@ -86,7 +99,13 @@ def load_vad():
 
 
 class UtteranceSplitter:
-    """Turn a PCM stream into start / partial / end events."""
+    """Turn a PCM stream into start / partial / end events.
+
+    Every event is ``(kind, audio, flag)``. For a partial the flag marks the
+    early closing partial emitted at ``EARLY_END_SILENCE_MS``; for an end it
+    says that partial already holds the whole utterance, so the session may
+    reuse that text instead of running ASR on the same audio a second time.
+    """
 
     def __init__(self, engine=None):
         self.engine = engine if engine is not None else load_vad()
@@ -96,6 +115,7 @@ class UtteranceSplitter:
         self.speech_ms = 0
         self.silence_ms = 0
         self.since_partial_ms = 0
+        self.early_partial = False
         self.frame_ms = FRAME * 1000 / SAMPLE_RATE
 
     def reset(self) -> None:
@@ -105,13 +125,14 @@ class UtteranceSplitter:
         self.speech_ms = 0
         self.silence_ms = 0
         self.since_partial_ms = 0
+        self.early_partial = False
         self.engine.reset()
 
-    def push(self, samples: np.ndarray) -> list[tuple[str, np.ndarray | None]]:
+    def push(self, samples: np.ndarray) -> list[tuple[str, np.ndarray | None, bool]]:
         if samples.size == 0:
             return []
         self.pending = np.concatenate([self.pending, samples])
-        events: list[tuple[str, np.ndarray | None]] = []
+        events: list[tuple[str, np.ndarray | None, bool]] = []
         while self.pending.size >= FRAME:
             frame = self.pending[:FRAME]
             self.pending = self.pending[FRAME:]
@@ -122,34 +143,52 @@ class UtteranceSplitter:
                     self.speech_ms = 0
                     self.silence_ms = 0
                     self.since_partial_ms = 0
+                    self.early_partial = False
                     self.utterance = []
-                    events.append(("start", None))
+                    events.append(("start", None, False))
+                resumed = self.silence_ms > 0
                 self.utterance.append(frame)
                 self.speech_ms += self.frame_ms
                 self.silence_ms = 0
+                if resumed:
+                    # Speech came back before the utterance closed, so the early
+                    # partial only covered part of the sentence: never reuse it.
+                    self.early_partial = False
                 self.since_partial_ms += self.frame_ms
                 if self.speech_ms >= MAX_UTTERANCE_MS:
-                    events.append(("end", self._take()))
+                    events.append(("end", self._take(), self.early_partial))
                 elif (
                     self.speech_ms >= VAD_MIN_SPEECH_MS
                     and self.since_partial_ms >= PARTIAL_INTERVAL_MS
                 ):
                     self.since_partial_ms = 0
-                    events.append(("partial", self._copy()))
+                    events.append(("partial", self._copy(), False))
             elif self.in_speech:
                 self.utterance.append(frame * NON_SPEECH_GAIN)
                 self.silence_ms += self.frame_ms
                 self.since_partial_ms += self.frame_ms
-                if self.silence_ms >= VAD_MIN_SILENCE_MS:
+                if (
+                    not self.early_partial
+                    and EARLY_END_SILENCE_MS <= self.silence_ms < VAD_MIN_SILENCE_MS
+                    and self.speech_ms >= VAD_MIN_SPEECH_MS
+                    and self.since_partial_ms >= PARTIAL_INTERVAL_MS
+                ):
+                    # The words stopped; only the closing silence is missing.
+                    self.early_partial = True
+                    self.since_partial_ms = 0
+                    events.append(("partial", self._trim(self._copy()), True))
+                if self.silence_ms >= VAD_MIN_SILENCE_MS or (
+                    self.speech_ms >= SOFT_CUT_SPEECH_MS
+                    and self.silence_ms >= SOFT_CUT_SILENCE_MS
+                ):
                     if self.speech_ms >= VAD_MIN_SPEECH_MS:
-                        events.append(("end", self._take()))
-                    else:
-                        self._drop()
+                        events.append(("end", self._trim(self._copy()), self.early_partial))
+                    self._drop()
         return events
 
-    def flush(self) -> list[tuple[str, np.ndarray | None]]:
+    def flush(self) -> list[tuple[str, np.ndarray | None, bool]]:
         if self.in_speech and self.speech_ms >= VAD_MIN_SPEECH_MS and self.utterance:
-            return [("end", self._take())]
+            return [("end", self._trim(self._copy()), self.early_partial)]
         self._drop()
         return []
 
@@ -159,9 +198,19 @@ class UtteranceSplitter:
         return np.concatenate(self.utterance)
 
     def _take(self) -> np.ndarray:
-        audio = self._copy()
+        audio = self._trim(self._copy())
         self._drop()
         return audio
+
+    def _trim(self, audio: np.ndarray) -> np.ndarray:
+        """Drop the zeroed trailing silence, keep a short release for the last word."""
+        if audio.size == 0:
+            return audio
+        nz = np.nonzero(audio)[0]
+        if nz.size == 0:
+            return audio
+        keep = int(nz[-1]) + int(SAMPLE_RATE * VAD_SPEECH_PAD_MS / 1000)
+        return audio[:keep] if keep < audio.size else audio
 
     def _drop(self) -> None:
         self.utterance = []
@@ -169,3 +218,4 @@ class UtteranceSplitter:
         self.speech_ms = 0
         self.silence_ms = 0
         self.since_partial_ms = 0
+        self.early_partial = False

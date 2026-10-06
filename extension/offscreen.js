@@ -70,10 +70,12 @@ function configPayload(message) {
     apiUrl: message.apiUrl || "",
     apiKey: message.apiKey || "",
     apiModel: message.apiModel || "",
+    audioOnly: Boolean(message.audioOnly),
   };
   if (message.language) payload.language = message.language;
   if (typeof message.textOnly === "boolean") payload.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") payload.fontPx = clampFont(message.fontPx);
+  if (typeof message.color === "string") payload.color = message.color;
   return payload;
 }
 
@@ -81,6 +83,7 @@ function rememberStyle(message) {
   const style = { type: "style" };
   if (typeof message.textOnly === "boolean") style.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") style.fontPx = clampFont(message.fontPx);
+  if (typeof message.color === "string") style.color = message.color;
   desiredStyle = style;
 }
 
@@ -142,6 +145,8 @@ function openSocket(config) {
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       socket.send(JSON.stringify(configPayload(config)));
+      socket.send(JSON.stringify({ type: "get_state" }));
+      sendJson({ type: "media-start" });
       sendJson({ type: "arm" });
       if (desiredStyle) sendJson(desiredStyle);
       resolve();
@@ -149,7 +154,28 @@ function openSocket(config) {
     socket.onmessage = (event) => {
       if (typeof event.data !== "string") return;
       try {
-        chrome.runtime.sendMessage(JSON.parse(event.data)).catch(() => {});
+        const payload = JSON.parse(event.data);
+        if (payload && payload.type === "toggle_transparent") {
+          const nextValue = Boolean(payload.value);
+          chrome.storage.local.get(["captionTextOnly"]).then((stored) => {
+            if (stored.captionTextOnly !== nextValue) {
+              chrome.storage.local.set({ captionTextOnly: nextValue });
+            }
+          }).catch(() => {});
+          if (Object.prototype.hasOwnProperty.call(payload, "positionLocked")) {
+            chrome.storage.local.get(["captionPositionLocked"]).then((stored) => {
+              const nextLock = Boolean(payload.positionLocked);
+              if (stored.captionPositionLocked !== nextLock) {
+                chrome.storage.local.set({ captionPositionLocked: nextLock });
+              }
+            }).catch(() => {});
+          }
+          desiredStyle = { type: "style", textOnly: nextValue };
+          if (payload.fontPx != null && payload.fontPx !== "") desiredStyle.fontPx = clampFont(payload.fontPx);
+          if (typeof payload.fontColor === "string") desiredStyle.color = payload.fontColor;
+          sendJson(desiredStyle);
+        }
+        chrome.runtime.sendMessage(payload).catch(() => {});
       } catch (_error) {
         // ignore malformed payloads
       }
@@ -169,36 +195,6 @@ function openSocket(config) {
 async function startCapture(message) {
   await stopCapture(false);
   rememberStyle(message);
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: message.streamId,
-      },
-    },
-    video: false,
-  });
-  audioContext = new AudioContext();
-  if (audioContext.state === "suspended") await audioContext.resume();
-  const source = audioContext.createMediaStreamSource(stream);
-  source.connect(audioContext.destination);
-  const highpass = audioContext.createBiquadFilter();
-  highpass.type = "highpass";
-  highpass.frequency.value = 80;
-  highpass.Q.value = 0.7;
-  const lowpass = audioContext.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.value = 7600;
-  lowpass.Q.value = 0.7;
-  source.connect(highpass);
-  highpass.connect(lowpass);
-  await audioContext.audioWorklet.addModule(chrome.runtime.getURL("pcm-worklet.js"));
-  const worklet = new AudioWorkletNode(audioContext, "pcm-processor");
-  lowpass.connect(worklet);
   await openSocket(message);
-  worklet.port.onmessage = (event) => {
-    if (!capturing || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(event.data);
-  };
   capturing = true;
 }

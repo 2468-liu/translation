@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
+import re
 import socket
 import subprocess
 import sys
@@ -13,12 +15,15 @@ import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 
+from . import perf
+
 try:
     import ctypes
 except ImportError:  # pragma: no cover
     ctypes = None
 
 CAPTION_PORT = 8766
+STATE_PORT = 8767
 # The 3-minute blog is a reference, not a schedule. There the gap between
 # spoken pieces had a 3.25s median and a typical line was about 13 characters.
 # Other videos sit on either side of that, so the curve below is the comfort
@@ -41,6 +46,7 @@ _MIN_SIMILARITY = 0.72
 _KEY = "#010203"
 _COMMANDS: queue.Queue = queue.Queue()
 _SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+_STATE_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 HWND_TOPMOST = -1
 GWL_STYLE = -16
@@ -54,12 +60,14 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
 WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TRANSPARENT = 0x00000020
 EDGE = 12
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
+SW_SHOWNOACTIVATE = 4
 
 _LANG = {
     "en": "英语",
@@ -82,20 +90,23 @@ def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str
         return []
     lines: list[str] = []
     current = ""
-    for char in text:
-        if char == "\n":
-            lines.append(current)
+    units = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’./:-]*|\s+|.", text, re.DOTALL)
+    for unit in units:
+        if unit == "\n":
+            lines.append(current.rstrip())
             current = ""
             continue
-        candidate = current + char
+        if unit.isspace() and not current:
+            continue
+        candidate = current + unit
         if current and measure(candidate) > width:
-            lines.append(current)
-            current = char
+            lines.append(current.rstrip())
+            current = unit.lstrip()
         else:
             current = candidate
     if current or not lines:
-        lines.append(current)
-    return lines[-max_lines:]
+        lines.append(current.rstrip())
+    return [line for line in lines[-max_lines:] if line]
 
 
 def _port_busy() -> bool:
@@ -114,11 +125,20 @@ def _listen(commands: queue.Queue) -> None:
     sock.bind(("127.0.0.1", CAPTION_PORT))
     while True:
         data, _addr = sock.recvfrom(65535)
+        recv_at = time.time()
         try:
             message = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
-        commands.put((message.get("kind"), message.get("value")))
+        kind = message.get("kind")
+        sent_at = message.get("sentAt")
+        perf.emit(
+            "caption",
+            "udp",
+            kind=kind,
+            net=perf.wall_ms(sent_at) if isinstance(sent_at, (int, float)) else -1.0,
+        )
+        commands.put((kind, message.get("value"), sent_at, recv_at))
 
 
 def _enable_dpi() -> float:
@@ -147,6 +167,7 @@ class _Caption:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.text_only = False
+        self.position_locked = True
         self.visible = False
         self.closed = False
         self.have_translation = False
@@ -159,8 +180,17 @@ class _Caption:
         self._gaps: list[float] = []
         self._last_segment_at = 0.0
         self._next_utterance_at = 0.0
+        self._trace_sent = 0.0
+        self._trace_recv = 0.0
+        self._trace_action = ""
+        self._defer_t0 = 0.0
+        self._defer_text = ""
+        self._defer_chars = 0
+        self._last_paint_at = 0.0
+        self._prev_paint_action = ""
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
+        self.font_color = "#ffffff"
         self.font_line = tkfont.Font(family="Microsoft YaHei", size=-self.font_px)
         self.screen_width = self.root.winfo_screenwidth()
         self.width = max(round(760 * scale), self.font_line.measure("实时字幕") + 120)
@@ -202,6 +232,23 @@ class _Caption:
             padx=2,
             pady=0,
         )
+        self.position_lock_var = tk.BooleanVar(value=self.position_locked)
+        self.position_lock_control = tk.Checkbutton(
+            self.root,
+            text="锁定",
+            variable=self.position_lock_var,
+            command=lambda: self.apply_position_lock(bool(self.position_lock_var.get())),
+            fg="#ffffff",
+            bg="#000000",
+            activeforeground="#ffffff",
+            activebackground="#000000",
+            selectcolor="#000000",
+            font=("Microsoft YaHei", 9),
+            bd=0,
+            highlightthickness=0,
+            padx=2,
+            pady=0,
+        )
 
         self._drag = None
         self._resize_origin = None
@@ -229,6 +276,8 @@ class _Caption:
     def _strip_frame(self) -> None:
         if not ctypes:
             return
+        # This is a native Windows topmost window. It never enters the page or
+        # changes the browser's fullscreen state.
         hwnd = self.hwnd()
         user32 = ctypes.windll.user32
         get_long = user32.GetWindowLongPtrW
@@ -244,6 +293,8 @@ class _Caption:
         extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
         if self.text_only:
             extra |= WS_EX_LAYERED
+            if self.position_locked:
+                extra |= WS_EX_TRANSPARENT
         set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
         user32.SetWindowPos(
             hwnd,
@@ -282,13 +333,45 @@ class _Caption:
         )
         if self.text_only:
             self.text_only_control.place_forget()
+            self.position_lock_control.place(x=80, y=3, anchor="nw")
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
+            self.position_lock_control.place_forget()
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
             self.root.attributes("-transparentcolor", "")
+        self._set_input_mode()
         self._paint()
+
+    def _set_input_mode(self) -> None:
+        if not ctypes:
+            return
+        hwnd = self.hwnd()
+        user32 = ctypes.windll.user32
+        get_long = user32.GetWindowLongPtrW
+        set_long = user32.SetWindowLongPtrW
+        get_long.restype = ctypes.c_ssize_t
+        get_long.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        set_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        exstyle = get_long(hwnd, GWL_EXSTYLE)
+        if self.text_only:
+            exstyle |= WS_EX_LAYERED | WS_EX_NOACTIVATE
+            if self.position_locked:
+                exstyle |= WS_EX_TRANSPARENT
+            else:
+                exstyle &= ~WS_EX_TRANSPARENT
+        else:
+            exstyle &= ~WS_EX_TRANSPARENT
+            exstyle |= WS_EX_NOACTIVATE
+        set_long(hwnd, GWL_EXSTYLE, exstyle)
+
+    def apply_position_lock(self, enabled: bool) -> None:
+        self.position_locked = bool(enabled)
+        self.position_lock_var.set(self.position_locked)
+        self._set_input_mode()
+        self._broadcast_state()
 
     def _show_close(self) -> None:
         if self.visible:
@@ -328,6 +411,32 @@ class _Caption:
             else:
                 self.root.geometry(f"{self.width}x{self.height}")
         self._draw(display_body, self.font_line, wrap)
+        now = time.monotonic()
+        if self._last_paint_at:
+            # How long the previous line stayed up. A run of short gaps means the
+            # next sentence is cutting the one on screen short.
+            perf.emit(
+                "caption",
+                "dwell",
+                gap=round((now - self._last_paint_at) * 1000.0, 1),
+                chars=len(self.line),
+                prev=self._prev_paint_action,
+            )
+        self._last_paint_at = now
+        if self._trace_sent:
+            # First draw after a packet: this is "actually on screen".
+            perf.emit(
+                "caption",
+                "paint",
+                action=self._trace_action,
+                since_send=perf.wall_ms(self._trace_sent),
+                since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
+                chars=len(display_body),
+            )
+            self._prev_paint_action = self._trace_action
+            self._trace_sent = 0.0
+            self._trace_recv = 0.0
+            self._trace_action = ""
 
     def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
         x = self.width / 2
@@ -338,7 +447,7 @@ class _Caption:
             text=text,
             anchor="n",
             justify="center",
-            fill="#ffffff",
+            fill=self.font_color,
             font=font,
             width=wrap,
         )
@@ -358,6 +467,8 @@ class _Caption:
         self.canvas.configure(cursor=cursor)
 
     def _press(self, event) -> None:
+        if self.text_only and self.position_locked:
+            return
         on_x, on_y = self._edges(event)
         if on_x or on_y:
             self._begin_resize(event, on_x, on_y)
@@ -397,9 +508,13 @@ class _Caption:
         self._resize_origin = None
 
     def apply_text_only(self, enabled: bool) -> None:
-        self.text_only = enabled
-        self.text_only_var.set(enabled)
+        self.text_only = bool(enabled)
+        self.text_only_var.set(self.text_only)
+        if self.text_only:
+            self.position_locked = True
+            self.position_lock_var.set(True)
         self._apply_colors()
+        self._broadcast_state()
 
     def apply_font(self, px: int) -> None:
         size = clamped_font_px(px, self.font_px)
@@ -407,8 +522,38 @@ class _Caption:
             return
         self.font_px = size
         self.font_line = tkfont.Font(family="Microsoft YaHei", size=-size)
+        self._broadcast_state()
         if self.line or self.visible:
             self._paint()
+
+    def apply_color(self, color: str) -> None:
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            return
+        normalized = color.lower()
+        if normalized == self.font_color:
+            return
+        self.font_color = normalized
+        self._broadcast_state()
+        if self.line or self.visible:
+            self._paint()
+
+    def _broadcast_state(self) -> None:
+        payload = {
+            "kind": "state",
+            "value": {
+                "textOnly": bool(self.text_only),
+                "positionLocked": bool(self.position_locked),
+                "fontPx": int(self.font_px),
+                "fontColor": self.font_color,
+            },
+        }
+        try:
+            _STATE_SOCK.sendto(
+                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                ("127.0.0.1", STATE_PORT),
+            )
+        except OSError:
+            return
 
     def arm(self) -> None:
         # A new capture may show the next non-empty line. Do not reveal an empty bar.
@@ -417,8 +562,11 @@ class _Caption:
     def show(self) -> None:
         self.closed = False
         self.visible = True
-        self.root.deiconify()
         self._strip_frame()
+        if ctypes:
+            ctypes.windll.user32.ShowWindow(self.hwnd(), SW_SHOWNOACTIVATE)
+        else:
+            self.root.deiconify()
         self._paint()
 
     def hide(self) -> None:
@@ -432,6 +580,12 @@ class _Caption:
         self._gaps.clear()
         self._last_segment_at = 0.0
         self._next_utterance_at = 0.0
+        self._trace_sent = 0.0
+        self._trace_recv = 0.0
+        self._trace_action = ""
+        self._close_wait("", "hide")
+        self._last_paint_at = 0.0
+        self._prev_paint_action = ""
         self.have_translation = False
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
@@ -468,12 +622,42 @@ class _Caption:
             return
         self._growth_stopped_at = time.monotonic()
         self._settle_until = 0.0
-        self._apply_line(cleaned)
+        self._apply_line(cleaned, "note")
 
-    def set_text(self, text: str) -> None:
+    def _open_wait(self, pending: str) -> None:
+        """Start the clock on how long this sentence is kept off the screen."""
+        if self._defer_t0:
+            return
+        self._defer_t0 = time.monotonic()
+        self._defer_text = pending
+        self._defer_chars = len(pending)
+        perf.emit("caption", "defer", chars=len(pending))
+
+    def _close_wait(self, pending: str, action: str) -> None:
+        """Close the wait once nothing is pending any more.
+
+        A wait ends however it ends -- drawn, swapped in, or dropped -- so that
+        the next sentence starts its own clock. Leaving it open would report one
+        sentence's wait as part of the next one.
+        """
+        if not self._defer_t0 or pending:
+            return
+        perf.emit(
+            "caption",
+            "hold",
+            wait=round((time.monotonic() - self._defer_t0) * 1000.0, 1),
+            action=action,
+            chars=self._defer_chars,
+            shown=len(self.line),
+        )
+        self._defer_t0 = 0.0
+        self._defer_text = ""
+        self._defer_chars = 0
+
+    def set_text(self, text: str) -> str:
         cleaned = _collapse_repeats((text or "").strip())
         if not cleaned:
-            return
+            return "empty"
         self.have_translation = True
         action, line, pending, anchor, settle, _deadline = step_caption(
             self.line,
@@ -486,15 +670,30 @@ class _Caption:
             self._next_utterance_at,
         )
         if action == "drop":
-            return
+            return action
+        if action == "defer":
+            if self._defer_t0:
+                if pending != self._defer_text:
+                    # Another sentence arrived before this one could be shown.
+                    perf.emit(
+                        "caption",
+                        "overwrite",
+                        held=round((time.monotonic() - self._defer_t0) * 1000.0, 1),
+                        chars=len(pending),
+                        lost=self._defer_chars,
+                    )
+            else:
+                self._open_wait(pending)
         self._pending = pending
         self._growth_stopped_at = anchor
         self._settle_until = settle
+        self._close_wait(pending, action)
         if action in ("grow", "swap"):
             self._next_utterance_at = 0.0
         if action in ("grow", "char", "swap"):
-            self._apply_line(line)
+            self._apply_line(line, action)
         self._arm_hold()
+        return action
 
     def _swap_deadline(self) -> float:
         return swap_deadline(
@@ -528,6 +727,7 @@ class _Caption:
         self._pending = pending
         self._growth_stopped_at = anchor
         self._settle_until = settle
+        self._close_wait(pending, action)
         if action in ("grow", "swap"):
             self._next_utterance_at = 0.0
         if action in ("grow", "char", "swap"):
@@ -535,7 +735,11 @@ class _Caption:
         if action == "wait" or self._pending:
             self._arm_hold()
 
-    def _apply_line(self, text: str) -> None:
+    def _apply_line(self, text: str, action: str = "") -> None:
+        # The caller says why this line is changing, so the paint probe can
+        # tell an immediate redraw apart from a held one.
+        if action:
+            self._trace_action = action
         self.line = (text or "").strip()
         action = caption_action(self.closed, self.line, self.visible)
         if action == "withdraw":
@@ -552,14 +756,43 @@ class _Caption:
     def _pump(self) -> None:
         while True:
             try:
-                kind, value = _COMMANDS.get_nowait()
+                kind, value, sent_at, recv_at = _COMMANDS.get_nowait()
             except queue.Empty:
                 break
+            lag = perf.wall_ms(recv_at) if isinstance(recv_at, (int, float)) else -1.0
+            sent_wall = sent_at if isinstance(sent_at, (int, float)) else 0.0
             if kind == "text":
-                self.set_text(value or "")
+                # Keep our own copies: _paint clears the shared trace when the
+                # packet turns into an immediate draw.
+                self._trace_sent = sent_wall
+                self._trace_recv = recv_at if isinstance(recv_at, (int, float)) else 0.0
+                self._trace_action = ""
+                action = self.set_text(value or "")
+                if action in ("empty", "drop"):
+                    # Nothing will be drawn for this packet; stop attributing
+                    # a later repaint to it.
+                    self._trace_sent = 0.0
+                    self._trace_recv = 0.0
+                    self._trace_action = ""
+                else:
+                    # An immediate draw already recorded itself inside
+                    # _apply_line; a held one keeps the decision for later.
+                    self._trace_action = action
+                perf.emit(
+                    "caption",
+                    "text",
+                    action=action,
+                    net=perf.wall_ms(sent_wall) if sent_wall else -1.0,
+                    pump=lag,
+                    depth=_COMMANDS.qsize(),
+                    chars=len(value or ""),
+                )
             elif kind == "asr":
                 pass
             elif kind == "note":
+                self._trace_sent = sent_wall
+                self._trace_recv = recv_at if isinstance(recv_at, (int, float)) else 0.0
+                self._trace_action = "note"
                 self.show_source(value or "")
             elif kind == "segment":
                 self.begin_segment()
@@ -569,6 +802,8 @@ class _Caption:
                 self.apply_text_only(bool(value))
             elif kind == "font":
                 self.apply_font(value)
+            elif kind == "color":
+                self.apply_color(value)
             elif kind == "arm":
                 self.arm()
             elif kind == "raise":
@@ -596,12 +831,17 @@ def start_caption() -> None:
         startup.wShowWindow = 0
         kwargs["startupinfo"] = startup
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    env = dict(os.environ)
+    # The caption window is a second process. Appending to one shared file from
+    # two processes collides on Windows, so it gets its own.
+    env.setdefault("TRANSLATION_PERF_LOG", str(root / "logs" / "perf_caption.log"))
     subprocess.Popen(
         [sys.executable, "-m", "server.caption_window"],
         cwd=root,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=env,
         **kwargs,
     )
 
@@ -658,11 +898,30 @@ def pace_scale(gaps: list[float]) -> float:
     return max(PACE_MIN, min(PACE_MAX, mid / REF_GAP_S))
 
 
+def speech_hold_factor(pace: float = 1.0) -> float:
+    """Subtitle comfort bands tuned for more live, low-latency display.
+
+    The speech line is kept short enough to feel timely in a live captioning
+    situation, but still leaves a little extra room when the pace falls below a
+    comfortable reading speed.
+    """
+    pace_val = float(pace if pace is not None else 1.0)
+    if pace_val <= 0.75:
+        return 0.62
+    if pace_val <= 0.90:
+        return 0.70
+    if pace_val <= 1.10:
+        return 0.80
+    if pace_val <= 1.30:
+        return 0.90
+    return 0.98
+
+
 def hold_ms(text: str, pace: float = 1.0) -> int:
     count = _read_units(text)
     if count <= 0:
         return HOLD_ABS_MIN_MS
-    scale = 1.0 if pace == 1.0 else max(PACE_MIN, min(PACE_MAX, pace))
+    scale = speech_hold_factor(pace)
     scaled = int(round(_reference_hold_ms(count) * scale))
     return max(HOLD_ABS_MIN_MS, min(HOLD_ABS_MAX_MS, scaled))
 
@@ -937,10 +1196,16 @@ def clamped_font_px(px, current=None):
 
 def _send(kind: str, value) -> None:
     try:
-        payload = json.dumps({"kind": kind, "value": value}, ensure_ascii=False).encode("utf-8")
+        # Wall clock inside the packet: the caption window compares its own
+        # receipt and paint times against it, so both sides join on one clock.
+        sent_at = time.time()
+        payload = json.dumps(
+            {"kind": kind, "value": value, "sentAt": sent_at}, ensure_ascii=False
+        ).encode("utf-8")
         _SOCK.sendto(payload, ("127.0.0.1", CAPTION_PORT))
     except OSError:
         return
+    perf.emit("caption", "send", kind=kind, bytes=len(payload), sent_at=sent_at)
 
 
 def update_caption(payload: dict) -> None:
@@ -973,6 +1238,11 @@ def set_font_size(px: int) -> None:
     except (TypeError, ValueError):
         return
     _send("font", size)
+
+
+def set_font_color(color: str) -> None:
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        _send("color", color.lower())
 
 
 def arm_caption() -> None:

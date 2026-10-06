@@ -93,16 +93,39 @@ def backend_ready() -> bool:
     return listening(WS_PORT) and listening(LLAMA_PORT)
 
 
-def start_backend() -> dict:
+def wait_for_existing_backend() -> dict | None:
+    """Wait for a backend already opening either port instead of duplicating it."""
+    if not (listening(WS_PORT) or listening(LLAMA_PORT)):
+        return None
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if backend_ready():
+            return {"ok": True, "ready": True, "owned": False}
+        if not (listening(WS_PORT) or listening(LLAMA_PORT)):
+            return None
+        time.sleep(0.25)
+    return {"ok": False, "error": "检测到已有后端正在启动，等待超时；未重复启动新后端"}
+
+
+def start_backend(audio_only: bool = False) -> dict:
     owned_pid = read_pid()
     if backend_ready():
         return {"ok": True, "ready": True, "owned": owned_pid is not None}
+
+    existing = wait_for_existing_backend()
+    if existing is not None:
+        return existing
 
     script = ROOT / "scripts" / "start.ps1"
     if not script.exists():
         return {"ok": False, "error": f"找不到启动脚本: {script}"}
 
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    environment = os.environ.copy()
+    if audio_only:
+        environment["TRANSLATION_AUDIO_ONLY"] = "1"
+    else:
+        environment.pop("TRANSLATION_AUDIO_ONLY", None)
     process = subprocess.Popen(
         [
             "powershell.exe",
@@ -118,6 +141,7 @@ def start_backend() -> dict:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=environment,
         creationflags=flags,
     )
     write_pid(process.pid)
@@ -157,7 +181,7 @@ def stop_backend() -> dict:
 def handle(message: dict) -> dict:
     kind = message.get("type")
     if kind == "ensure":
-        return start_backend()
+        return start_backend(bool(message.get("audioOnly")))
     if kind == "shutdown":
         return stop_backend()
     if kind == "status":
@@ -166,20 +190,23 @@ def handle(message: dict) -> dict:
 
 
 def main() -> None:
-    while True:
-        message = receive()
-        if message is None:
-            return
-        try:
-            response = handle(message)
-            if "requestId" in message:
-                response["requestId"] = message["requestId"]
-            send(response)
-        except Exception as error:
-            response = {"ok": False, "error": str(error)}
-            if "requestId" in message:
-                response["requestId"] = message["requestId"]
-            send(response)
+    try:
+        while True:
+            message = receive()
+            if message is None:
+                return
+            try:
+                response = handle(message)
+                if "requestId" in message:
+                    response["requestId"] = message["requestId"]
+                send(response)
+            except Exception as error:
+                response = {"ok": False, "error": str(error)}
+                if "requestId" in message:
+                    response["requestId"] = message["requestId"]
+                send(response)
+    finally:
+        stop_backend()
 
 
 if __name__ == "__main__":

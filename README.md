@@ -1,6 +1,12 @@
 # 实时字幕翻译
 
-浏览器只负责提供标签页音频采样，本机识别后译成简体中文，字幕画在独立的黑色置顶窗口上。扩展不向视频网站注入脚本，不修改网页的全屏或播放器 DOM。
+本机通过 Windows WASAPI 回环读取默认扬声器输出，识别后译成简体中文，字幕画在独立的黑色置顶窗口上。扩展只负责控制本地服务，不申请标签页捕获，不向视频网站注入脚本，不修改网页的全屏或播放器 DOM。
+
+## 字幕层边界
+
+字幕由 Windows 原生置顶窗口绘制。Chrome 扩展只负责传输配置，不创建浏览器弹窗字幕层，也不申请 `tabCapture`，不进入网页 DOM。网页内容、播放器尺寸和浏览器全屏状态都保持不变。
+
+当前项目不能调用 Chromium 内部的 Live Caption UI；因此不把 Chromium 的内部 UI 代码照搬到扩展中。我们禁止任何 `chrome.scripting`、`executeScript`、`content.js` 注入和页面回调。
 
 ## 当前方案
 
@@ -55,6 +61,8 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 
 扩展与 host 使用 Native Messaging 的 `ensure`、`status` 和 `shutdown` 消息，并检查 WebSocket 与 llama-server 两个端口都已就绪后才开始采集。项目代码本身没有声明额外开源许可证；分发给朋友时应同时保留 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 以及各模型、FFmpeg 和测试素材的原始许可说明。
 
+如果已经手动启动了后端（例如纯音频诊断模式），扩展检测到 WebSocket 或 llama-server 任一端口正在启动时会等待现有进程，不会再拉起第二套后端。
+
 ## 测试
 
 项目测试使用 `pytorch` Conda 环境中的 pytest：
@@ -64,7 +72,56 @@ conda activate pytorch
 python -m pytest -q
 ```
 
+### Windows 系统回环对照
+
+在 B 站或 YouTube 保持全屏时，先不启动扩展，只运行下面的脚本。它通过 WASAPI 回环读取默认扬声器输出，不调用 Chrome `tabCapture`，用于和扩展采集做 A/B 对照：
+
+```powershell
+conda activate pytorch
+python -m pip install soundcard
+python scripts/loopback_probe.py --seconds 5
+```
+
+脚本会把录音保存到 `samples/loopback_test.wav`。如果运行期间网页保持正常，而扩展的 `tabCapture` 模式会变窄，后续主链应切换到系统回环采集。
+
+扩展设置里的“仅音频诊断，不启动字幕窗”会把模式明确传给 Native host。此模式仍采集音频、识别和翻译，但完全不创建字幕窗口；用来判断问题来自网页/Chrome 还是 Windows 覆盖层。也可以直接使用 `TRANSLATION_AUDIO_ONLY=1` 启动后端。
+
 采样会先经过浏览器端的语音频段滤波，再由服务端 VAD 压低句中非语音帧。电影音乐和剪辑音效无法保证被完全分离；若背景声被模型误判为语音，仍应优先使用更清晰的音轨或外部降噪输入。
+
+## 延迟埋点
+
+改延迟之前先量。`server/perf.py` 只写日志，不参与任何判断；`TRANSLATION_PERF=0` 可以整体关掉，`TRANSLATION_PERF_LOG` 可以换路径。
+
+服务端写 `logs/perf.log`，字幕窗是另一个进程，单独写 `logs/perf_caption.log`（两个进程往同一个文件追加，在 Windows 上会互相覆盖字节）。每行格式是 `<墙钟时间> <来源>.<事件> key=value ...`，墙钟时间用来把两个文件对齐，带 `_ms` 的字段来自 `perf_counter`：
+
+| 事件 | 含义 |
+| --- | --- |
+| `pipeline.enqueue` | VAD 出句入队；`qlen` 是入队前积压，`audio_ms` 是这句到目前为止的音频长度 |
+| `pipeline.asr` | `qwait` 排队等 worker 的时间，`asr` 是这一次识别的耗时 |
+| `pipeline.drop` | 被更新的 partial 顶掉、根本没跑识别的那条，`qwait` 是它白等了多久 |
+| `pipeline.ttft` | 翻译第一个字回流的时间 |
+| `pipeline.ttotal` | 翻译整段流完的时间，`pieces` 是分片数 |
+| `pipeline.defer` | 上一段翻译还没跑完，这条结果被挂起 |
+| `ws.send` / `caption.send` | 服务端发出时的 `time.time()`，包里也带了 `sentAt` |
+| `caption.udp` | 字幕窗收到 UDP；`net` 是发到收的时间 |
+| `caption.text` | 字幕窗取出并做完决策；`action` 是 grow/char/swap/defer/drop，`pump` 是收到到取出（轮询 50 ms），`depth` 是取出时还压着几条 |
+| `caption.paint` | 真正画出来；`since_send` 从服务端发出算起，`action` 是这次为什么画 |
+
+```powershell
+python scripts/perf_report.py            # 分位数汇总（两个日志一起读）
+python scripts/perf_report.py logs\perf.run1.log   # 指定文件
+```
+
+llama-server 的启动日志现在重定向到 `logs/llama.out` / `logs/llama.err`。注意 `-ngl` 是否真的落到显卡，只有 `-lv 4` 才会打印（默认 `-lv 3` 看不到）：
+
+```
+load_tensors:        CUDA0 model buffer size =  1075.74 MiB
+load_tensors: offloaded 33/33 layers to GPU
+llama_context: n_seq_max             = 1        <- -np 1
+srv    load_model: initializing, n_slots = 1, n_ctx_slot = 1024
+```
+
+`scripts/start.ps1` 已经带上 `-lv 4`；实测对 TTFT 没有影响（稳态 13~14 ms，和默认一致），代价是日志会随会话变大，每次启动会覆盖。
 
 ## 用例
 

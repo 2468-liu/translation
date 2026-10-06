@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +34,15 @@ SAMPLE_RATE = 16000
 CHUNK_MS = 100
 BYTES_PER_SAMPLE = 2  # int16
 
-# ASR shares the GPU with the small translation model. The 4B LLM stays off.
+# All local inference prefers GPU to reduce round-trip latency. CPU is a fallback
+# only when CUDA is unavailable, not the normal path.
 ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
 ASR_BEAM_SIZE = 1
 PARTIAL_INTERVAL_MS = 250
+MT_DEVICE = "cuda"
+MT_COMPUTE_TYPE = "int8"
 
 # VAD
 VAD_THRESHOLD = 0.5
@@ -85,3 +89,26 @@ def find_gguf() -> Path | None:
         if found:
             return found[0]
     return None
+
+
+def resolve_llama_runtime(vram_mb: int | None = None) -> tuple[int, int]:
+    """Use aggressive GPU offload on normal machines and partial offload only on 4GB GPUs.
+
+    This project's live footprint is small enough for a 4GB card to run the Q4
+    model without blowing up, but it still benefits from cutting a bit of the
+    layer count when memory is tight. Machines with more than 4GB keep almost all
+    layers inside VRAM to minimize latency.
+    """
+    if vram_mb is None:
+        if RUNTIME_JSON.exists():
+            try:
+                runtime = json.loads(RUNTIME_JSON.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                runtime = {}
+            vram_mb = runtime.get("vram_used_mib_after_load") or runtime.get("fit_target_mib")
+        if vram_mb is None:
+            vram_mb = 8192
+    vram_mb = max(1, int(vram_mb))
+    if vram_mb <= 4096:
+        return 60, 1024
+    return 99, 1536

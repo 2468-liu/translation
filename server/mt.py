@@ -7,7 +7,7 @@ from collections.abc import Iterator
 
 import ctranslate2
 
-from .config import MT_DIR, NLLB_DIR
+from .config import MT_COMPUTE_TYPE, MT_DEVICE, MT_DIR, NLLB_DIR
 
 TARGET = "zho_Hans"
 LANG = {
@@ -54,11 +54,11 @@ class MtEngine:
         self.sp = spm.SentencePieceProcessor(model_file=str(sp_path))
         try:
             self.translator = ctranslate2.Translator(
-                str(MT_DIR), device="cuda", compute_type="int8"
+                str(MT_DIR), device=MT_DEVICE, compute_type=MT_COMPUTE_TYPE
             )
-            self.device = "cuda"
+            self.device = MT_DEVICE
         except Exception as exc:
-            print(f"MT cuda failed ({exc}); using cpu int8")
+            print(f"MT {MT_DEVICE} failed ({exc}); using cpu int8")
             self.translator = ctranslate2.Translator(
                 str(MT_DIR),
                 device="cpu",

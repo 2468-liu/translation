@@ -1,4 +1,4 @@
-"""faster-whisper wrapper. CPU int8 so the 4GB GPU stays with the translator."""
+"""faster-whisper wrapper. GPU-first path to reduce recognition latency."""
 
 from __future__ import annotations
 
