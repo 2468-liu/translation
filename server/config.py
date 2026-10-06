@@ -144,12 +144,17 @@ CONTEXT_SENTENCES = 2
 # correctly when sent alone: with the preceding lines in the prompt, the same
 # audio comes back as a transcription of the English, or as a clause repeated
 # until the fragment ends. Without it, four of four runs each produced a correct
-# translation of both.
+# translation of both, and three full replays produced no bad fragment at all.
 #
 # It was already known to be expensive here -- 854ms of first token against 86ms
 # without, plus a hallucinated word -- but the branch kept passing context while
 # the rest of the report treated it as switched off.
-AUDIO_CONTEXT_SENTENCES = 0
+#
+# Injectable because the interaction with MTP is worth measuring rather than
+# assuming: speculative decoding and a longer prompt change the same prefill
+# cost, and a 2x2 on one backend settles it. Both axes are swept together for
+# that reason and never separately.
+AUDIO_CONTEXT_SENTENCES = _env_int("TRANSLATION_AUDIO_CONTEXT_SENTENCES", 0)
 PARTIAL_STABLE_REPEAT = 1  # translate the first partial; later growth follows after it finishes
 
 # llama.cpp GPU layers — probe script writes actual value into runtime.json
