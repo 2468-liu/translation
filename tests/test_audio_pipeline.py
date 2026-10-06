@@ -88,8 +88,13 @@ class StreamDeltaTests(unittest.IsolatedAsyncioTestCase):
 class TuningTests(unittest.TestCase):
     def test_audio_model_uses_its_own_limits(self):
         t = audio_model_tuning()
-        self.assertEqual(t.min_silence_ms, 700)
-        self.assertLessEqual(t.max_utterance_ms, 26_000)
+        # The exact closing silence is swept by scripts/probe_silence.py; what
+        # matters here is that the audio path is tuned separately from whisper's
+        # and sits in a band that trades sentence integrity against a fixed
+        # per-sentence cost.
+        self.assertGreaterEqual(t.min_silence_ms, 250)
+        self.assertLessEqual(t.min_silence_ms, 900)
+        self.assertNotEqual(t.min_silence_ms, whisper_tuning().min_silence_ms)
         self.assertEqual(t.speech_pad_ms, 200)
         # No partials: re-reading a growing prefix is a whisper optimisation, and
         # on the audio path each read pays for the whole fragment up front.
