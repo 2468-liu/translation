@@ -1,4 +1,4 @@
-r"""Locate the best closing-silence threshold for the audio-native pipeline.
+﻿r"""Locate the best closing-silence threshold for the audio-native pipeline.
 
 Latency here is paid per fragment, so the closing silence is a fixed cost on
 every sentence. The measured relationship is first token at roughly 300ms plus
@@ -44,15 +44,29 @@ def report(name: str) -> dict:
         raise SystemExit(f"missing {path}")
     events = json.loads(path.read_text(encoding="utf-8"))["events"]
     frags = fragments(events)
-    starts = [float(e["wall"]) for e in events if e.get("type") == "segment_start"]
+    starts = sorted(
+        (e for e in events if e.get("type") == "segment_start"),
+        key=lambda e: float(e["wall"]),
+    )
 
-    # Time from the speaker starting to anything appearing. This is the number
-    # that matters: the caption is blank for all of it.
-    lag: list[float] = []
-    for at in starts:
-        later = [f for f in frags if f["start"] >= at - 0.05]
-        if later:
-            lag.append((later[0]["start"] - at) * 1000.0)
+    # Pair by order, one fragment to one utterance.
+    #
+    # Taking the first fragment that merely starts after an utterance does looks
+    # equivalent and is not: while a long sentence is being translated the next
+    # utterance has already begun, so that rule hands the later utterance the
+    # previous sentence's translation and reports the gap between them. It read
+    # a median of 705ms where the real figure is 3.5s.
+    blank: list[float] = []
+    after_close: list[float] = []
+    length: list[float] = []
+    for start, frag in zip(starts, frags):
+        spoken = float(frag["at"]) - float(start["audio_sec"])
+        # The replay runs at 1x, so the fragment closed this far after the
+        # speaker started.
+        closed = float(start["wall"]) + spoken
+        blank.append((frag["start"] - float(start["wall"])) * 1000.0)
+        after_close.append((frag["start"] - closed) * 1000.0)
+        length.append(spoken)
 
     sizes = [len(f["last"]) for f in frags]
     bad = sum(
@@ -60,8 +74,13 @@ def report(name: str) -> dict:
     )
     return {
         "frags": len(frags),
-        "blank_median": statistics.median(lag) if lag else float("nan"),
-        "blank_p90": pct(lag, 0.9),
+        "blank_median": statistics.median(blank) if blank else float("nan"),
+        "blank_p90": pct(blank, 0.9),
+        # What is left once the speaker has stopped. On this path this is the
+        # only part the model and the display actually cost.
+        "close_median": statistics.median(after_close) if after_close else float("nan"),
+        "close_p90": pct(after_close, 0.9),
+        "length_median": statistics.median(length) if length else float("nan"),
         "chars_median": statistics.median(sizes) if sizes else float("nan"),
         "short": sum(1 for s in sizes if s < SHORT_UNITS),
         "bad": bad,
@@ -74,18 +93,19 @@ def pct(values: list[float], q: float) -> float:
     return sorted(values)[min(len(values) - 1, int(q * len(values)))]
 
 
-def spread(values: list[float]) -> str:
+def spread(values: list[float], width: int = 7) -> str:
     """Median and range, never a single point.
 
     One replay of this material has been seen to differ from itself by a factor
     of two, so a lone number here would be noise wearing a decimal.
     """
     if not values:
-        return "       -"
+        return " " * width
     if len(values) == 1:
-        return f"{values[0]:7.0f}"
+        return f"{values[0]:{width}.0f}"
     low, high = min(values), max(values)
-    return f"{statistics.median(values):7.0f} [{low:.0f}-{high:.0f}]"
+    body = f"{statistics.median(values):.0f} [{low:.0f}-{high:.0f}]"
+    return f"{body:>{width}}"
 
 
 def parse_levels(argv: list[str]) -> list[tuple[str, list[str]]]:
@@ -111,35 +131,27 @@ def main(argv: list[str]) -> int:
                 print(f"{name}: {exc}")
         if not stats:
             continue
-        rows.append(
-            (
-                level,
-                runs,
-                [s["frags"] for s in stats],
-                [s["blank_median"] for s in stats],
-                [s["blank_p90"] for s in stats],
-                [s["chars_median"] for s in stats],
-                [s["short"] for s in stats],
-                [s["bad"] for s in stats],
-            )
-        )
+        rows.append((level, runs, stats))
 
     header = (
-        f"{'sil ms':>7} {'runs':>11} {'frags':>7} {'blank med':>16} "
-        f"{'blank p90':>16} {'chars':>7} {'short':>6} {'bad':>5}"
+        f"{'sil ms':>7} {'runs':>5} {'frags':>7} {'len med':>7} "
+        f"{'blank med':>16} {'blank p90':>16} {'after close':>15} {'short':>6} {'bad':>5}"
     )
     print(header)
     print("-" * len(header))
-    for level, runs, frags, med, p90, chars, short, bad in rows:
+    for level, runs, stats in rows:
+        def col(key: str) -> list[float]:
+            return [s[key] for s in stats]
+
+        frags = col("frags")
         frags_s = f"{statistics.median(frags):.0f}" + (
             f" [{min(frags)}-{max(frags)}]" if len(frags) > 1 else ""
         )
-        chars_s = f"{statistics.median(chars):.0f}" + (
-            f" [{min(chars):.0f}-{max(chars):.0f}]" if len(chars) > 1 else ""
-        )
         print(
-            f"{level:>7} {len(runs):>11} {frags_s:>7} {spread(med):>16} "
-            f"{spread(p90):>16} {chars_s:>7} {sum(short):>6} {sum(bad):>5}"
+            f"{level:>7} {len(runs):>5} {frags_s:>7} "
+            f"{spread(col('length_median')):>7} {spread(col('blank_median')):>16} "
+            f"{spread(col('blank_p90')):>16} {spread(col('close_median')):>15} "
+            f"{sum(col('short')):>6} {sum(col('bad')):>5}"
         )
     if rows:
         print()
