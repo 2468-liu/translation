@@ -694,6 +694,16 @@ class _Caption:
             return "empty"
         self.have_translation = True
         previous = self._pending
+
+        # B1: diff pre-check — if new text just extends current line, append directly
+        if self.line and cleaned.startswith(self.line):
+            appended = cleaned[len(self.line):]
+            if appended:
+                # Grow by the new characters only, bypassing hold/settle logic
+                self.line = cleaned
+                self._apply_line(self.line, "grow")
+                return "grow"
+
         action, line, pending, anchor, settle, _deadline = step_caption(
             self.line,
             self._pending,
