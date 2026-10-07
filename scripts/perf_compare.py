@@ -203,9 +203,20 @@ def main(argv: list[str]) -> int:
     asr = numbers(server, "pipeline.asr", "asr")
     asr_share = sum(asr) / 1000.0 / (server[-1][0] - server[0][0]) if server else 0.0
     print(series("asr_ms", asr))
+    # Every window figure below needs a window. A short clip can leave the
+    # trimmed server log empty -- first_block discards blocks below MIN_EVENTS --
+    # and indexing an empty list raised IndexError partway through the report,
+    # after the run had already completed and archived. So the window is computed
+    # once and the report says the run was too short rather than crashing.
+    window = (server[-1][0] - server[0][0]) if server else 0.0
+    if not server:
+        print(
+            "   (server log has no usable block: too few events to measure a window;"
+            " run too short?)"
+        )
     print(
         f"asr share of wall clock    {asr_share * 100:.1f}%  "
-        f"(sum {sum(asr) / 1000.0:.1f}s / {server[-1][0] - server[0][0]:.1f}s)"
+        f"(sum {sum(asr) / 1000.0:.1f}s / {window:.1f}s)"
     )
     print(series("asr_qwait_ms", numbers(server, "pipeline.asr", "qwait")))
     print(series("asr_audio_ms", numbers(server, "pipeline.asr", "audio_ms")))

@@ -25,6 +25,33 @@ OUT_DIR = ROOT / "samples"
 LOG_DIR = ROOT / "logs"
 WAV_PATH = OUT_DIR / "blog_3min.wav"
 MP4_PATH = OUT_DIR / "blog_3min.mp4"
+
+
+def _sample_wav() -> str:
+    """Which clip to play, so a sweep can point the same machinery at new material.
+
+    The TTS blog clip has a silence structure the real one does not: eighteen
+    pauses of a second or more against zero. GEMMA_MIN_SILENCE_MS is 1000, so
+    every conclusion about that threshold was measured on a clip that triggers
+    it constantly, and a meeting recording triggers it never. The clip therefore
+    has to be selectable, or the audio-native route can only ever be measured on
+    the easy case.
+
+    TRANSLATION_SAMPLE_WAV names the clip; TRANSLATION_SAMPLE_TIMING its sentence
+    timeline, which is what the latency zero points come from and which has to
+    match the clip or every number is measured against the wrong speech.
+    """
+    import os
+
+    wav = os.environ.get("TRANSLATION_SAMPLE_WAV")
+    return wav if wav else str(WAV_PATH)
+
+
+def _sample_timing() -> Path:
+    import os
+
+    name = os.environ.get("TRANSLATION_SAMPLE_TIMING")
+    return Path(name) if name else TIMING_PATH
 CARD_PATH = OUT_DIR / "blog_3min_card.png"
 SCRIPT_PATH = OUT_DIR / "blog_3min.txt"
 TIMING_PATH = OUT_DIR / "blog_3min_timing.json"
@@ -266,7 +293,7 @@ def _summarize(events: list[dict], timing: list[dict]) -> dict:
 
 
 async def _play(timing: list[dict]) -> dict:
-    audio, rate = sf.read(WAV_PATH, dtype="float32", always_2d=False)
+    audio, rate = sf.read(_sample_wav(), dtype="float32", always_2d=False)
     if rate != SAMPLE_RATE:
         audio = _resample(audio, rate)
     pcm = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
@@ -316,8 +343,52 @@ async def _play(timing: list[dict]) -> dict:
 def main() -> None:
     play_only = len(sys.argv) > 1 and sys.argv[1] == "play"
     if play_only:
-        timing = json.loads(TIMING_PATH.read_text(encoding="utf-8"))
-        duration = sf.info(WAV_PATH).duration
+        timing = json.loads(_sample_timing().read_text(encoding="utf-8"))
+        # Fail here, before six minutes of audio has played, rather than in the
+        # summary at the end.
+        #
+        # _summarize needs each row to carry its index, and a timeline built by
+        # hand or by a different tool will not have it. The six-minute run played
+        # the whole clip and then raised KeyError on a field it could have checked
+        # at the start.
+        missing = [k for k in ("start", "end", "text") if not timing or k not in timing[0]]
+        if missing:
+            raise SystemExit(
+                f"{_sample_timing()} rows are missing {missing}; each row needs start, end, text"
+            )
+        # Everything the summary and the latency probes assume about the timeline,
+        # checked here rather than discovered at the end of a full-length clip.
+        bad: list[str] = []
+        previous_end = None
+        for n, row in enumerate(timing):
+            try:
+                start, end = float(row["start"]), float(row["end"])
+            except (TypeError, ValueError):
+                bad.append(f"row {n}: start/end are not numbers")
+                continue
+            if end <= start:
+                bad.append(f"row {n}: end {end} is not after start {start}")
+            if previous_end is not None and start < previous_end - 1e-6:
+                bad.append(f"row {n}: starts at {start}, before the previous row ended")
+            previous_end = max(previous_end or end, end)
+        if bad:
+            raise SystemExit(
+                f"{_sample_timing()} is not a usable timeline:\n  " + "\n  ".join(bad[:8])
+            )
+        clip = sf.info(_sample_wav()).duration
+        if previous_end is not None and previous_end > clip + 1.0:
+            raise SystemExit(
+                f"timeline ends at {previous_end:.1f}s but the clip is only {clip:.1f}s; "
+                "the zero points would be measured against speech that does not exist"
+            )
+        if "i" not in timing[0]:
+            for n, row in enumerate(timing):
+                row["i"] = n
+            print(
+                f"timeline had no 'i' column; numbered {len(timing)} rows in order",
+                flush=True,
+            )
+        duration = sf.info(_sample_wav()).duration
     else:
         duration = 0.0
         timing = []
@@ -328,7 +399,7 @@ def main() -> None:
             if 165 <= duration <= 210:
                 break
         _video()
-    print(f"video {MP4_PATH} {duration:.1f}s", flush=True)
+    print(f"audio {_sample_wav()} {duration:.1f}s", flush=True)
     result = asyncio.run(_play(timing))
     result["video"] = str(MP4_PATH)
     result["wav"] = str(WAV_PATH)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import perf
 from .config import (
     SAMPLE_RATE,
     SILERO_ONNX,
@@ -27,6 +28,26 @@ FRAME = 512  # 32ms at 16kHz
 # does not). See build_tuning().
 MAX_UTTERANCE_MS = 12_000
 NON_SPEECH_GAIN = 0.0
+
+# Silence runs are binned rather than counted in total, because the question the
+# total cannot answer is "what would a different threshold have done". Bins are
+# chosen so that each threshold the project has ever set -- 150, 200, 400, 700,
+# 1000 ms -- falls on a boundary, and every run lands in exactly one bin whether
+# or not it went on to close an utterance. A run that closed a segment and a run
+# that did not are the same kind of event for this purpose.
+#
+# The upper edge of each bin is exclusive, so a 200ms pause lands in 100-200 and a
+# 1000ms pause in 700-1000 rather than in the bin named after it.
+SILENCE_BINS_MS = (100, 200, 300, 400, 700, 1000)
+
+
+def _silence_bin(ms: float) -> str:
+    if ms < SILENCE_BINS_MS[0]:
+        return "lt100"
+    for edge in SILENCE_BINS_MS:
+        if ms < edge:
+            return f"lt{edge}"
+    return f"ge{SILENCE_BINS_MS[-1]}"
 # An utterance only closes after 400ms of silence, but the words are already
 # over after the first pause. Emitting one extra partial as soon as the pause
 # reaches 150ms hands the tail to ASR 250ms earlier, and the closing event
@@ -190,6 +211,33 @@ class UtteranceSplitter:
         self.since_partial_ms = 0
         self.early_partial = False
         self.frame_ms = FRAME * 1000 / SAMPLE_RATE
+        self._outside_silence_ms = 0.0
+        self._unreported_silence = 0.0
+
+    def _note_silence_run(self, ms: float, inside: int) -> None:
+        """Emit one silence run, whether or not it closed an utterance.
+
+        Runs inside an utterance are reported when they end, because a run that
+        never ends is not a pause, it is a monologue. The length is passed in
+        rather than read from state so the value cannot be the wrong one: the
+        earlier reconstruction of these numbers from overlapping intervals is what
+        produced a segment length twice the true median.
+        """
+        if ms <= 0:
+            return
+        perf.emit(
+            "vad",
+            "silence",
+            bin=_silence_bin(ms),
+            ms=round(ms, 1),
+            inside_utterance=inside,
+        )
+
+    def _close_outside_silence(self) -> None:
+        """A pause between utterances, which is where a clip's long silences are."""
+        ms = self._outside_silence_ms
+        self._outside_silence_ms = 0.0
+        self._note_silence_run(ms, inside=0)
 
     def reset(self) -> None:
         self.pending = np.zeros(0, dtype=np.float32)
@@ -218,8 +266,14 @@ class UtteranceSplitter:
                     self.since_partial_ms = 0
                     self.early_partial = False
                     self.utterance = []
+                    self._unreported_silence = 0.0
+                    self._close_outside_silence()
                     events.append(("start", None, False))
                 resumed = self.silence_ms > 0
+                if resumed:
+                    # The pause ended without closing the utterance. Report it now,
+                    # before the counter is zeroed, or it is lost.
+                    self._note_silence_run(self.silence_ms, inside=1)
                 self.utterance.append(frame)
                 self.speech_ms += self.frame_ms
                 self.silence_ms = 0
@@ -230,6 +284,14 @@ class UtteranceSplitter:
                 self.since_partial_ms += self.frame_ms
                 t = self.tuning
                 if self.speech_ms >= t.max_utterance_ms:
+                    perf.emit(
+                        "vad",
+                        "end",
+                        why="max_length",
+                        speech_ms=round(self.speech_ms, 1),
+                        silence_ms=round(self.silence_ms, 1),
+                        early_partial=1 if self.early_partial else 0,
+                    )
                     events.append(("end", self._take(), self.early_partial))
                 elif (
                     t.partial_interval_ms
@@ -258,13 +320,50 @@ class UtteranceSplitter:
                     self.speech_ms >= t.soft_cut_speech_ms
                     and self.silence_ms >= t.soft_cut_silence_ms
                 ):
+                    # Why it closed, and the run that closed it, recorded here
+                    # while both are still true.
+                    #
+                    # Reconstructing this afterwards is what produced a wrong
+                    # answer already: a real recording was reported as having 8.2s
+                    # segments when the median was 1.37s, because the 8.2 came
+                    # from dividing wall-clock by an event count that excluded
+                    # everything the reuse path handled. The two were different
+                    # populations and the division spanned both.
+                    if self.silence_ms >= t.min_silence_ms:
+                        why = "silence"
+                    else:
+                        why = "soft_cut"
+                    perf.emit(
+                        "vad",
+                        "end",
+                        why=why,
+                        speech_ms=round(self.speech_ms, 1),
+                        silence_ms=round(self.silence_ms, 1),
+                        early_partial=1 if self.early_partial else 0,
+                    )
+                    self._note_silence_run(self.silence_ms, inside=1)
                     if self.speech_ms >= VAD_MIN_SPEECH_MS:
                         events.append(("end", self._trim(self._copy()), self.early_partial))
                     self._drop()
+            elif not self.in_speech:
+                # Outside an utterance a silence run is still a pause in the
+                # material, and on a TTS clip these are the long ones the closing
+                # threshold exists for.
+                self._outside_silence_ms += self.frame_ms
         return events
 
     def flush(self) -> list[tuple[str, np.ndarray | None, bool]]:
+        self._close_outside_silence()
         if self.in_speech and self.speech_ms >= VAD_MIN_SPEECH_MS and self.utterance:
+            perf.emit(
+                "vad",
+                "end",
+                why="flush",
+                speech_ms=round(self.speech_ms, 1),
+                silence_ms=round(self.silence_ms, 1),
+                early_partial=1 if self.early_partial else 0,
+            )
+            self._note_silence_run(self.silence_ms, inside=1)
             return [("end", self._trim(self._copy()), self.early_partial)]
         self._drop()
         return []
