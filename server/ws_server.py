@@ -15,7 +15,9 @@ from websockets.asyncio.server import serve
 from . import perf
 from .asr import AsrEngine
 from .caption_window import (
+    ack_switch,
     arm_caption,
+    clear_caption,
     hide_caption,
     note_caption,
     raise_caption,
@@ -54,6 +56,32 @@ def style_font_color(data: dict):
 
 STATE_PORT = 8767
 
+# The session serving the current connection. Held so the caption window's switch
+# can reach it: the window is a separate process and cannot hold a reference.
+_CURRENT_SESSION = None
+
+
+def _switch_partial_interval(ms: int) -> None:
+    """Apply a cadence change to the live session and to any started later.
+
+    Both halves are needed. Setting only the override would leave the session
+    already running on the old value, because its splitter was built at
+    construction; setting only the live splitter would be forgotten the moment
+    the connection is re-established.
+    """
+    from . import vad
+
+    vad.set_partial_interval(ms)
+    session = _CURRENT_SESSION
+    if session is not None:
+        vad.apply_partial_interval(session.vad, ms)
+        # Clear what is on screen and in flight. Half of one cadence and half of
+        # another in the same caption would be read as neither.
+        session.reset_for_media()
+        clear_caption()
+        ack_switch(ms)
+    perf.emit("config", "switch", partial_interval_ms=ms)
+
 
 def _apply_caption_controls(data: dict) -> None:
     if "textOnly" in data:
@@ -75,7 +103,17 @@ def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
             message = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if message.get("kind") != "state":
+        kind = message.get("kind")
+
+        # The switch the user flips while watching. Carried over the channel that
+        # already runs the other way, so no new port and no second protocol.
+        if kind == "config":
+            value = message.get("value") or {}
+            ms = value.get("partial_interval_ms")
+            if ms:
+                loop.call_soon_threadsafe(_switch_partial_interval, int(ms))
+            continue
+        if kind != "state":
             continue
         value = message.get("value") or {}
         payload = {"type": "toggle_transparent", "value": bool(value.get("textOnly", False))}
@@ -92,7 +130,9 @@ def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
 
 
 async def handle(ws, asr: AsrEngine | None) -> None:
+    global _CURRENT_SESSION
     session = Session(asr)
+    _CURRENT_SESSION = session
     caption_enabled = True
     caption_text_only = False
     caption_position_locked = True

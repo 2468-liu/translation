@@ -276,6 +276,42 @@ class _Caption:
             pady=0,
         )
 
+        # The switcher. It exists so the two cadences can be compared while
+        # watching rather than from memory: an A/B read off two separate replays
+        # confounds the setting with everything else that differed between runs,
+        # and the difference here is small enough that memory is not a fair test.
+        #
+        # Plain buttons rather than a dropdown, because the state that matters is
+        # which one is active, and three buttons show that at a glance.
+        self._switch_var = tk.StringVar(value="250")
+        self._switch_buttons: dict[str, tk.Button] = {}
+        for label, ms in (("250", 250), ("750", 750)):
+            button = tk.Button(
+                self.root,
+                text=label,
+                command=lambda m=ms: self.switch_partial_interval(m),
+                fg="#ffffff",
+                bg="#000000",
+                activeforeground="#000000",
+                activebackground="#ffffff",
+                font=("Microsoft YaHei", 9),
+                bd=0,
+                highlightthickness=0,
+                padx=4,
+                pady=0,
+            )
+            self._switch_buttons[label] = button
+        self._switch_note = tk.Label(
+            self.root,
+            text="",
+            fg="#888888",
+            bg="#000000",
+            font=("Microsoft YaHei", 8),
+            bd=0,
+            padx=2,
+        )
+        self._paint_switch_state()
+
         self._drag = None
         self._resize_origin = None
         self.canvas.bind("<Motion>", self._hover)
@@ -363,6 +399,15 @@ class _Caption:
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
             self.position_lock_control.place_forget()
+        # The switcher sits to the right of whichever control is showing, and
+        # stays visible in both modes: comparing cadences is something you do
+        # while watching, not something you set once.
+        base = 80 if self.text_only else 160
+        for offset, key in enumerate(("250", "750")):
+            self._switch_buttons[key].configure(bg=bg, activebackground=bg)
+            self._switch_buttons[key].place(x=base + offset * 44, y=3, anchor="nw")
+        self._switch_note.configure(bg=bg)
+        self._switch_note.place(x=base + 92, y=5, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -629,6 +674,57 @@ class _Caption:
     def set_status(self, lang: str) -> None:
         name = _LANG.get(lang or "", "")
         self.status = f"{name} → 中文" if name and name != "中文" else ""
+
+    def switch_partial_interval(self, ms: int) -> None:
+        """Ask the server for a new cadence, and clear what is on screen.
+
+        The clear happens here rather than waiting for the server's reply: the
+        text currently displayed was produced under the old cadence, and holding
+        it while the switch travels would show the old value under the new label.
+        """
+        self._switch_var.set(str(ms))
+        self.clear()
+        self._paint_switch_state(pending=True)
+        try:
+            payload = json.dumps(
+                {"kind": "config", "value": {"partial_interval_ms": int(ms)}},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            _STATE_SOCK.sendto(payload, ("127.0.0.1", STATE_PORT))
+        except OSError:
+            self._switch_note.configure(text="切换失败")
+
+    def _paint_switch_state(self, pending: bool = False) -> None:
+        active = self._switch_var.get()
+        for label, button in self._switch_buttons.items():
+            if label == active:
+                button.configure(fg="#000000", bg="#ffffff")
+            else:
+                button.configure(fg="#ffffff", bg="#000000")
+        self._switch_note.configure(text="切换中" if pending else "")
+
+    def clear(self) -> None:
+        """Blank the line but leave the window up and armed.
+
+        Swapping the text out rather than closing, because the next fragment
+        belongs to the new configuration and must be able to land immediately.
+        The deadline state is reset with it: a hold left over from the previous
+        cadence would delay the first line of the new one by a wait that was
+        never meant for it.
+        """
+        self.line = ""
+        self._pending = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._next_utterance_at = 0.0
+        self._line_since = 0.0
+        self._prev_chars = 0
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        self._close_wait("", "clear")
+        if self.visible:
+            self._paint()
 
     def begin_segment(self) -> None:
         now = time.monotonic()
@@ -910,6 +1006,10 @@ class _Caption:
                 self.apply_color(value)
             elif kind == "arm":
                 self.arm()
+            elif kind == "clear":
+                self.clear()
+            elif kind == "switch_ok":
+                self._paint_switch_state(pending=False)
             elif kind == "raise":
                 if self.line:
                     self.show()
@@ -1399,6 +1499,22 @@ def set_font_color(color: str) -> None:
 
 def arm_caption() -> None:
     _send("arm", None)
+
+
+def clear_caption() -> None:
+    """Drop whatever is on screen, without closing the window.
+
+    Distinct from hide_caption: that also marks the window closed, so the next
+    packet has to re-arm it. This is for a configuration change mid-playback,
+    where the window should stay up and simply stop showing the old cadence's
+    text.
+    """
+    _send("clear", None)
+
+
+def ack_switch(ms: int) -> None:
+    """Tell the window the cadence change landed, so it can stop saying 切换中."""
+    _send("switch_ok", int(ms))
 
 
 def raise_caption() -> None:

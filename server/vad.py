@@ -166,9 +166,41 @@ def whisper_tuning() -> Tuning:
         early_end_ms=EARLY_END_SILENCE_MS,
         soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
         soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
-        partial_interval_ms=PARTIAL_INTERVAL_MS,
+        partial_interval_ms=_effective_partial_interval(),
         name="whisper",
     )
+
+
+# The partial cadence can be changed while a video is playing, so the value the
+# tuning is built from is not the constant. Without this the alternative is
+# editing config.py, restarting the service and replaying -- which cannot answer
+# the question being asked, because comparing two runs from memory is not the
+# same as switching while watching.
+#
+# A module global rather than an env var: an env var is read once at import, and
+# the point is to change it after that. The constant stays as the default so a
+# fresh process behaves exactly as before.
+_PARTIAL_INTERVAL_OVERRIDE: int | None = None
+
+
+def _effective_partial_interval() -> int:
+    return _PARTIAL_INTERVAL_OVERRIDE or PARTIAL_INTERVAL_MS
+
+
+def set_partial_interval(ms: int | None) -> None:
+    """Set the cadence for tunings built from now on."""
+    global _PARTIAL_INTERVAL_OVERRIDE
+    _PARTIAL_INTERVAL_OVERRIDE = int(ms) if ms else None
+
+
+def apply_partial_interval(splitter: "UtteranceSplitter", ms: int) -> None:
+    """Change the cadence on a splitter that is already running.
+
+    Mutating the existing Tuning rather than replacing the splitter, because the
+    splitter holds the utterance being accumulated: a new one would drop whatever
+    is in flight, and the audio would have to come round again.
+    """
+    splitter.tuning.partial_interval_ms = int(ms)
 
 
 def audio_model_tuning() -> Tuning:
