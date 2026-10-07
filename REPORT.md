@@ -895,4 +895,53 @@ ctxfix3      43     0     0     0    0.0%
 
 **顺带**：显存是 GPU 那档**更高**（2528 vs 1756），所以"省显存"也不是它的好处。
 
+> ⚠️ **本节的结论与机制均已降级为待验证**，理由见 16.7：同一配置重跑之间 `to_first` 的离散可达 2.7 倍，与 3.7 倍同量级，所以这个差距可能主要是噪声；"GPU 争用"是为解释差距而提出的推测，不是测得的机制。16.7 里已用 5 轮重跑该格，并加了针对活进程的放置断言。
+
 两处注释已改（`server/config.py`、`scripts/start.ps1`），写明原因是 GPU 争用而非显存，并注明"不要为了省显存把它搬到 GPU，它就是在那里输的"。
+
+### 16.7 一次 sweep 静默跑成了另一次 sweep：12 格"MTP 开"其实全部是关的
+
+2×2 上下文 × MTP 跑完，`mtp on` 与 `mtp off` 的首包分别是 907 / 2420 / 1529 / 1296 ms——**同配置之间差了 2.7 倍**。这不是效应，是噪声，也说明 16.6 的 3.7 倍可能同属噪声。
+
+根因：MTP 只以 `--model-draft` 存在于命令行，没有对应的 config 值，所以 sweep 必须自己起后端；而 `replay.ps1` 在 `-AudioNative` 下无条件杀掉所有 llama-server，然后**自己再起一个不带 draft 的**。每格实际发生的是：
+
+```
+sweep 起带 draft 的后端 → 等 8080 ready
+replay 杀掉它 → 起一个不带 draft 的后端 → 跑这一格
+```
+
+12 格全部如此。**没有报错、名字写着 mtpon、结果表照出**，因为 meta 里没有任何关于 MTP 的字段，臂名成了"配了什么"的唯一记录——而臂名不是证据。
+
+**漏掉它的原因不止一处**，三条同时成立：
+
+1. 每格都打印了**两次** `llama-server ready`，但输出里被过滤掉了。
+2. `meta` 的键是 `audio_native / code / llama_version / mmproj_device / name / thresholds / when`，**没有 mtp**。
+3. 独立的观察进程记到了 `draft=True`，但那正好是 sweep 起完、replay 还没杀的那个瞬间——**bug 的窗口本身就是证据出现的地方**。
+
+修法（`e30f966`）：
+
+- `replay.ps1 -KeepBackend`：不杀、不重起，只等调用方的后端；没有后端就 throw。
+- meta 增 `mtp_draft` / `mmproj_device_live`，**在 run 结束时从活进程命令行读**，不是从臂名也不是从环境变量。
+- `TRANSLATION_EXPECT_DRAFT` / `TRANSLATION_EXPECT_MMPROJ` 与实际不符直接 throw。两个 sweep 都设。
+- 每格打印 `### backend as launched: draft=... mmproj-device=...`，让"配了什么"出现在每格的输出里而不是只存在于 meta。
+
+1 轮验证（`-Rounds 1`）：
+
+```
+cm-ctx0-mtpoff-r1   mtp_draft=False  mmproj_live=none  ctx=0
+cm-ctx0-mtpon-r1    mtp_draft=True   mmproj_live=none  ctx=0
+cm-ctx2-mtpoff-r1   mtp_draft=False  mmproj_live=none  ctx=2
+cm-ctx2-mtpon-r1    mtp_draft=True   mmproj_live=none  ctx=2
+```
+
+质量侧这 12 格是可信的（全部 0 坏片段 / 0 循环 / 0 未翻译），因为坏片段与 draft 无关。**延迟侧全部作废。**
+
+#### 这条错误的形状，和前四次是同一族
+
+第 16 节记了四次"两个量看起来可比，其实不是"。这次是它的变体：**被比较的两个量根本不是各自名字所说的东西**，而且名字是唯一的记录。
+
+```
+共同形状：结论所依赖的那个事实，没有任何独立于名字的来源。
+```
+
+`Confirm-Setting`（只校验不赋值）、`runtime.json` 的过期显存、meta 缺 mtp 字段——三处都是同一个修法：**让事实自己写下来，并对不上就抛错**。判据写在数据之前、名字不能当证据、断言要落在活进程上，这三条现在都是脚本里可执行的检查，而不是约定。
