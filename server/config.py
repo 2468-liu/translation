@@ -199,6 +199,13 @@ def resolve_llama_runtime(vram_mb: int | None = None) -> tuple[int, int]:
     model without blowing up, but it still benefits from cutting a bit of the
     layer count when memory is tight. Machines with more than 4GB keep almost all
     layers inside VRAM to minimize latency.
+
+    ``vram_mb`` is the card's *total* memory, not what is currently used.
+    Comparing "used after load" against a fixed 4096 conflated the two: a used
+    figure is a property of whichever model happened to be loaded, so it was
+    both the wrong quantity and, in runtime.json, a stale one carried over from
+    a deleted model. On an 8GB card whose probe recorded 3000 MiB used, this
+    would read 3000 <= 4096 and quietly demote a card that did not need it.
     """
     if vram_mb is None:
         if RUNTIME_JSON.exists():
@@ -206,7 +213,10 @@ def resolve_llama_runtime(vram_mb: int | None = None) -> tuple[int, int]:
                 runtime = json.loads(RUNTIME_JSON.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 runtime = {}
-            vram_mb = runtime.get("vram_used_mib_after_load") or runtime.get("fit_target_mib")
+            # Total first; the used figure is only a fallback for old files.
+            vram_mb = runtime.get("memory_total_mib")
+            if vram_mb is None:
+                vram_mb = runtime.get("vram_used_mib_after_load") or runtime.get("fit_target_mib")
         if vram_mb is None:
             vram_mb = 8192
     vram_mb = max(1, int(vram_mb))
