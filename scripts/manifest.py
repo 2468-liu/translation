@@ -82,44 +82,137 @@ def _group(cmd: str | None, pattern: re.Pattern[str]) -> str:
     return match.group(1) if match else "absent"
 
 
-def _file_digest(path: Path) -> str:
-    """Hash a weight file by its head and its length.
+_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
 
-    Hashing 465 MB on every run would cost more than the runs do. The head
-    catches a swapped or truncated file, which is what a mistaken --model path
-    produces; the length catches the rest of that case. This is not a security
-    check and does not claim to be one.
+
+def _file_digest(path: Path) -> str:
+    """Full SHA-256 of a weight file, cached by (path, size, mtime).
+
+    The head-and-length shortcut was wrong for exactly the case that matters
+    here. A GGUF's first megabyte is metadata and vocabulary, so two fine-tunes
+    of the same architecture at the same quantisation have the same length and
+    very nearly the same head -- and telling the base model apart from the
+    Translate Gemma fine-tune is precisely the distinction a manifest exists to
+    make. So the whole file is hashed, and the cache key includes the mtime so an
+    edited file rehashes instead of reporting a stale answer.
     """
     if not path.exists():
         return "absent"
-    size = path.stat().st_size
+    stat = path.stat()
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    cached = _DIGEST_CACHE.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.sha256()
     with path.open("rb") as handle:
-        head = handle.read(1 << 20)
-    digest = hashlib.sha256(head + str(size).encode()).hexdigest()[:16]
-    return f"{digest}:{size}"
+        for chunk in iter(lambda: handle.read(1 << 22), b""):
+            digest.update(chunk)
+    value = f"sha256:{digest.hexdigest()}"
+    _DIGEST_CACHE[key] = value
+    return value
+
+
+_EFFECTIVE = re.compile(r"effective\.config\s+(\{.*\})")
+
+
+def _effective_config(name: str) -> dict | None:
+    """What the server said it was running with, from its own log.
+
+    Not re-derived by importing the config here. Another process importing
+    server.config reports what the file says under that reader's environment,
+    which is a different question from what is running -- and the whole class of
+    bug this file exists for is a run that was not what it was named. The caption
+    window is a separate process again, so its thresholds are only knowable from
+    what it printed.
+    """
+    for candidate in (
+        LOGS / f"perf.{name}.log",
+        LOGS / f"perf_caption.{name}.log",
+    ):
+        if not candidate.exists():
+            continue
+        for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines():
+            found = _EFFECTIVE.search(line)
+            if found:
+                try:
+                    return json.loads(found.group(1))
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _nvidia() -> dict:
+    """Card state that can invalidate a power or latency comparison.
+
+    Throttle reasons matter more than they look: a card that was power or
+    temperature limited during one arm and not another produces a difference that
+    is the card's behaviour, not the arm's. Under WDDM the compute-apps query
+    answers N/A, so foreign-process detection is done by name instead of by
+    memory.
+    """
+    out: dict = {"throttle_reasons": "unavailable", "compute_apps": "unavailable"}
+    try:
+        query = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=clocks_throttle_reasons.active,temperature.gpu",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if query.returncode == 0 and query.stdout.strip():
+            out["throttle_reasons"] = query.stdout.strip().splitlines()[0]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        apps = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if apps.returncode == 0 and apps.stdout.strip():
+            names = [l.strip() for l in apps.stdout.splitlines() if l.strip()]
+            out["compute_apps"] = names
+            out["foreign_gpu_processes"] = [
+                n for n in names if "llama-server" not in n.lower()
+            ]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
 
 
 def _git_state() -> dict:
     def run(args: list[str]) -> str:
         try:
             out = subprocess.run(
-                args, cwd=ROOT, capture_output=True, text=True, timeout=20
+                args, cwd=ROOT, capture_output=True, text=True, timeout=30
             )
             return out.stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return ""
 
     sha = run(["git", "rev-parse", "HEAD"])
-    dirty = run(["git", "diff", "HEAD"])
-    index = run(["git", "diff", "--cached"])
-    if sha and dirty is not None:
-        # The diff itself is the identity: two runs with the same uncommitted edit
-        # are the same code, and two runs that differ only in an unrelated file
-        # are not. Hashing it is enough; committing to get a clean sha would mean
-        # changing code in the middle of a sweep.
-        blob = hashlib.sha256((dirty + index).encode()).hexdigest()[:12]
-        return {"sha": sha, "dirty": bool(dirty or index), "diff": blob}
-    return {"sha": "unknown", "dirty": None, "diff": "unknown"}
+    # git diff HEAD covers staged and unstaged together, which is what "the code
+    # on disk" means, so the index does not need a second pass.
+    diff = run(["git", "diff", "HEAD"])
+    # Untracked files are part of the code too. A new module that a sweep imports
+    # is invisible to git diff, so two arms could differ by exactly the file that
+    # decides the result.
+    untracked = run(["git", "ls-files", "--others", "--exclude-standard"])
+    untracked_list = sorted(l for l in untracked.splitlines() if l.strip())
+    blob = hashlib.sha256()
+    blob.update(diff.encode())
+    for item in untracked_list:
+        blob.update(b"\0" + item.encode())
+    return {
+        "sha": sha,
+        "dirty": bool(diff or untracked_list),
+        "diff": blob.hexdigest()[:12],
+        "untracked": untracked_list,
+    }
 
 
 def _meta(name: str) -> dict | None:
@@ -266,6 +359,8 @@ def build(name: str) -> dict:
             "thresholds": meta.get("thresholds"),
         },
         "git": _git_state(),
+        "effective": _effective_config(name),
+        "gpu": _nvidia(),
         "completeness": {
             "replay_seconds": round(replay_seconds, 1),
             "caption_window_seconds": round(live_seconds, 1),
@@ -339,6 +434,44 @@ def judge(manifest: dict, expect: dict | None = None) -> list[tuple[str, bool, s
                     f"meta recorded {recorded_mm}, the live process has {back['mmproj_device']}",
                 )
             )
+    effective = manifest.get("effective")
+    if effective is None:
+        checks.append(
+            (
+                "effective config",
+                False,
+                "the server did not report the configuration it was running with, so "
+                "no threshold can be confirmed from the run itself",
+            )
+        )
+
+    # Power or thermal limiting makes one arm's numbers the card's behaviour
+    # rather than the arm's. Reported rather than assumed: the flag is a bitmask
+    # and only its meaning is ambiguous, so a non-zero value that decodes to
+    # nothing is left alone and a value containing a reason is called out.
+    reasons = str(manifest.get("gpu", {}).get("throttle_reasons", "")).lower()
+    for word in ("sw power", "hw slowdown", "thermal", "sw thermal"):
+        if word in reasons:
+            checks.append(
+                (
+                    "throttle",
+                    False,
+                    f"the card reported '{word}' limiting during or after this run, "
+                    "which contaminates both its power and its latency",
+                )
+            )
+            break
+
+    foreign = manifest.get("gpu", {}).get("foreign_gpu_processes")
+    if foreign:
+        checks.append(
+            (
+                "foreign gpu process",
+                False,
+                f"another process was on the card: {foreign}",
+            )
+        )
+
     code = manifest["meta"].get("code")
     if code is None:
         checks.append(("meta", False, "no meta file, so nothing records what code this arm ran"))

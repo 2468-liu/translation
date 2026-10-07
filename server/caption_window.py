@@ -17,6 +17,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 
 from . import perf
+from .config import _env_int
 from .translate import CHAR_RUN_MAX, CLAUSE_RUN_MAX, collapse_caption_repeats
 
 try:
@@ -42,7 +43,15 @@ PACE_MIN_GAPS = 3
 READABLE_RATIO = 0.70
 HOLD_ABS_MIN_MS = 800
 HOLD_ABS_MAX_MS = 4200
-SETTLE_MS = 450
+# Settle is the pause after a one-character revision before the change is drawn,
+# so a stream of single-character corrections does not flicker. It is also a
+# candidate for the swap deadline, which makes it a latency cost and not only a
+# rendering one -- and the display leg's median sits near this number, which is
+# why it is now a variable rather than a constant.
+#
+# Injected through the environment like every other threshold, so an experiment
+# can move it without editing the file the previous experiment measured.
+SETTLE_MS = _env_int("TRANSLATION_SETTLE_MS", 450)
 _MIN_LENGTH_RATIO = 0.75
 _MIN_SIMILARITY = 0.72
 _KEY = "#010203"
@@ -709,6 +718,10 @@ class _Caption:
         self._growth_stopped_at = anchor
         self._settle_until = settle
         self._close_wait(pending, action)
+        # Only on the packet-arrival path. The flush path has just reassigned the
+        # anchor to now, so it would report a fresh hold rather than the one that
+        # expired, which is the opposite of what this column is for.
+        self._emit_deadline(action)
         if action in ("grow", "swap"):
             self._next_utterance_at = 0.0
         if action in ("grow", "char", "swap"):
@@ -717,12 +730,54 @@ class _Caption:
         return action
 
     def _swap_deadline(self) -> float:
-        return swap_deadline(
+        return swap_deadline_why(
             self._growth_stopped_at,
             self._settle_until,
             self.line,
             self._pace(),
             self._next_utterance_at,
+        )[0]
+
+    def _emit_deadline(self, action: str) -> None:
+        """Record every candidate deadline and the one that actually applied.
+
+        Emitted on each decision rather than derived later, because the three
+        candidates overlap in time and a draw blocked by one of them looks
+        identical to a draw blocked by another unless the reason was written down
+        at the moment it was true.
+        """
+        if not self._growth_stopped_at:
+            return
+        deadline, name, candidates = swap_deadline_why(
+            self._growth_stopped_at,
+            self._settle_until,
+            self.line,
+            self._pace(),
+            self._next_utterance_at,
+        )
+        now = time.monotonic()
+        perf.emit(
+            "caption",
+            "deadline",
+            action=action,
+            # Which of the three clocks set it. This is the column that answers
+            # "is the display leg the hold, the settle, or the next utterance".
+            why=name,
+            wait=round((deadline - now) * 1000.0, 1),
+            hold_in=round(
+                (candidates.get("hold", deadline) - now) * 1000.0, 1
+            ),
+            settle_in=round(
+                (candidates.get("settle", deadline) - now) * 1000.0, 1
+            ),
+            readable_in=round(
+                (candidates.get("readable_at", deadline) - now) * 1000.0, 1
+            ),
+            next_utt_in=round(
+                (candidates.get("next_utterance", deadline) - now) * 1000.0, 1
+            ),
+            hold_ms=hold_ms(self.line, self._pace()),
+            chars=len(self.line),
         )
 
     def _arm_hold(self) -> None:
@@ -954,16 +1009,65 @@ def swap_deadline(
     pace: float = 1.0,
     next_utterance_at: float = 0.0,
 ) -> float:
-    full = growth_stopped_at + hold_ms(line, pace) / 1000.0
-    deadline = max(full, settle_until)
-    if next_utterance_at <= growth_stopped_at:
-        return deadline
-    readable_ms = max(
-        HOLD_ABS_MIN_MS,
-        int(round(READABLE_RATIO * _reference_hold_ms(max(1, _read_units(line))))),
-    )
-    readable_at = growth_stopped_at + readable_ms / 1000.0
-    return min(deadline, max(readable_at, next_utterance_at, settle_until))
+    return swap_deadline_why(
+        growth_stopped_at, settle_until, line, pace, next_utterance_at
+    )[0]
+
+
+# Which candidate actually set the deadline. The display leg was reported as one
+# number and then split two ways, and neither split held up: the hold explains
+# the tail but not the median, and the median sits near SETTLE_MS. Three
+# different clocks can push the deadline out, and which one did is the whole
+# question -- so it is recorded rather than inferred afterwards from overlapping
+# intervals, which also avoids having to assume a hold never re-enters.
+#
+# Returned alongside the deadline so the caller does not have to recompute any of
+# it. The name is the constraint that produced the returned value.
+def swap_deadline_why(
+    growth_stopped_at: float,
+    settle_until: float,
+    line: str = "",
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[float, str, dict]:
+    candidates: dict[str, float] = {}
+    # Unconditional, including when growth_stopped_at is 0.0. _arm_hold reaches
+    # here with pending text set and the anchor still at its initial value, and
+    # dropping the hold candidate there would fire the flush immediately instead
+    # of one hold later. The equivalence check over 1280 combinations is what
+    # caught this; the guard looked harmless because it agrees with the truthy
+    # case.
+    candidates["hold"] = growth_stopped_at + hold_ms(line, pace) / 1000.0
+    if settle_until:
+        candidates["settle"] = settle_until
+    if next_utterance_at > growth_stopped_at and growth_stopped_at:
+        readable_ms = max(
+            HOLD_ABS_MIN_MS,
+            int(round(READABLE_RATIO * _reference_hold_ms(max(1, _read_units(line))))),
+        )
+        candidates["readable_at"] = growth_stopped_at + readable_ms / 1000.0
+        candidates["next_utterance"] = next_utterance_at
+
+    if next_utterance_at > growth_stopped_at and growth_stopped_at:
+        # The next-utterance branch clamps the max, so it can pull the deadline
+        # earlier rather than push it later.
+        ceiling = max(
+            candidates["readable_at"],
+            candidates["next_utterance"],
+            candidates.get("settle", 0.0),
+        )
+        floor = max(candidates["hold"], candidates.get("settle", 0.0))
+        deadline = min(floor, ceiling)
+    else:
+        deadline = max(candidates["hold"], candidates.get("settle", 0.0))
+
+    # Name the candidate that equals the answer. On a tie the later one wins,
+    # because that is the one still running when the clock expired.
+    name = "none"
+    for key in ("hold", "settle", "readable_at", "next_utterance"):
+        if key in candidates and abs(candidates[key] - deadline) < 1e-6:
+            name = key
+    return (deadline, name, candidates)
 
 
 def _signature(text: str) -> str:

@@ -195,7 +195,46 @@ async def handle(ws, asr: AsrEngine | None) -> None:
         await session.close()
 
 
+def _report_effective_config() -> None:
+    """One line, machine-readable: what this process is actually running with.
+
+    Read by scripts/manifest.py. Every name here is a value the run's behaviour
+    depends on, including the ones that live in the caption window rather than in
+    config.py -- SETTLE_MS in particular, because it is a candidate for the swap
+    deadline and so a latency knob rather than a rendering one.
+    """
+    from . import caption_window, config
+
+    fields = {
+        "partial_interval_ms": config.PARTIAL_INTERVAL_MS,
+        "asr_device": config.ASR_DEVICE,
+        "asr_cpu_threads": config.ASR_CPU_THREADS,
+        "audio_native": os.environ.get("TRANSLATION_AUDIO_NATIVE", "0"),
+        "audio_context_sentences": config.AUDIO_CONTEXT_SENTENCES,
+        "audio_repeat_penalty": config.AUDIO_REPEAT_PENALTY,
+        "audio_chinese_share_min": config.AUDIO_CHINESE_SHARE_MIN,
+        "gemma_min_silence_ms": config.GEMMA_MIN_SILENCE_MS,
+        "gemma_max_utterance_ms": config.GEMMA_MAX_UTTERANCE_MS,
+        "settle_ms": caption_window.SETTLE_MS,
+        "hold_abs_min_ms": caption_window.HOLD_ABS_MIN_MS,
+        "hold_abs_max_ms": caption_window.HOLD_ABS_MAX_MS,
+        "readable_ratio": caption_window.READABLE_RATIO,
+        "pid": os.getpid(),
+    }
+    print("effective.config " + json.dumps(fields, sort_keys=True), flush=True)
+
+
 async def main() -> None:
+    # The thresholds this process is actually running with, printed here rather
+    # than read back by whoever wants to know them.
+    #
+    # Reading them from another process with "from server import config" reports
+    # what the file says, under that reader's environment, not what is running.
+    # That difference is invisible and it is the whole point: an arm that inherited
+    # the previous arm's value, or a threshold injected into one process and not
+    # the other, both look correct from outside and run differently. The manifest
+    # reads this line instead of re-deriving it.
+    _report_effective_config()
     if os.environ.get("TRANSLATION_AUDIO_ONLY") != "1":
         start_caption()
     # Two pipelines, one protocol. With AUDIO_NATIVE=1 the audio goes straight
