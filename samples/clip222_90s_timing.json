@@ -1,0 +1,299 @@
+[
+ {
+  "start": 3.8,
+  "end": 6.62,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.641,
+  "text": "But you have that currently track champagne.",
+  "i": 0
+ },
+ {
+  "start": 7.4,
+  "end": 8.62,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.986,
+  "text": "This is called...",
+  "i": 1
+ },
+ {
+  "start": 8.62,
+  "end": 11.54,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.881,
+  "text": "これは日本語で病風と呼びます。",
+  "i": 2
+ },
+ {
+  "start": 13.22,
+  "end": 14.74,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.947,
+  "text": "日本語が話せますか?",
+  "i": 3
+ },
+ {
+  "start": 20.12,
+  "end": 21.78,
+  "lang": "it",
+  "src": "auto",
+  "p": 0.541,
+  "text": "E io sono mezzo piccoli",
+  "i": 4
+ },
+ {
+  "start": 24.98,
+  "end": 27.68,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.95,
+  "text": "どうして日本語がそんなに上手なのか",
+  "i": 5
+ },
+ {
+  "start": 28.18,
+  "end": 29.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.806,
+  "text": "いやジョースじゃないけど",
+  "i": 6
+ },
+ {
+  "start": 29.32,
+  "end": 31.32,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.756,
+  "text": "You know? Yeah, you're so good.",
+  "i": 7
+ },
+ {
+  "start": 31.32,
+  "end": 33.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.951,
+  "text": "ありがとうございます",
+  "i": 8
+ },
+ {
+  "start": 33.32,
+  "end": 35.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.933,
+  "text": "褒めてくれてありがとうございました",
+  "i": 9
+ },
+ {
+  "start": 35.32,
+  "end": 37.32,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.52,
+  "text": "이거 왜 찾아주었을까?",
+  "i": 10
+ },
+ {
+  "start": 37.32,
+  "end": 39.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.862,
+  "text": "今",
+  "i": 11
+ },
+ {
+  "start": 39.32,
+  "end": 41.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.903,
+  "text": "日本に住んでるから",
+  "i": 12
+ },
+ {
+  "start": 41.32,
+  "end": 44.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.946,
+  "text": "日本に住んでどれぐらいですか",
+  "i": 13
+ },
+ {
+  "start": 44.32,
+  "end": 48.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.617,
+  "text": "日本生活は7年目かな?",
+  "i": 14
+ },
+ {
+  "start": 48.32,
+  "end": 53.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.621,
+  "text": "でも日本に来る前に中国に住んでて漢字を勉強しました",
+  "i": 15
+ },
+ {
+  "start": 53.32,
+  "end": 55.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.964,
+  "text": "中国語も話せるんですか?",
+  "i": 16
+ },
+ {
+  "start": 55.32,
+  "end": 57.32,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.918,
+  "text": "話しますよ",
+  "i": 17
+ },
+ {
+  "start": 57.32,
+  "end": 59.32,
+  "lang": "zh",
+  "src": "auto",
+  "p": 0.957,
+  "text": "中美吗就可以跟我聊一下",
+  "i": 18
+ },
+ {
+  "start": 59.32,
+  "end": 60.32,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.667,
+  "text": "What?",
+  "i": 19
+ },
+ {
+  "start": 60.32,
+  "end": 62.32,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.271,
+  "text": "오시 리필 래 니스",
+  "i": 20
+ },
+ {
+  "start": 62.32,
+  "end": 64.32,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.947,
+  "text": "You're banging. Yeah, leahio.",
+  "i": 21
+ },
+ {
+  "start": 64.32,
+  "end": 69.68,
+  "lang": "zh",
+  "src": "auto",
+  "p": 0.609,
+  "text": "你都听懂了一十月南韩国",
+  "i": 22
+ },
+ {
+  "start": 69.68,
+  "end": 70.68,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.821,
+  "text": "お話しますか",
+  "i": 23
+ },
+ {
+  "start": 70.68,
+  "end": 72.68,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.78,
+  "text": "多分合格国語ぐらい",
+  "i": 24
+ },
+ {
+  "start": 72.68,
+  "end": 77.74,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.629,
+  "text": "Who? Eagle Eagle Eagle Eagle Eagle",
+  "i": 25
+ },
+ {
+  "start": 77.74,
+  "end": 80.74,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.485,
+  "text": "中国語、中国語、日本語であと",
+  "i": 26
+ },
+ {
+  "start": 80.74,
+  "end": 83.74,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.945,
+  "text": "香港語も勉強してます",
+  "i": 27
+ },
+ {
+  "start": 85.74,
+  "end": 86.74,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.909,
+  "text": "out",
+  "i": 28
+ },
+ {
+  "start": 86.74,
+  "end": 88.74,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.908,
+  "text": "한국말도 할 수 있어요.",
+  "i": 29
+ },
+ {
+  "start": 88.74,
+  "end": 98.2,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.974,
+  "text": "대단해요. 왜 이렇게 잘해요? 와... 좋은지 해요.",
+  "i": 30
+ },
+ {
+  "start": 98.2,
+  "end": 103.36,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.627,
+  "text": "笑すごっ!本当に話せるんですよ!本当に話せますよ!",
+  "i": 31
+ },
+ {
+  "start": 103.36,
+  "end": 104.36,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.283,
+  "text": "I'm not going to talk to you.",
+  "i": 32
+ }
+]

@@ -1,827 +1,1262 @@
 [
  {
-  "start": 0.0,
-  "end": 6.76,
-  "text": "Hi, hi, how are you? I'm fine. I'm good. I'm gonna thank you. You play guitar. Yeah, I'm playing a little bit"
+  "start": 0.61,
+  "end": 1.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.956,
+  "text": "Hi, how are you?",
+  "i": 0
  },
  {
-  "start": 6.76,
-  "end": 8.16,
-  "text": "Should I please something? Yeah"
+  "start": 1.61,
+  "end": 2.61,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.502,
+  "text": "Enfin, il y a un gars.",
+  "i": 1
  },
  {
-  "start": 22.08,
-  "end": 27.5,
-  "text": "Hello, hi, how are you? Fine. Thank you. Where you from from Serbia? Oh"
+  "start": 2.61,
+  "end": 3.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.921,
+  "text": "I'm great, thank you.",
+  "i": 2
  },
  {
-  "start": 31.5,
-  "end": 32.16,
-  "text": "What?"
+  "start": 3.61,
+  "end": 4.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.959,
+  "text": "you play guitar?",
+  "i": 3
  },
  {
-  "start": 32.76,
-  "end": 32.96,
-  "text": "What?"
+  "start": 4.61,
+  "end": 5.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.968,
+  "text": "Yeah, I bring",
+  "i": 4
  },
  {
-  "start": 32.96,
-  "end": 33.28,
-  "text": "How are you?"
+  "start": 5.61,
+  "end": 6.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.953,
+  "text": "A little bit.",
+  "i": 5
  },
  {
-  "start": 33.44,
-  "end": 33.84,
-  "text": "What?"
+  "start": 6.61,
+  "end": 7.61,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.48,
+  "text": "Tu aurais pu les sentir ?",
+  "i": 6
  },
  {
-  "start": 37.04,
-  "end": 38.54,
-  "text": "How are you?"
+  "start": 7.61,
+  "end": 8.61,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.992,
+  "text": "Yeah, please.",
+  "i": 7
  },
  {
-  "start": 38.94,
-  "end": 40.2,
-  "text": "I'm good, thank you."
+  "start": 20.86,
+  "end": 23.2,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.657,
+  "text": "Hello. Bye.",
+  "i": 8
  },
  {
-  "start": 42.0,
-  "end": 43.88,
-  "text": "How do you know Serbian?"
+  "start": 23.7,
+  "end": 24.7,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.989,
+  "text": "Fine, thanks.",
+  "i": 9
  },
  {
-  "start": 44.36,
-  "end": 46.06,
-  "text": "I speak Serbian very little."
+  "start": 24.7,
+  "end": 25.7,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.905,
+  "text": "Where you from?",
+  "i": 10
  },
  {
-  "start": 46.48,
+  "start": 25.7,
+  "end": 26.7,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.963,
+  "text": "From Serbia.",
+  "i": 11
+ },
+ {
+  "start": 26.7,
+  "end": 28.2,
+  "lang": "ru",
+  "src": "auto",
+  "p": 0.337,
+  "text": "А, здраво.",
+  "i": 12
+ },
+ {
+  "start": 28.2,
+  "end": 33.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.865,
+  "text": "Huh? No! What?",
+  "i": 13
+ },
+ {
+  "start": 33.17,
+  "end": 34.17,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.855,
+  "text": "NANI ?",
+  "i": 14
+ },
+ {
+  "start": 34.17,
+  "end": 38.76,
+  "lang": "hr",
+  "src": "auto",
+  "p": 0.533,
+  "text": "Dobro, kako si ti?",
+  "i": 15
+ },
+ {
+  "start": 38.76,
+  "end": 40.76,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.237,
+  "text": "Good job.",
+  "i": 16
+ },
+ {
+  "start": 41.76,
+  "end": 43.76,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.756,
+  "text": "How do you know who's sir?",
+  "i": 17
+ },
+ {
+  "start": 43.76,
+  "end": 45.76,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.16,
+  "text": "うちむセブツキーさん",
+  "i": 18
+ },
+ {
+  "start": 45.76,
   "end": 46.76,
-  "text": "What?"
+  "lang": "en",
+  "src": "auto",
+  "p": 0.499,
+  "text": "model",
+  "i": 19
  },
  {
-  "start": 47.66,
-  "end": 48.02,
-  "text": "Why?"
+  "start": 46.76,
+  "end": 48.76,
+  "lang": "pt",
+  "src": "auto",
+  "p": 0.954,
+  "text": "Vai!",
+  "i": 20
  },
  {
-  "start": 48.46,
-  "end": 48.7,
-  "text": "Why?"
- },
- {
-  "start": 49.26,
+  "start": 48.76,
   "end": 51.76,
-  "text": "Because I love Serbia."
+  "lang": "hr",
+  "src": "auto",
+  "p": 0.597,
+  "text": "Zato što volim Selviju.",
+  "i": 21
  },
  {
-  "start": 52.8,
-  "end": 53.46,
-  "text": "What?"
+  "start": 54.97,
+  "end": 60.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.638,
+  "text": "bro come to serbia yeah i will come to belgrade",
+  "i": 22
  },
  {
-  "start": 55.84,
-  "end": 56.82,
-  "text": "How do you know Serbia?"
+  "start": 60.33,
+  "end": 62.33,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.34,
+  "text": "Péogrado. Ah, j'ai vu je péogrado.",
+  "i": 23
  },
  {
-  "start": 57.08,
-  "end": 58.08,
-  "text": "Yeah, yeah, I know."
+  "start": 62.33,
+  "end": 64.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.95,
+  "text": "Yes, we can hang out.",
+  "i": 24
  },
  {
-  "start": 58.08,
-  "end": 58.84,
-  "text": "So I will..."
+  "start": 64.33,
+  "end": 66.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.984,
+  "text": "get her oh yeah sure",
+  "i": 25
  },
  {
-  "start": 58.84,
-  "end": 59.78,
-  "text": "Come to Belgrade!"
+  "start": 66.33,
+  "end": 67.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.677,
+  "text": "Hello?",
+  "i": 26
  },
  {
-  "start": 60.32,
-  "end": 61.68,
-  "text": "Belgrade? Ah, GB's Belgrade."
+  "start": 67.33,
+  "end": 68.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.96,
+  "text": "Hi. Hi, how are you?",
+  "i": 27
  },
  {
-  "start": 62.08,
-  "end": 64.54,
-  "text": "Yes, so we can hang out together."
+  "start": 68.33,
+  "end": 69.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.919,
+  "text": "I'm fine.",
+  "i": 28
  },
  {
-  "start": 65.22,
-  "end": 66.04,
-  "text": "Oh yeah, sure."
+  "start": 69.33,
+  "end": 71.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.791,
+  "text": "I'm great, thank you. You play guitar?",
+  "i": 29
  },
  {
-  "start": 66.6,
-  "end": 67.02,
-  "text": "Hello?"
+  "start": 71.33,
+  "end": 73.33,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.94,
+  "text": "Yeah, I'm praying it up",
+  "i": 30
  },
  {
-  "start": 67.28,
-  "end": 67.58,
-  "text": "Hi!"
+  "start": 73.33,
+  "end": 74.53,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.606,
+  "text": "Should I play something?",
+  "i": 31
  },
  {
-  "start": 67.84,
-  "end": 68.36,
-  "text": "Hi, how are you?"
+  "start": 74.53,
+  "end": 75.65,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.988,
+  "text": "Yeah, please.",
+  "i": 32
  },
  {
-  "start": 68.7,
-  "end": 69.36,
-  "text": "I'm fine, I'm good."
+  "start": 98.16,
+  "end": 99.32,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.898,
+  "text": "Thank you, thank you, thank you, thank you.",
+  "i": 33
  },
  {
-  "start": 69.74,
-  "end": 70.48,
-  "text": "I'm great, thank you."
+  "start": 100.76,
+  "end": 101.82,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.734,
+  "text": "Mais, enfin, j'aime.",
+  "i": 34
  },
  {
-  "start": 70.64,
-  "end": 71.26,
-  "text": "You play guitar?"
+  "start": 103.86,
+  "end": 104.86,
+  "lang": "de",
+  "src": "auto",
+  "p": 0.96,
+  "text": "Das war sehr gut.",
+  "i": 35
  },
  {
-  "start": 71.82,
-  "end": 73.62,
-  "text": "Yeah, I play guitar a little bit."
+  "start": 106.08,
+  "end": 107.78,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.973,
+  "text": "Oh, you speak German?",
+  "i": 36
  },
  {
-  "start": 73.78,
-  "end": 74.42,
-  "text": "Shall I play something?"
- },
- {
-  "start": 74.74,
-  "end": 75.56,
-  "text": "Yeah, please."
- },
- {
-  "start": 88.08,
-  "end": 92.28,
-  "text": "I don't know how to play the bass, even if it's me"
- },
- {
-  "start": 96.18,
-  "end": 96.78,
-  "text": "Nice"
- },
- {
-  "start": 96.78,
-  "end": 99.38,
-  "text": "Oh, thank you, thank you, thank you, thank you"
- },
- {
-  "start": 99.38,
-  "end": 100.48,
-  "text": "Where from?"
- },
- {
-  "start": 100.8,
-  "end": 101.86,
-  "text": "Me? I'm from Germany"
- },
- {
-  "start": 101.86,
-  "end": 102.4,
-  "text": "Ah, Germany?"
- },
- {
-  "start": 102.8,
-  "end": 105.24,
-  "text": "That's a good sign, that's very good"
- },
- {
-  "start": 105.24,
-  "end": 105.72,
-  "text": "Huh?"
- },
- {
-  "start": 106.2,
-  "end": 107.72,
-  "text": "Oh, you speak German?"
- },
- {
-  "start": 108.08,
-  "end": 108.74,
-  "text": "I speak German"
- },
- {
-  "start": 108.74,
+  "start": 110.36,
   "end": 111.74,
-  "text": "Oh wait, do you speak Spanish too?"
+  "lang": "en",
+  "src": "auto",
+  "p": 0.884,
+  "text": "Oh, wait, this speaks Spanish, too?",
+  "i": 37
  },
  {
   "start": 112.14,
-  "end": 114.42,
-  "text": "Ah, shit, here we go again"
+  "end": 114.44,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.995,
+  "text": "Ah, shit. Here we go again.",
+  "i": 38
  },
  {
-  "start": 114.42,
-  "end": 116.02,
-  "text": "I'm from Germany too"
+  "start": 120.57,
+  "end": 121.85,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.948,
+  "text": "Espera, ¿habras español?",
+  "i": 39
  },
  {
-  "start": 116.02,
-  "end": 116.56,
-  "text": "Nani?"
+  "start": 122.33,
+  "end": 124.07,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.629,
+  "text": "Habla de Faneu. ¿Por qué habla de Faneu?",
+  "i": 40
  },
  {
-  "start": 118.08,
-  "end": 118.26,
-  "text": "Hahaha!"
+  "start": 124.57,
+  "end": 126.39,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.988,
+  "text": "Yo porque aprendí de escuela.",
+  "i": 41
  },
  {
-  "start": 120.08,
-  "end": 121.88,
-  "text": "Wait, do you speak Spanish?"
+  "start": 126.85,
+  "end": 128.51,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.208,
+  "text": "Ah si ? Mais tu as n'êtes pas perfect.",
+  "i": 42
  },
  {
-  "start": 122.4,
-  "end": 124.06,
-  "text": "I don't speak Spanish. Why do you speak Spanish?"
+  "start": 139.36,
+  "end": 141.26,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.875,
+  "text": "How many things to speak?",
+  "i": 43
  },
  {
-  "start": 124.46,
-  "end": 126.32,
-  "text": "I... I... I learned from school."
+  "start": 142.12,
+  "end": 145.64,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.674,
+  "text": "O sea, español, inglés, alemán, francés, ruso.",
+  "i": 44
  },
  {
-  "start": 126.78,
-  "end": 128.42,
-  "text": "Really? But your accent is perfect."
+  "start": 145.64,
+  "end": 147.64,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.815,
+  "text": "¿Dónde la...? ¿Dónde...?",
+  "i": 45
  },
  {
-  "start": 134.3,
-  "end": 136.06,
-  "text": "Oh my God!"
+  "start": 147.64,
+  "end": 149.64,
+  "lang": "pt",
+  "src": "auto",
+  "p": 0.754,
+  "text": "Donde eu aprendi, eu não queria rar",
+  "i": 46
  },
  {
-  "start": 138.82,
-  "end": 141.1,
-  "text": "How many languages do you speak?"
+  "start": 149.64,
+  "end": 151.64,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.479,
+  "text": "Japón, tengo que ir a Japón. Sí, güey.",
+  "i": 47
  },
  {
-  "start": 141.86,
-  "end": 145.98,
-  "text": "Spanish, English, German, French, English..."
+  "start": 151.64,
+  "end": 153.64,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.604,
+  "text": "Solo?",
+  "i": 48
  },
  {
-  "start": 145.98,
-  "end": 148.44,
-  "text": "Where did you learn it?"
+  "start": 153.64,
+  "end": 155.64,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.56,
+  "text": "in the school",
+  "i": 49
  },
  {
-  "start": 148.74,
-  "end": 149.84,
-  "text": "I have to go to Japan."
+  "start": 155.64,
+  "end": 159.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.455,
+  "text": "Sí, es que ya",
+  "i": 50
  },
  {
-  "start": 150.98,
-  "end": 151.32,
-  "text": "Yes."
+  "start": 159.4,
+  "end": 161.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.458,
+  "text": "y bros y todo eso",
+  "i": 51
  },
  {
-  "start": 151.8,
-  "end": 152.4,
-  "text": "Alone?"
+  "start": 161.4,
+  "end": 163.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.752,
+  "text": "Respect. Respect. I give you...",
+  "i": 52
  },
  {
-  "start": 153.16,
-  "end": 153.5,
-  "text": "Alone."
+  "start": 163.4,
+  "end": 165.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.675,
+  "text": "No, pero tú eres español.",
+  "i": 53
  },
  {
-  "start": 154.26,
-  "end": 155.48,
-  "text": "Without school?"
+  "start": 165.4,
+  "end": 167.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.764,
+  "text": "Perfecto, hablas como hispanaba antes",
+  "i": 54
  },
  {
-  "start": 155.92,
-  "end": 156.56,
-  "text": "Without school."
+  "start": 167.4,
+  "end": 169.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.997,
+  "text": "Gracias, yo aprendí",
+  "i": 55
  },
  {
-  "start": 158.64,
-  "end": 160.68,
-  "text": "With books and all that."
- },
- {
-  "start": 161.32,
-  "end": 161.62,
-  "text": "Respect."
- },
- {
-  "start": 162.26,
-  "end": 163.68,
-  "text": "Respect. I give you my cap."
- },
- {
-  "start": 164.04,
-  "end": 164.24,
-  "text": "Respect."
- },
- {
-  "start": 164.38,
-  "end": 165.82,
-  "text": "Your Spanish is perfect."
- },
- {
-  "start": 166.16,
-  "end": 167.3,
-  "text": "You speak Spanish before."
- },
- {
-  "start": 167.6,
-  "end": 168.38,
-  "text": "Thank you."
- },
- {
-  "start": 168.58,
-  "end": 170.2,
-  "text": "I learned. I learned school."
- },
- {
-  "start": 170.8,
+  "start": 169.4,
   "end": 171.4,
-  "text": "Wow."
+  "lang": "es",
+  "src": "auto",
+  "p": 0.968,
+  "text": "y yo aprendí la escuela por eso. ¡Wow!",
+  "i": 56
  },
  {
-  "start": 171.72,
-  "end": 172.3,
-  "text": "For how long?"
+  "start": 171.4,
+  "end": 173.4,
+  "lang": "es",
+  "src": "auto",
+  "p": 0.378,
+  "text": "¿Por cuánto tiempo?",
+  "i": 57
  },
  {
-  "start": 172.88,
-  "end": 173.9,
-  "text": "Do you have Instagram?"
+  "start": 173.4,
+  "end": 175.4,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.32,
+  "text": "신우스 인스타그램? 네, 네.",
+  "i": 58
  },
  {
-  "start": 174.4,
-  "end": 174.9,
-  "text": "Yes, yes."
+  "start": 175.4,
+  "end": 177.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.35,
+  "text": "Three years? Three years.",
+  "i": 59
  },
  {
-  "start": 174.9,
-  "end": 176.3,
-  "text": "3 years?"
+  "start": 177.4,
+  "end": 179.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.251,
+  "text": "I've been here for the first time.",
+  "i": 60
  },
  {
-  "start": 176.5,
-  "end": 179.16,
-  "text": "3 years! I learned a lot of things"
+  "start": 179.4,
+  "end": 182.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.932,
+  "text": "Now I have a friend from Japan.",
+  "i": 61
  },
  {
-  "start": 179.16,
-  "end": 182.04,
-  "text": "Now I have a friend from Japan"
+  "start": 182.4,
+  "end": 184.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.927,
+  "text": "Yeah. Let's go.",
+  "i": 62
  },
  {
-  "start": 183.0,
-  "end": 184.04,
-  "text": "Let's go!"
- },
- {
-  "start": 185.68,
+  "start": 184.4,
   "end": 186.4,
-  "text": "Where are you from?"
- },
- {
-  "start": 186.96,
-  "end": 187.76,
-  "text": "Germany"
- },
- {
-  "start": 188.9,
-  "end": 189.06,
-  "text": "Poland"
- },
- {
-  "start": 190.9,
-  "end": 193.56,
-  "text": "Oh, nice city"
- },
- {
-  "start": 193.56,
-  "end": 195.12,
-  "text": "You speak Russian?"
- },
- {
-  "start": 196.16,
-  "end": 196.78,
-  "text": "Russia"
- },
- {
-  "start": 196.78,
-  "end": 197.62,
-  "text": "Russia?"
- },
- {
-  "start": 197.98,
-  "end": 198.78,
-  "text": "Russia"
- },
- {
-  "start": 205.7,
-  "end": 208.58,
-  "text": "Yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah, yeah"
- },
- {
-  "start": 208.58,
-  "end": 210.1,
-  "text": "You have to make it or something about that."
- },
- {
-  "start": 210.56,
-  "end": 211.42,
-  "text": "Actually I do."
- },
- {
-  "start": 212.08,
-  "end": 212.78,
-  "text": "You do?"
- },
- {
-  "start": 213.1,
-  "end": 214.46,
-  "text": "Yeah, I do YouTube stuff."
- },
- {
-  "start": 214.46,
-  "end": 215.06,
-  "text": "Yeah, what?"
- },
- {
-  "start": 216.22,
-  "end": 217.0,
-  "text": "Cancel language?"
- },
- {
-  "start": 218.28,
-  "end": 218.58,
-  "text": "Wow!"
- },
- {
-  "start": 219.62,
-  "end": 220.04,
-  "text": "Damn!"
- },
- {
-  "start": 220.64,
-  "end": 221.44,
-  "text": "I see."
- },
- {
-  "start": 222.88,
-  "end": 225.16,
-  "text": "Are you filming now?"
- },
- {
-  "start": 225.52,
-  "end": 226.3,
-  "text": "Yeah, I'm filming."
- },
- {
-  "start": 226.36,
-  "end": 226.46,
-  "text": "How?"
- },
- {
-  "start": 230.02,
-  "end": 230.54,
-  "text": "Yo!"
- },
- {
-  "start": 231.24,
-  "end": 231.64,
-  "text": "Camera."
- },
- {
-  "start": 232.2,
-  "end": 233.78,
-  "text": "So people, wait, wait, wait, wait."
- },
- {
-  "start": 234.22,
-  "end": 236.14,
-  "text": "So people, hi, it's me, I'm going."
- },
- {
-  "start": 236.14,
-  "end": 240.34,
-  "text": "Check my Spotify, Koikizer, you know."
- },
- {
-  "start": 240.64,
-  "end": 240.82,
-  "text": "Alright."
- },
- {
-  "start": 240.94,
-  "end": 242.22,
-  "text": "Yeah, I'm gonna check it."
- },
- {
-  "start": 242.22,
-  "end": 242.34,
-  "text": "You know."
- },
- {
-  "start": 243.32,
-  "end": 243.96,
-  "text": "Yes."
- },
- {
-  "start": 244.34,
-  "end": 245.6,
-  "text": "Okay, let's go."
- },
- {
-  "start": 245.94,
-  "end": 246.7,
-  "text": "Let's go."
- },
- {
-  "start": 247.42,
-  "end": 249.2,
-  "text": "Do you speak Arabic too?"
- },
- {
-  "start": 249.64,
-  "end": 250.6,
-  "text": "I do."
- },
- {
-  "start": 250.98,
-  "end": 251.58,
-  "text": "Do you speak Arabic?"
- },
- {
-  "start": 252.22,
-  "end": 252.58,
-  "text": "What?"
- },
- {
-  "start": 253.04,
-  "end": 254.98,
-  "text": "Okay, say something in Arabic."
- },
- {
-  "start": 255.5,
-  "end": 256.36,
-  "text": "Assalamu alaikum."
- },
- {
-  "start": 256.58,
-  "end": 258.1,
-  "text": "I'm learning Arabic."
- },
- {
-  "start": 263.28,
-  "end": 264.9,
-  "text": "Oh my God."
- },
- {
-  "start": 264.9,
-  "end": 266.26,
-  "text": "What is your name?"
- },
- {
-  "start": 268.04,
-  "end": 268.46,
-  "text": "My name is Kazuma"
- },
- {
-  "start": 268.46,
-  "end": 270.9,
-  "text": "What is your name?"
- },
- {
-  "start": 271.88,
-  "end": 274.88,
-  "text": "I think I see everything in my life"
- },
- {
-  "start": 274.88,
-  "end": 277.0,
-  "text": "I think I see everything"
- },
- {
-  "start": 277.0,
-  "end": 278.9,
-  "text": "Wow, bless you"
- },
- {
-  "start": 279.48,
-  "end": 281.86,
-  "text": "Everybody got a little bit"
- },
- {
-  "start": 281.86,
-  "end": 282.94,
-  "text": "But a little bit"
- },
- {
-  "start": 282.94,
-  "end": 286.9,
-  "text": "I speak English, German, Spanish, Arabic"
- },
- {
-  "start": 287.46,
-  "end": 289.34,
-  "text": "But I think I see a little bit"
- },
- {
-  "start": 289.34,
-  "end": 290.16,
-  "text": "Oh my God"
- },
- {
-  "start": 290.9,
-  "end": 291.74,
-  "text": "That's so cool"
- },
- {
-  "start": 295.78,
-  "end": 296.42,
-  "text": "Hello."
- },
- {
-  "start": 296.9,
-  "end": 297.44,
-  "text": "Hello."
- },
- {
-  "start": 297.9,
-  "end": 298.34,
-  "text": "How are you?"
- },
- {
-  "start": 298.66,
-  "end": 300.22,
-  "text": "I'm fine. How are you?"
- },
- {
-  "start": 300.48,
-  "end": 301.86,
-  "text": "I'm great. Thank you. Where from?"
- },
- {
-  "start": 302.3,
-  "end": 304.56,
-  "text": "I'm from... I'm Russian, Jindis."
- },
- {
-  "start": 305.06,
-  "end": 306.42,
-  "text": "Oh, you're from Japan?"
- },
- {
-  "start": 307.54,
-  "end": 308.18,
-  "text": "I'm from Kyoto."
- },
- {
-  "start": 308.82,
-  "end": 310.28,
-  "text": "Oh, wow."
- },
- {
-  "start": 310.72,
-  "end": 311.86,
-  "text": "Wow, hi."
- },
- {
-  "start": 312.3,
-  "end": 315.32,
-  "text": "Where in Russia are you from?"
- },
- {
-  "start": 315.86,
-  "end": 318.3,
-  "text": "Where in Russia are you from?"
- },
- {
-  "start": 318.42,
-  "end": 318.64,
-  "text": "Like..."
- },
- {
-  "start": 318.64,
-  "end": 319.98,
-  "text": "Like, place in Russia?"
- },
- {
-  "start": 320.38,
-  "end": 320.68,
-  "text": "Yeah."
- },
- {
-  "start": 321.08,
-  "end": 323.9,
-  "text": "You don't know his..."
- },
- {
-  "start": 323.9,
-  "end": 328.66,
-  "text": "I know that you just know Moscow, maybe Saint Petersburg as well, right?"
- },
- {
-  "start": 328.86,
-  "end": 331.84,
-  "text": "Echaterinburg, Kazan, Russian, so..."
- },
- {
-  "start": 331.84,
-  "end": 333.26,
-  "text": "You know a lot of..."
- },
- {
-  "start": 333.26,
-  "end": 334.58,
-  "text": "But you don't know."
- },
- {
-  "start": 335.0,
-  "end": 337.16,
-  "text": "I live in Krasnodar."
- },
- {
-  "start": 337.82,
-  "end": 338.38,
-  "text": "Krasnodar."
- },
- {
-  "start": 338.84,
-  "end": 339.12,
-  "text": "Right."
- },
- {
-  "start": 339.46,
-  "end": 340.22,
-  "text": "I know, I know."
- },
- {
-  "start": 340.6,
-  "end": 341.32,
-  "text": "You know it?"
- },
- {
-  "start": 341.56,
-  "end": 342.86,
-  "text": "There are a lot of Armenians."
- },
- {
-  "start": 343.56,
-  "end": 344.12,
-  "text": "Armenians?"
- },
- {
-  "start": 344.7,
-  "end": 345.6,
-  "text": "Yeah, like..."
- },
- {
-  "start": 345.6,
-  "end": 345.86,
-  "text": "Right."
- },
- {
-  "start": 346.6,
-  "end": 347.28,
-  "text": "I know, I know."
- },
- {
-  "start": 347.42,
-  "end": 348.86,
-  "text": "I love geography, so..."
- },
- {
-  "start": 348.86,
-  "end": 350.58,
-  "text": "Oh, that's cool."
- },
- {
-  "start": 350.94,
-  "end": 352.58,
-  "text": "How long have you been learning Japanese?"
- },
- {
-  "start": 352.58,
-  "end": 354.22,
-  "text": "For one year."
- },
- {
-  "start": 354.7,
-  "end": 356.18,
-  "text": "Oh cool."
- },
- {
-  "start": 356.78,
-  "end": 359.2,
-  "text": "I forgot a lot of boards."
+  "lang": "en",
+  "src": "auto",
+  "p": 0.694,
+  "text": "Let's go.",
+  "i": 63
+ },
+ {
+  "start": 186.4,
+  "end": 188.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.855,
+  "text": "in Germany",
+  "i": 64
+ },
+ {
+  "start": 188.4,
+  "end": 189.4,
+  "lang": "de",
+  "src": "auto",
+  "p": 0.769,
+  "text": "Welche Stadt?",
+  "i": 65
+ },
+ {
+  "start": 189.4,
+  "end": 191.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.745,
+  "text": "Kyn Kyn, yeah, yeah You know",
+  "i": 66
+ },
+ {
+  "start": 191.4,
+  "end": 193.4,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.53,
+  "text": "おーしゅうなした",
+  "i": 67
+ },
+ {
+  "start": 193.4,
+  "end": 195.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.795,
+  "text": "You speak to Rushdin?",
+  "i": 68
+ },
+ {
+  "start": 195.4,
+  "end": 197.4,
+  "lang": "de",
+  "src": "auto",
+  "p": 0.863,
+  "text": "Russland? Russland.",
+  "i": 69
+ },
+ {
+  "start": 197.4,
+  "end": 198.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.385,
+  "text": "We'll see you.",
+  "i": 70
+ },
+ {
+  "start": 198.4,
+  "end": 199.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.667,
+  "text": "Yeah, Russia. Yeah, yeah, yeah.",
+  "i": 71
+ },
+ {
+  "start": 199.4,
+  "end": 200.4,
+  "lang": "de",
+  "src": "auto",
+  "p": 0.833,
+  "text": "Ja, Prost.",
+  "i": 72
+ },
+ {
+  "start": 200.4,
+  "end": 201.4,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.624,
+  "text": "What's his show?",
+  "i": 73
+ },
+ {
+  "start": 201.4,
+  "end": 204.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.623,
+  "text": "I feel so old, who's this?",
+  "i": 74
+ },
+ {
+  "start": 204.93,
+  "end": 206.93,
+  "lang": "de",
+  "src": "auto",
+  "p": 0.805,
+  "text": "Alles ist alles Russisch? Aha.",
+  "i": 75
+ },
+ {
+  "start": 206.93,
+  "end": 208.93,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.408,
+  "text": "あ、俺はそのタンピン",
+  "i": 76
+ },
+ {
+  "start": 208.93,
+  "end": 210.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.966,
+  "text": "to make details about that.",
+  "i": 77
+ },
+ {
+  "start": 210.93,
+  "end": 212.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.849,
+  "text": "Yeah, dude. You do?",
+  "i": 78
+ },
+ {
+  "start": 212.93,
+  "end": 214.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.797,
+  "text": "Yeah, I do YouTube. Yeah.",
+  "i": 79
+ },
+ {
+  "start": 214.93,
+  "end": 216.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.972,
+  "text": "What? Castle Lang.",
+  "i": 80
+ },
+ {
+  "start": 216.93,
+  "end": 218.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.987,
+  "text": "You wish? Mm-hmm. Wow!",
+  "i": 81
+ },
+ {
+  "start": 218.93,
+  "end": 220.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.969,
+  "text": "Ew.",
+  "i": 82
+ },
+ {
+  "start": 220.93,
+  "end": 222.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.952,
+  "text": "I see. Yeah.",
+  "i": 83
+ },
+ {
+  "start": 222.93,
+  "end": 224.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.954,
+  "text": "Are you feeling...",
+  "i": 84
+ },
+ {
+  "start": 224.93,
+  "end": 226.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.964,
+  "text": "Yeah, I'm here. Out?",
+  "i": 85
+ },
+ {
+  "start": 226.93,
+  "end": 234.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.91,
+  "text": "Yo So people Wait wait wait",
+  "i": 86
+ },
+ {
+  "start": 234.21,
+  "end": 236.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.974,
+  "text": "So people, hi, it's me, I'm Goy.",
+  "i": 87
+ },
+ {
+  "start": 236.21,
+  "end": 238.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 1.0,
+  "text": "my um my",
+  "i": 88
+ },
+ {
+  "start": 238.21,
+  "end": 240.37,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.856,
+  "text": "Spotify, Goe Kaiser, you know.",
+  "i": 89
+ },
+ {
+  "start": 241.41,
+  "end": 242.47,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.998,
+  "text": "Yeah, I'm going to shoot.",
+  "i": 90
+ },
+ {
+  "start": 244.69,
+  "end": 245.69,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.99,
+  "text": "Okay, let's go.",
+  "i": 91
+ },
+ {
+  "start": 247.89,
+  "end": 249.23,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.492,
+  "text": "Do you speak Arabic too?",
+  "i": 92
+ },
+ {
+  "start": 249.61,
+  "end": 250.63,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.938,
+  "text": "Mm-hmm, I do.",
+  "i": 93
+ },
+ {
+  "start": 253.03,
+  "end": 255.09,
+  "lang": "fr",
+  "src": "auto",
+  "p": 0.371,
+  "text": "OK, c'est ce qui continue à arriver.",
+  "i": 94
+ },
+ {
+  "start": 255.49,
+  "end": 258.13,
+  "lang": "ar",
+  "src": "auto",
+  "p": 0.563,
+  "text": "السلام عليكم",
+  "i": 95
+ },
+ {
+  "start": 259.07,
+  "end": 265.0,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.97,
+  "text": "Oh my god",
+  "i": 96
+ },
+ {
+  "start": 270.72,
+  "end": 274.87,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.976,
+  "text": "Okay, I think I see everything in my life",
+  "i": 97
+ },
+ {
+  "start": 274.93,
+  "end": 277.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.959,
+  "text": "I see everything. Wow.",
+  "i": 98
+ },
+ {
+  "start": 277.93,
+  "end": 278.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.958,
+  "text": "But yes, we got it.",
+  "i": 99
+ },
+ {
+  "start": 278.93,
+  "end": 279.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.995,
+  "text": "bless you",
+  "i": 100
+ },
+ {
+  "start": 279.93,
+  "end": 282.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.83,
+  "text": "Everybody got a little bit, but a little bit.",
+  "i": 101
+ },
+ {
+  "start": 282.93,
+  "end": 288.93,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.884,
+  "text": "I speak English, Germany, Spanish, Arabic, but...",
+  "i": 102
+ },
+ {
+  "start": 288.93,
+  "end": 291.93,
+  "lang": "tr",
+  "src": "auto",
+  "p": 0.415,
+  "text": "Maşallah Ta sokuu",
+  "i": 103
+ },
+ {
+  "start": 295.49,
+  "end": 296.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.626,
+  "text": "Hello?",
+  "i": 104
+ },
+ {
+  "start": 296.49,
+  "end": 297.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.91,
+  "text": "Hello.",
+  "i": 105
+ },
+ {
+  "start": 297.49,
+  "end": 298.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.596,
+  "text": "Are you?",
+  "i": 106
+ },
+ {
+  "start": 298.49,
+  "end": 300.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.961,
+  "text": "I'm fine. How are you?",
+  "i": 107
+ },
+ {
+  "start": 300.49,
+  "end": 302.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.875,
+  "text": "Great, thank you. Where are you from?",
+  "i": 108
+ },
+ {
+  "start": 302.49,
+  "end": 304.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.976,
+  "text": "I'm from, I'm Rasha Jindas.",
+  "i": 109
+ },
+ {
+  "start": 304.49,
+  "end": 306.49,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.472,
+  "text": "あ、あ、ゆずみジャパニー",
+  "i": 110
+ },
+ {
+  "start": 307.49,
+  "end": 308.49,
+  "lang": "pt",
+  "src": "auto",
+  "p": 0.191,
+  "text": "Tchau, tchau.",
+  "i": 111
+ },
+ {
+  "start": 308.49,
+  "end": 310.49,
+  "lang": "ko",
+  "src": "auto",
+  "p": 0.716,
+  "text": "오오오오",
+  "i": 112
+ },
+ {
+  "start": 310.49,
+  "end": 311.49,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.84,
+  "text": "すごい",
+  "i": 113
+ },
+ {
+  "start": 311.49,
+  "end": 315.49,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.654,
+  "text": "はい、そうです。",
+  "i": 114
+ },
+ {
+  "start": 315.49,
+  "end": 318.49,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.899,
+  "text": "ロシアのどこ",
+  "i": 115
+ },
+ {
+  "start": 318.49,
+  "end": 320.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.64,
+  "text": "Like, place in Russia?",
+  "i": 116
+ },
+ {
+  "start": 320.49,
+  "end": 321.49,
+  "lang": "pt",
+  "src": "auto",
+  "p": 0.4,
+  "text": "um",
+  "i": 117
+ },
+ {
+  "start": 321.49,
+  "end": 322.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.964,
+  "text": "You don't know.",
+  "i": 118
+ },
+ {
+  "start": 322.49,
+  "end": 323.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.977,
+  "text": "Peace.",
+  "i": 119
+ },
+ {
+  "start": 323.49,
+  "end": 328.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.867,
+  "text": "I know that you just know Moscow, maybe St. Petersburg, asshole.",
+  "i": 120
+ },
+ {
+  "start": 328.49,
+  "end": 331.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.834,
+  "text": "It's a dream blue Kazan Oh, you're so cool",
+  "i": 121
+ },
+ {
+  "start": 331.49,
+  "end": 334.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.895,
+  "text": "You know a lot of... But you don't know.",
+  "i": 122
+ },
+ {
+  "start": 334.49,
+  "end": 337.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.839,
+  "text": "I live in Hooray Sonunda",
+  "i": 123
+ },
+ {
+  "start": 337.17,
+  "end": 338.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.959,
+  "text": "I don't know.",
+  "i": 124
+ },
+ {
+  "start": 338.17,
+  "end": 339.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.983,
+  "text": "Right.",
+  "i": 125
+ },
+ {
+  "start": 339.17,
+  "end": 340.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.866,
+  "text": "I know, I know.",
+  "i": 126
+ },
+ {
+  "start": 340.17,
+  "end": 341.17,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.903,
+  "text": "You know?",
+  "i": 127
+ },
+ {
+  "start": 341.17,
+  "end": 342.73,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.96,
+  "text": "There are a lot of menus.",
+  "i": 128
+ },
+ {
+  "start": 342.73,
+  "end": 343.73,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.994,
+  "text": "I mean...",
+  "i": 129
+ },
+ {
+  "start": 343.73,
+  "end": 344.73,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.979,
+  "text": "Indians.",
+  "i": 130
+ },
+ {
+  "start": 344.73,
+  "end": 345.73,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.99,
+  "text": "Yeah.",
+  "i": 131
+ },
+ {
+  "start": 345.73,
+  "end": 346.73,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.988,
+  "text": "Bye. Bye.",
+  "i": 132
+ },
+ {
+  "start": 346.73,
+  "end": 348.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.954,
+  "text": "I know, I know. I love you, Ravisa.",
+  "i": 133
+ },
+ {
+  "start": 348.49,
+  "end": 350.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.98,
+  "text": "Oh, that's cool.",
+  "i": 134
+ },
+ {
+  "start": 350.49,
+  "end": 352.49,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.974,
+  "text": "How long have you been learning, Jeff?",
+  "i": 135
+ },
+ {
+  "start": 352.49,
+  "end": 354.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.975,
+  "text": "For one year.",
+  "i": 136
+ },
+ {
+  "start": 354.21,
+  "end": 356.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.99,
+  "text": "Oh, cool.",
+  "i": 137
+ },
+ {
+  "start": 356.21,
+  "end": 359.21,
+  "lang": "en",
+  "src": "auto",
+  "p": 0.927,
+  "text": "I forget a lot of words.",
+  "i": 138
+ },
+ {
+  "start": 359.21,
+  "end": 361.21,
+  "lang": "ja",
+  "src": "auto",
+  "p": 0.29,
+  "text": "のTGを打ち話しようか",
+  "i": 139
  }
 ]
