@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scripts.probe_silence import _resolve  # noqa: E402
 
@@ -164,7 +165,30 @@ def measure(name: str, sentences: list[dict]) -> dict:
     }
 
 
+def _manifest_passes(name: str) -> bool:
+    """Whether this arm has a manifest and the manifest does not fail.
+
+    Read back rather than recomputed, so the check costs the same whether or not
+    the run is still fresh, and so a manifest written at the time of the run --
+    when the live process was still up -- keeps its value afterwards.
+    """
+    path = ROOT / "logs" / f"run.{name}.manifest"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if "_failed" in data:
+        return False
+    from manifest import judge  # local import: keeps this script standalone
+
+    return not [c for c in judge(data) if not c[1]]
+
+
 def main(argv: list[str]) -> int:
+    allow_unmanifested = "--allow-unmanifested" in argv
+    argv = [a for a in argv if a != "--allow-unmanifested"]
     groups = []
     for spec in argv:
         label, _, names = spec.partition("=")
@@ -183,6 +207,20 @@ def main(argv: list[str]) -> int:
         }
         missed = seen = never = 0
         for name in runs:
+            # An arm without a passing manifest is not pooled.
+            #
+            # This is the sixth instance of one shape, and the first one a summary
+            # script could have caught on its own: twelve cells labelled "MTP on"
+            # were pooled as a clean 2x2 while every one of them ran with MTP off,
+            # because nothing checked what the arm actually was. The name is a
+            # label. Only the manifest is evidence.
+            #
+            # --allow-unmanifested exists because some historical runs predate the
+            # manifest and are still worth reading, but it has to be asked for
+            # explicitly, so nobody gets it by forgetting.
+            if not _manifest_passes(name) and not allow_unmanifested:
+                print(f"  {name}: no passing manifest, skipped (see scripts/manifest.py)")
+                continue
             try:
                 got = measure(name, sentences)
             except SystemExit as exc:
