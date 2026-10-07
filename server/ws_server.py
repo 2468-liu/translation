@@ -221,7 +221,14 @@ def _report_effective_config() -> None:
         "readable_ratio": caption_window.READABLE_RATIO,
         "pid": os.getpid(),
     }
-    print("effective.config " + json.dumps(fields, sort_keys=True), flush=True)
+    line = "effective.config " + json.dumps(fields, sort_keys=True)
+    print(line, flush=True)
+    # Also into the perf log, because stdout is consumed by the harness and
+    # discarded. A record that only ever goes to a console is not a record: the
+    # manifest looked in the perf log for this line, found nothing, and reported
+    # that no run had ever reported its configuration -- which was true of the
+    # file and false of the process.
+    perf.emit("config", "effective", json=json.dumps(fields, sort_keys=True))
 
 
 async def main() -> None:

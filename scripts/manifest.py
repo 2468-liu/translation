@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from perf_compare import first_block  # noqa: E402
+from probe_silence import _resolve  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGS = ROOT / "logs"
@@ -113,6 +114,7 @@ def _file_digest(path: Path) -> str:
 
 
 _EFFECTIVE = re.compile(r"effective\.config\s+(\{.*\})")
+_EFFECTIVE_EMITTED = re.compile(r"config\.effective\s+json=(\{.*\})")
 
 
 def _effective_config(name: str) -> dict | None:
@@ -128,11 +130,12 @@ def _effective_config(name: str) -> dict | None:
     for candidate in (
         LOGS / f"perf.{name}.log",
         LOGS / f"perf_caption.{name}.log",
+        LOGS / "server_startup.log",
     ):
         if not candidate.exists():
             continue
         for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines():
-            found = _EFFECTIVE.search(line)
+            found = _EFFECTIVE.search(line) or _EFFECTIVE_EMITTED.search(line)
             if found:
                 try:
                     return json.loads(found.group(1))
@@ -176,9 +179,16 @@ def _nvidia() -> dict:
         if apps.returncode == 0 and apps.stdout.strip():
             names = [l.strip() for l in apps.stdout.splitlines() if l.strip()]
             out["compute_apps"] = names
-            out["foreign_gpu_processes"] = [
-                n for n in names if "llama-server" not in n.lower()
-            ]
+            own = _own_pids()
+            foreign = []
+            for entry in names:
+                pid_text = entry.split(",")[0].strip()
+                if "llama-server" in entry.lower():
+                    continue
+                if pid_text.isdigit() and int(pid_text) in own:
+                    continue  # this project's own server, not a foreign process
+                foreign.append(entry)
+            out["foreign_gpu_processes"] = foreign
     except (OSError, subprocess.SubprocessError):
         pass
     return out
@@ -233,6 +243,77 @@ def _meta(name: str) -> dict | None:
         return None
 
 
+def _translations(name: str) -> int:
+    """Translation packets in this arm's replay log.
+
+    Resolved rather than concatenated, because the run that just finished is
+    still called blog_3min_test.json: replay.ps1 archives the previous run's logs
+    on its next invocation, not its own. Reading the archived name directly finds
+    nothing for the newest arm and reports zero translations for a run that
+    produced thousands.
+    """
+    try:
+        text = _resolve("blog_3min_test", ".json", "blog_3min_test.json", name).read_text(
+            encoding="utf-8"
+        )
+    except (OSError, FileNotFoundError):
+        return 0
+    return text.count('"type": "translation"') + text.count('"type":"translation"')
+
+
+def _server_window(name: str) -> float:
+    path = _resolve("perf", ".log", "perf.log", name)
+    try:
+        rows: list[tuple[float, str, dict]] = []
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            try:
+                stamp = float(parts[0])
+            except ValueError:
+                continue
+            if stamp < 1e9:
+                continue
+            rows.append((stamp, parts[1], {}))
+    except (OSError, FileNotFoundError):
+        return 0.0
+    block = first_block(rows)
+    if len(block) < 2:
+        return 0.0
+    return block[-1][0] - block[0][0]
+
+
+def _own_pids() -> set[int]:
+    """Pids of this project's own processes, so they are not 'foreign'.
+
+    The GPU query returns every compute process including the server under test.
+    Calling that a foreign process rejects every arm, which is how all six cells
+    of the settle sweep were discarded by a check that could never pass.
+    """
+    out: set[int] = set()
+    try:
+        listing = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" "
+                "| ForEach-Object { $_.ProcessId }",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        for line in listing.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                out.add(int(line))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
+
+
 def _caption_window(name: str) -> tuple[float, int]:
     """(seconds the caption window lived, paints) from its archived log.
 
@@ -273,38 +354,7 @@ def _replay_seconds(name: str) -> float:
     Not from the event log's audio position: the first event carrying a position
     is where playback started, which is 0.2s into the clip, not its length.
     """
-    server = _server_window(name)
-    return server
-
-
-def _server_window(name: str) -> float:
-    path = LOGS / f"perf.{name}.log"
-    if not path.exists():
-        return 0.0
-    rows: list[tuple[float, str, dict]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        try:
-            stamp = float(parts[0])
-        except ValueError:
-            continue
-        if stamp < 1e9:
-            continue
-        rows.append((stamp, parts[1], {}))
-    block = first_block(rows)
-    if len(block) < 2:
-        return 0.0
-    return block[-1][0] - block[0][0]
-
-
-def _translations(name: str) -> int:
-    path = LOGS / f"blog_3min_test.{name}.json"
-    if not path.exists():
-        return 0
-    text = path.read_text(encoding="utf-8", errors="replace")
-    return text.count('"type": "translation"') + text.count('"type":"translation"')
+    return _server_window(name)
 
 
 def _newest_run() -> str | None:
@@ -425,7 +475,13 @@ def judge(manifest: dict, expect: dict | None = None) -> list[tuple[str, bool, s
                 )
             )
     recorded_mm = manifest["meta"].get("mmproj_device_recorded")
-    if recorded_mm and back["applicable"] and back["mmproj_device"] not in ("unset", "not applicable"):
+    is_audio = (manifest.get("effective") or {}).get("audio_native") == "1"
+    if (
+        recorded_mm
+        and is_audio
+        and back["applicable"]
+        and back["mmproj_device"] not in ("unset", "not applicable")
+    ):
         if recorded_mm != back["mmproj_device"]:
             checks.append(
                 (
@@ -469,6 +525,21 @@ def judge(manifest: dict, expect: dict | None = None) -> list[tuple[str, bool, s
                 "foreign gpu process",
                 False,
                 f"another process was on the card: {foreign}",
+            )
+        )
+
+    # The projector only exists on the audio-native route. Asserting it on the
+    # whisper route compares a recorded "unset" against an absent flag and calls
+    # the difference a disagreement, which rejected a sweep whose arms were
+    # otherwise fine.
+    audio_native = (manifest.get("effective") or {}).get("audio_native")
+    if audio_native == "0" and back.get("mmproj_device") not in ("unset", "absent", "not applicable"):
+        checks.append(
+            (
+                "mmproj",
+                False,
+                f"the whisper route has no projector, but the backend carries "
+                f"--mmproj-device {back['mmproj_device']}",
             )
         )
 

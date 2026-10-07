@@ -46,8 +46,20 @@ HOLD_ABS_MAX_MS = 4200
 # Settle is the pause after a one-character revision before the change is drawn,
 # so a stream of single-character corrections does not flicker. It is also a
 # candidate for the swap deadline, which makes it a latency cost and not only a
-# rendering one -- and the display leg's median sits near this number, which is
-# why it is now a variable rather than a constant.
+# rendering one.
+#
+# It was made injectable because the display leg's median sat near 450 and settle
+# was the obvious suspect. Measured, and it is not: over 6831 and 6906 decisions
+# at 450 and 150 respectively, settle set the deadline 5 times and 2 times, or
+# 0.07% and 0.03%. The hold did it 91% and 93% of the time.
+#
+# That is structural rather than a small sample. hold_ms() never returns less than
+# HOLD_ABS_MIN_MS, so the hold candidate is at least 800 ms away from the moment a
+# line is drawn, while settle_until is at most SETTLE_MS past the same moment. Any
+# SETTLE_MS below HOLD_ABS_MIN_MS therefore cannot bind, except in the one case
+# where growth_stopped_at is still 0 -- the state before any line has been drawn.
+# Sweeping it below 800 is a no-op by construction; to make settle matter it would
+# have to exceed the minimum hold, which is a different question and a worse idea.
 #
 # Injected through the environment like every other threshold, so an experiment
 # can move it without editing the file the previous experiment measured.
