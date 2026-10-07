@@ -43,6 +43,7 @@ $env:TRANSLATION_LLAMA_VERSION = $LlamaVersion
 $env:TRANSLATION_AUDIO_CONTEXT_SENTENCES = "0"
 $env:TRANSLATION_GEMMA_MIN_SILENCE_MS = "1000"
 $env:TRANSLATION_MTP = ""
+$env:TRANSLATION_EXPECT_DRAFT = "0"
 
 $seen = & $Python -c "from server import config; print(config.AUDIO_CONTEXT_SENTENCES, config.GEMMA_MIN_SILENCE_MS)"
 Write-Host "### held fixed: context=$($seen.Split(' ')[0]) silence=$($seen.Split(' ')[1]) mtp=off  llama=$LlamaVersion"
@@ -56,6 +57,10 @@ for ($round = 1; $round -le $Rounds; $round++) {
         Write-Host ""
         Write-Host "===== $label (llama $LlamaVersion, projector on $tag) ====="
         $env:TRANSLATION_MMPROJ_DEVICE = $device
+        # Asserted against the live process in replay.ps1. The projector placement
+        # is decided by a command line argument, so the environment variable that
+        # requested it proves nothing on its own.
+        $env:TRANSLATION_EXPECT_MMPROJ = $device
         try {
             & .\scripts\replay.ps1 $label -AudioNative *>&1 |
                 Where-Object { $_ -notmatch "^audio in:|SoundcardRuntimeWarning|warnings\.warn|^\s+\d+\.\d+s |^ASR|^VAD:|^WebSocket|^pipeline:|^server pid|^events=|^client |^video |^stopping|^archived" }

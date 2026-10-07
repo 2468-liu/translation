@@ -2,7 +2,18 @@ param(
     [Parameter(Mandatory = $true)][string]$Name,
     [int]$StartupWait = 12,
     # gemma-audio branch: one model hears and translates, so whisper is not loaded.
-    [switch]$AudioNative
+    [switch]$AudioNative,
+    # Leave a llama-server that is already up alone.
+    #
+    # This exists because of a silent twelve-run loss. A sweep starts its own
+    # backend -- that is how MTP gets loaded, since the draft flags are command
+    # line arguments and not config values -- and then replay.ps1 killed it and
+    # started a second one without them. So every "MTP on" cell ran with MTP off,
+    # under a name that said otherwise, and the sweep reported a clean 2x2.
+    #
+    # The tell was two "llama-server ready" lines per cell. The arm name was the
+    # only record of what was configured, so nothing caught it.
+    [switch]$KeepBackend
 )
 
 # One replay of samples/blog_3min.mp4 against a freshly restarted server, then
@@ -25,7 +36,7 @@ if (-not (Test-Path $Python)) { throw "python not found: $Python" }
 Write-Host "stopping server and caption window (llama-server on 8080 stays up)"
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-if ($AudioNative) {
+if ($AudioNative -and -not $KeepBackend) {
     # The audio model and whisper's model cannot both stay resident on a 4GB
     # card, and the two pipelines serve different models on 8080.
     Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
@@ -42,7 +53,20 @@ $backend = & .\scripts\resolve_llama.ps1 | Select-Object -Last 1
 $Llama = $backend.path
 $LlamaVersion = $backend.version
 
-if ($AudioNative) {
+if ($AudioNative -and $KeepBackend) {
+    # Somebody else owns the backend, and it was started with arguments this
+    # script cannot see -- MTP's --model-draft is one. Starting a second one here
+    # would silently discard those arguments, so this path only waits.
+    #
+    # That is the whole point of -KeepBackend, so read the live process rather
+    # than assuming. What it was launched with goes into the meta below; an arm
+    # name is not evidence of what ran.
+    $live = Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $live) { throw "-KeepBackend was asked for but no llama-server is running" }
+    Write-Host "keeping the llama-server that is already up (started by the caller)"
+}
+elseif ($AudioNative) {
     # Start llama-server here rather than via start.ps1, which also launches the
     # Python service. Same arguments, so both entry points stay in step.
     $gguf = (Get-ChildItem "$Root\models\gemma4-e2b\translate*.gguf" | Select-Object -First 1).FullName
@@ -176,6 +200,35 @@ print(json.dumps({
     'audio_chinese_share_min': config.AUDIO_CHINESE_SHARE_MIN,
 }))
 "@
+# What the serving backend was actually launched with, read off the live process.
+#
+# MTP lives only in the command line -- there is no config value for it and the
+# meta used to record nothing about it, so an arm's name was the only claim that
+# a draft was loaded. That is how twelve runs came back labelled "MTP on" while
+# every one of them ran with MTP off: the sweep started a backend with the draft
+# flags and this script killed it and started another without them.
+#
+# Read it here, at the end, from the process that actually served the run. If the
+# caller wanted a draft and none is loaded, that is a throw rather than a note.
+$liveCmd = (Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction SilentlyContinue |
+    Select-Object -First 1).CommandLine
+$draftLoaded = [bool]($liveCmd -and $liveCmd -match "model-draft")
+$mmprojLive = if ($liveCmd -match "--mmproj-device\s+(\S+)") { $Matches[1] } else { "unset" }
+Write-Host "### backend as launched: draft=$draftLoaded mmproj-device=$mmprojLive"
+if ($env:TRANSLATION_EXPECT_DRAFT -eq "1" -and -not $draftLoaded) {
+    throw "$Name wanted a draft model loaded and the serving llama-server has none"
+}
+if ($env:TRANSLATION_EXPECT_DRAFT -eq "0" -and $draftLoaded) {
+    throw "$Name wanted no draft model and the serving llama-server has one"
+}
+# Same argument for the projector, and it is the one this file used to get wrong
+# twice: the number came from a card reading that was out by half, and then the
+# mechanism offered for the resulting decision was never measured. Assert against
+# the process, so a cell cannot run under a placement its name does not have.
+if ($env:TRANSLATION_EXPECT_MMPROJ -and $mmprojLive -ne $env:TRANSLATION_EXPECT_MMPROJ) {
+    throw "$Name wanted mmproj-device $($env:TRANSLATION_EXPECT_MMPROJ) and the serving llama-server has $mmprojLive"
+}
+
 @{
     name = $Name
     code = $stamp
@@ -183,6 +236,9 @@ print(json.dumps({
     audio_native = [bool]$AudioNative
     llama_version = $LlamaVersion
     mmproj_device = if ($env:TRANSLATION_MMPROJ_DEVICE) { $env:TRANSLATION_MMPROJ_DEVICE } else { "none" }
+    # From the process, not from the arm name or an environment variable.
+    mtp_draft = $draftLoaded
+    mmproj_device_live = $mmprojLive
     thresholds = ($effective -join "").Trim()
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending

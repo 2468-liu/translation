@@ -116,11 +116,14 @@ for ($round = 1; $round -le $Rounds; $round++) {
         Set-And-Confirm "TRANSLATION_AUDIO_CONTEXT_SENTENCES" "AUDIO_CONTEXT_SENTENCES" $cell.context
         try {
             Start-Backend -WithDraft:$cell.mtp
-            # Clear the variable so a cell with MTP off cannot inherit it from a
-            # previous cell's shell, which is how an arm silently runs the
-            # configuration the one before it used.
+            # The draft is a command line argument, so this cell's backend is the
+            # only one that can have it. replay.ps1 used to kill that backend and
+            # start its own without the draft, which is how every "MTP on" cell
+            # ran with MTP off. -KeepBackend stops that; the expectation below
+            # makes replay.ps1 read the live process and throw if it disagrees.
             $env:TRANSLATION_MTP = if ($cell.mtp) { "1" } else { "" }
-            & .\scripts\replay.ps1 $label -AudioNative *>&1 |
+            $env:TRANSLATION_EXPECT_DRAFT = if ($cell.mtp) { "1" } else { "0" }
+            & .\scripts\replay.ps1 $label -AudioNative -KeepBackend *>&1 |
                 Where-Object { $_ -notmatch "^audio in:|SoundcardRuntimeWarning|warnings\.warn|^\s+\d+\.\d+s |^ASR|^VAD:|^WebSocket|^pipeline:|^server pid|^events=|^client |^video " }
         }
         catch {
