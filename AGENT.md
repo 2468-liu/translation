@@ -136,6 +136,22 @@ python scripts/rag.py query "<你要查的东西>" --top 5
 
 媒体文件不入库（`.gitignore` 已按扩展名忽略，`fixtures/` 有例外）。
 
+### 模型格式分属两个生态，别混用
+
+```
+.gguf        llama.cpp    hy-mt2 走 llama-server，只认这个
+                        Gemma 音频直出也走 llama-server
+.ggml/.bin   whisper.cpp  这里的 whisper.cpp 探针用它（Q5_1 / Q8_0 / fp16）
+CT2 目录     ctranslate2  faster-whisper 的格式（model.bin），默认链路在用
+```
+
+**踩过一次**：为了验证 `replay.ps1` 的"模型不对"分支，起了个 llama-server
+喂 `ggml-small-q5_1.bin`——那是 whisper.cpp 的文件，llama-server 直接退出，
+于是那次**只测到了"服务没起来"，根本没测到模型不匹配**。
+
+**教训和第 5 节同源**：拿一个生态的素材去测另一个生态的逻辑，得到的不是
+"测不了"，而是"看起来测了"。换文件格式重来才拿到真输出。
+
 ---
 
 ## 7. worktree 的用法
