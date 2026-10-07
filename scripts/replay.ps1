@@ -44,6 +44,28 @@ if ($AudioNative -and -not $KeepBackend) {
 }
 Start-Sleep -Seconds 2
 
+# Report who is still holding the card, rather than assuming the kills above got
+# everything.
+#
+# The kill above only matches python.exe and llama-server.exe by name, so a
+# server started some other way survives it. One did: a background diagnostic
+# left pid 9128 alive on the GPU for hours, and it was still holding 731 MiB when
+# the power baseline was about to be measured. A baseline taken with a stray
+# process on the card is not a baseline, and nothing in the run's own output said
+# so -- the manifest was clean, the numbers looked plausible, and the delta would
+# have been quietly wrong.
+#
+# So the survivors are named on screen. This does not fail the run: another arm
+# may legitimately own the card, and a judge that refuses to run because of that
+# is worse than one that says who is there.
+$gpuHolders = & nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader 2>$null
+if ($gpuHolders) {
+    Write-Host "GPU still held by:"
+    $gpuHolders | ForEach-Object { Write-Host "    $_" }
+} else {
+    Write-Host "GPU: no compute processes"
+}
+
 # The backend is resolved rather than hardcoded, and the version goes into this
 # run's meta. Resolved for every run, not just the audio one: a backend that
 # changes between arms makes two runs incomparable for the same reason a
@@ -129,7 +151,29 @@ if ($previous) {
         }
     }
 } elseif (Test-Path "logs\perf.log") {
-    throw "logs\perf.log exists but logs\run.pending.json does not; cannot tell which run it belongs to"
+    # Leftover logs with nothing claiming them. Refusing outright is what stalled
+    # the last sweep: one cell died, the pending marker was never written, and
+    # every cell after it refused to start because it could not tell whose logs
+    # these were. Quarantine them instead of stopping -- the refusal was right
+    # about the ambiguity and wrong about the remedy.
+    #
+    # Quarantined rather than deleted, because those logs are the only record of
+    # whatever killed the previous cell.
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $orphan = "logs\orphan\$stamp"
+    New-Item -ItemType Directory -Force -Path $orphan | Out-Null
+    # Not $name. PowerShell variables are case-insensitive, so $name here is
+    # $Name -- the run's own name -- and the loop silently replaced it with the
+    # last filename. Every archive after that went to "perf.blog_3min_test.json.log"
+    # and the meta recorded the wrong arm. Reading the file does not reveal this;
+    # running it does.
+    foreach ($orphanFile in @("perf.log", "perf_caption.log", "blog_3min_test.json")) {
+        $path = "logs\$orphanFile"
+        if (Test-Path $path) {
+            Move-Item -Force $path (Join-Path $orphan $orphanFile)
+            Write-Host "quarantined unclaimed log: $path -> $orphan"
+        }
+    }
 }
 Remove-Item $Pending -Force -ErrorAction SilentlyContinue
 
@@ -159,9 +203,26 @@ $listening = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction Sil
 if (-not $listening) { throw "server did not come up on 8765" }
 Write-Host "server pid $($listening.OwningProcess)"
 
-Write-Host "replaying samples/blog_3min.mp4 (~3.5 min)"
-& $Python scripts\blog_video_test.py play
+# The clip and its duration come from the file, not from a constant. Every number
+# this file used to carry about the sample -- the name, the "about 3.5 minutes" --
+# described one clip, and pointing the replay at a different one made the message
+# a lie while the run itself was fine.
+$sampleWav = if ($env:TRANSLATION_SAMPLE_WAV) { $env:TRANSLATION_SAMPLE_WAV } else { "samples\blog_3min.wav" }
+$sampleSec = & $Python -c "import soundfile as sf,sys; print(f'{sf.info(sys.argv[1]).duration:.1f}')" $sampleWav
+Write-Host "replaying $sampleWav ($([math]::Round($sampleSec / 60, 2)) min)"
+# stderr merged into stdout, and ErrorAction dropped for the call.
+#
+# With $ErrorActionPreference = "Stop" in effect, the first line a native command
+# writes to stderr becomes a terminating error, which aborts the pipeline before
+# the rest of the traceback is read. So the process printed "Traceback (most
+# recent call last):" and nothing after it -- twice now, on two different bugs,
+# both of which were one line of output away from being diagnosed immediately.
+# The relaxed preference is scoped to this one call; the checks below still throw.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $Python scripts\blog_video_test.py play 2>&1 | ForEach-Object { "$_" }
 $replayExit = $LASTEXITCODE
+$ErrorActionPreference = $previousPreference
 
 # A replay that died partway still leaves a log behind, and measuring that would
 # report a short window with no indication anything was wrong.
