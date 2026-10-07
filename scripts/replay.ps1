@@ -75,6 +75,51 @@ $backend = & .\scripts\resolve_llama.ps1 | Select-Object -Last 1
 $Llama = $backend.path
 $LlamaVersion = $backend.version
 
+# The whisper route takes its translation model from whatever is on 8080, and this
+# script deliberately leaves that server alone so it stays warm between runs. It
+# therefore assumes the caller started one -- and without a check, a missing server
+# shows up three steps later as "no translations in this run", which reads as a
+# pipeline fault and is not one.
+#
+# Probed over HTTP rather than by process name, because a process name only proves
+# something is running. The port could be held by a different instance, a different
+# model, or something that is not a server at all.
+#
+# It throws rather than starting one. smoke.ps1 does start a backend, and that is
+# correct there because a smoke test is meant to be self-contained; a replay is a
+# measurement of a configured system, and quietly launching a translation model
+# mid-run would put a step nobody asked for between two arms. There is no
+# --no-translate escape either: skipping translation makes this a different script,
+# and a run that is half a replay should not be reportable as a replay.
+if (-not $AudioNative) {
+    $expectedModel = if (Test-Path "models\hy-mt2-1.8b") {
+        (Get-ChildItem "models\hy-mt2-1.8b\*.gguf" | Select-Object -First 1).BaseName
+    } else { "" }
+
+    $served = $null
+    try {
+        $probe = Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" `
+                                  -TimeoutSec 2 -ErrorAction Stop
+        $served = ($probe.data | Select-Object -First 1).id
+    } catch {
+        throw @"
+翻译后端不在 8080 上，回放不会有译文。
+  replay.ps1 假定调用方已启动它；smoke.ps1 会自动启动，本脚本不会。
+  请先起一个 hy-mt2 的 llama-server 再回放（例如 start.ps1 里的那条命令）。
+  端口占用或模型不对也会走到这里：$($_.Exception.Message)
+"@
+    }
+
+    if ($expectedModel -and $served -and ($served -notlike "*hy-mt2*")) {
+        throw @"
+翻译后端在 8080 响应，但加载的不是 hy-mt2：$served（期望 $expectedModel）。
+  replay.ps1 假定 8080 上是 hy-mt2；请检查 start.ps1 的加载顺序。
+  能响应 != 是对的模型 —— 这是同一类错误的另一种形态。
+"@
+    }
+    Write-Host "translation backend: $served on 8080 (expected hy-mt2)"
+}
+
 if ($AudioNative -and $KeepBackend) {
     # Somebody else owns the backend, and it was started with arguments this
     # script cannot see -- MTP's --model-draft is one. Starting a second one here
