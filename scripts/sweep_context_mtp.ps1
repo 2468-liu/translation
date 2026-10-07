@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Context on or off, crossed with MTP on or off, on one backend.
 
@@ -42,10 +42,23 @@ Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
 
 $env:TRANSLATION_LLAMA_VERSION = $LlamaVersion
 
-function Confirm-Setting([string] $Name, [int] $Value) {
+function Set-And-Confirm([string] $Env, [string] $Name, [int] $Value) {
+    # Assign, then confirm by import.
+    #
+    # Confirming alone was the bug this replaced: the first cell passed only
+    # because the value it asked for happened to be the default, and the second
+    # cell threw because nothing had ever set the variable. A sweep that had not
+    # thrown would have run all twelve cells with context off and reported a
+    # clean 2x2.
+    $envItem = Get-Item "Env:$Env" -ErrorAction SilentlyContinue
+    Set-Item -Path "Env:$Env" -Value "$Value"
     $seen = & $Python -c "from server import config; print(getattr(config, '$Name'))"
-    if ($seen.Trim() -ne "$Value") { throw "$Name wanted $Value, config reads $($seen.Trim())" }
-    Write-Host "### $Name = $Value (confirmed by import)"
+    if ($seen.Trim() -ne "$Value") {
+        if ($envItem) { Set-Item -Path "Env:$Env" -Value $envItem.Value }
+        else { Remove-Item "Env:$Env" -ErrorAction SilentlyContinue }
+        throw "$Name wanted $Value, config reads $($seen.Trim())"
+    }
+    Write-Host "### $Name = $Value (set via $Env, confirmed by import)"
 }
 
 function Start-Backend([switch] $WithDraft) {
@@ -82,7 +95,7 @@ function Start-Backend([switch] $WithDraft) {
 
 # Only the two axes under test. Silence is held fixed rather than swept, because
 # it was already located and a third axis would make the cell count unmanageable.
-foreach ($silence in $GemmaSilence) { Confirm-Setting "GEMMA_MIN_SILENCE_MS" $silence }
+foreach ($silence in $GemmaSilence) { Set-And-Confirm "TRANSLATION_GEMMA_MIN_SILENCE_MS" "GEMMA_MIN_SILENCE_MS" $silence }
 
 $cells = @()
 foreach ($ctx in $ContextValues) {
@@ -100,7 +113,7 @@ for ($round = 1; $round -le $Rounds; $round++) {
         $label = "$($cell.name)-r$round"
         Write-Host ""
         Write-Host "===== $label ====="
-        Confirm-Setting "AUDIO_CONTEXT_SENTENCES" $cell.context
+        Set-And-Confirm "TRANSLATION_AUDIO_CONTEXT_SENTENCES" "AUDIO_CONTEXT_SENTENCES" $cell.context
         try {
             Start-Backend -WithDraft:$cell.mtp
             # Clear the variable so a cell with MTP off cannot inherit it from a
