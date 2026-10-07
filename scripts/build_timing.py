@@ -85,6 +85,27 @@ def build(audio: np.ndarray, rate: int, model) -> list[dict]:
     return rows
 
 
+def covered_span(rows: list[dict]) -> float:
+    """Union of the segment intervals, not their sum.
+
+    Segments come from a VAD pass and do not overlap in practice, but summing
+    would silently over-count if a future detector emitted overlaps, and the
+    number's whole purpose is to be a trustworthy denominator.
+    """
+    if not rows:
+        return 0.0
+    ordered = sorted((r["start"], r["end"]) for r in rows)
+    total = 0.0
+    cur_start, cur_end = ordered[0]
+    for start, end in ordered[1:]:
+        if start <= cur_end:
+            cur_end = max(cur_end, end)
+        else:
+            total += cur_end - cur_start
+            cur_start, cur_end = start, end
+    return total + (cur_end - cur_start)
+
+
 def validate(rows: list[dict], duration: float, expect: list[str]) -> list[str]:
     """Everything wrong with this output, as text. Empty means it may be written."""
     problems: list[str] = []
@@ -163,6 +184,8 @@ def main() -> int:
     print("  languages: " + ", ".join(f"{k}={v}" for k, v in
                                        sorted(counts.items(), key=lambda kv: -kv[1])))
 
+    span = covered_span(rows)
+
     problems = validate(rows, duration, expect)
     if problems:
         print("\n  REFUSING TO WRITE:")
@@ -171,6 +194,7 @@ def main() -> int:
         return 1
 
     print("  validation ok")
+    print(f"  covered_span {span:.1f}s of {duration:.1f}s ({span / duration * 100:.0f}%)")
     if args.dry_run:
         print("  dry run, nothing written")
         return 0
@@ -178,9 +202,22 @@ def main() -> int:
     # Written only after validation, then read back and compared, because a write
     # that reports success and leaves the old content is the failure mode this
     # project keeps hitting.
-    out.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    #
+    # The header is deliberately additive and lives outside the list. Coverage is
+    # not redefined -- it stays a count over segments -- but the denominator
+    # becomes visible: e_3min opens with 31.5s of humming over a music bed that
+    # VAD judged non-speech, and without this those seconds read as "not
+    # translated" when there was nothing there to translate. Both numbers sit side
+    # by side and the reader decides, because deciding is a judgement about the
+    # clip, not something a tool can do.
+    payload = {
+        "audio_total": round(duration, 2),
+        "covered_span": round(span, 2),
+        "segments": rows,
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     back = json.loads(out.read_text(encoding="utf-8"))
-    if back != rows:
+    if back != payload:
         print(f"  WRITE MISMATCH: {out} does not match what was built")
         return 1
     print(f"  written and verified: {out} ({out.stat().st_size / 1024:.1f} KB)")

@@ -310,6 +310,17 @@ def main(argv: list[str]) -> int:
                 f"coverage (prefix match) {hits}/{len(finals)} "
                 f"({hits / len(finals) * 100:.0f}%)"
             )
+            # What the denominator was. e_3min opens with 31.5s of humming over a
+            # music bed that VAD judged non-speech, so those seconds are absent
+            # from the timeline and a reader comparing this figure across clips
+            # would be comparing different amounts of audio. Coverage itself is
+            # unchanged -- this only makes the denominator visible.
+            header = payload.get("timeline_header") or {}
+            total = header.get("audio_total")
+            span = header.get("covered_span")
+            if total and span:
+                print(f"  timeline: {span:.0f}s covered of {total:.0f}s audio "
+                      f"({span / total * 100:.0f}%)")
 
     # --- end to end: first new translation of a sentence -> on screen ----
     if test_path and test_path.exists() and caption:

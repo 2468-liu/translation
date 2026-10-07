@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import bisect
 import json
+import os
 import subprocess
 import sys
 import time
@@ -56,6 +57,10 @@ CARD_PATH = OUT_DIR / "blog_3min_card.png"
 SCRIPT_PATH = OUT_DIR / "blog_3min.txt"
 TIMING_PATH = OUT_DIR / "blog_3min_timing.json"
 RESULT_PATH = LOG_DIR / "blog_3min_test.json"
+
+# audio_total / covered_span from the timeline header, if the timeline carries
+# one. Set in main() before _play runs; stays empty for a bare-list timeline.
+COVERAGE_HEADER: dict = {}
 GAP_SEC = 0.7
 TARGET_SEC = 180.0
 
@@ -289,6 +294,9 @@ def _summarize(events: list[dict], timing: list[dict]) -> dict:
         "low_overlap_swaps": swaps,
         "asr_finals": len(asr_final),
         "sentences": rows,
+        # Carried through so the summary can show what the denominator was. Empty
+        # for a bare-list timeline, which is how the hand-made ones are shaped.
+        "timeline_header": COVERAGE_HEADER,
     }
 
 
@@ -302,7 +310,24 @@ async def _play(timing: list[dict]) -> dict:
     state = {"audio_sec": 0.0}
 
     async with connect(f"ws://{WS_HOST}:{WS_PORT}/ws") as ws:
-        await ws.send(json.dumps({"type": "config", "language": "en"}))
+        # "auto", not "en". The product's own default is auto -- the extension's
+        # language box lists 自动检测 first and background.js sends
+        # `language || "auto"` -- so forcing English here made the replay a
+        # different pipeline from the one in use.
+        #
+        # On a Japanese clip that is not a neutral choice. A locked language is
+        # passed straight into the recogniser for every call, so replaying
+        # clip222_90s with English returned the same fluent-looking English
+        # hallucinations recorded in REPORT 19.1: Japanese speech decoded as
+        # "How do you speak Japanese?". The failure is invisible because the
+        # output reads as valid English.
+        #
+        # Overridable, because some experiments do want a locked language -- an
+        # arm that fixes the language has to be able to say so. What must not
+        # happen is the default quietly pinning a non-English clip to English.
+        replay_language = os.environ.get("TRANSLATION_REPLAY_LANGUAGE", "auto").strip()
+        await ws.send(json.dumps({"type": "config", "language": replay_language}))
+        print(f"replay language: {replay_language}", flush=True)
         # The extension sends this when capture starts (offscreen.js). Without
         # it the caption window stays closed after the first disconnect and
         # every later run would record zero paints.
@@ -344,6 +369,29 @@ def main() -> None:
     play_only = len(sys.argv) > 1 and sys.argv[1] == "play"
     if play_only:
         timing = json.loads(_sample_timing().read_text(encoding="utf-8"))
+        # Two shapes are accepted. A bare list is the older one, hand-made and
+        # TTS timelines still use it. build_timing.py wraps the list in a header
+        # carrying audio_total and covered_span.
+        #
+        # The header exists so coverage has a visible denominator: e_3min opens
+        # with 31.5s of humming over a music bed that VAD judged non-speech, and
+        # scored as "not translated" those seconds look like a pipeline failure
+        # when there was nothing there to translate. Coverage itself is unchanged
+        # -- still a count over segments -- and judging whether those seconds
+        # should have been translated is the reader's call, not this script's.
+        coverage_header = {}
+        if isinstance(timing, dict):
+            coverage_header = {
+                "audio_total": timing.get("audio_total"),
+                "covered_span": timing.get("covered_span"),
+            }
+            timing = timing.get("segments", [])
+            if not isinstance(timing, list):
+                raise SystemExit(
+                    f"{_sample_timing()} has a header but no 'segments' list"
+                )
+        global COVERAGE_HEADER
+        COVERAGE_HEADER = coverage_header
         # Fail here, before six minutes of audio has played, rather than in the
         # summary at the end.
         #

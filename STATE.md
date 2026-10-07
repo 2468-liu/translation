@@ -44,6 +44,8 @@ VAD                 THRESHOLD 0.5 / MIN_SPEECH 250 / MIN_SILENCE 400 / PAD 120
 | **`total time` = 单次成本** | 它含 `load time`（本机 656–809ms/进程） | whisper 自己就打印这个字段，名字没骗人 |
 | **`total − load` = 边际成本** | 常驻实测与该减法差 11 倍（同 ctx 660：CLI 1001ms vs 常驻 90ms） | 减法在数学上成立，问题在于两个程序的 `-ac` 行为不同 |
 | **缩窗（`-ac`）买速度** | ctx 77→660（8.6×）encode 只 111.8→122.7ms | 名字叫 audio_ctx，直觉上就该缩计算量 |
+| **回放锁 `en` 等于在测产品** | 产品默认 auto；回放曾写死 `en` | 素材大多是英语，写死 en 看着无害 |
+| **旧的延迟基线能直接判断 auto 下的表现** | auto 下 asr p50 281ms，已超 250ms 节奏 | 两组数都叫"ASR 耗时"，量纲一样 |
 | **量化省 GPU 功耗** | CUDA 74.3 / 85.6 / 74.3ms，差异在噪声内 | 量化必然更快是常识 |
 | **RMS 阈值能判断停顿** | 底噪是响处 20.5% 的素材报"0 次 ≥1s 停顿"，管线埋点实测 35 次 | RMS 确实测能量，只是阈值定错了位置 |
 | **GPU-only 读数能判断"挪 CPU 是否省电"** | GPU 降 10W / CPU 升 5W 与 CPU 升 12W 在本机读数完全一样 | 差分法看起来是标准做法 |
@@ -62,6 +64,24 @@ VAD                 THRESHOLD 0.5 / MIN_SPEECH 250 / MIN_SILENCE 400 / PAD 120
 ASR 上 GPU 成本 +10W
   前提：投影层 CPU / partial 250ms / CT2 small cuda float16 / hy-mt2 空闲 / 后端 2.47.0
   ⚠️ 其中任何一条变了，这条数就不能引用
+
+ttft p50 30~36ms
+  前提：语种锁定 en。auto 下每次调用要带检测，成本不同
+
+asr 占墙钟 16.6% / asr>250ms 15%（er_3min 那格）
+  前提：语种锁定 en
+
+首字上屏延迟 p50 374~756ms
+  前提：语种锁定 en
+
+partial 节奏 250/500/750/1000ms 的省电曲线
+  前提：语种锁定 en。auto 下 250ms 本身就跑不满（asr p50 281ms）
+
+回放语种
+  2026-10-07 起默认 auto，与产品一致（扩展默认"自动检测"）。
+  代价：同一素材 asr p50 140~158ms → 281ms，asr>250ms 从 8~19% → 58%
+  这意味着**上面几条锁定 en 的基线不可直接与 auto 的结果对比**。
+  需要对照时：TRANSLATION_REPLAY_LANGUAGE=en
 
 whisper.cpp CPU 不可用（单次 400~1260ms）
   前提：ctx 220 / 6 线程 / Q8_0 / 1.4s 片段
@@ -182,8 +202,24 @@ er_3min_timing.json       26 句，含西里尔字符 0 句（"Shul shul" 是被
 clip222_90s_timing.json   原本不存在 → 222 当时根本没法回放
 ```
 
-已用 `scripts/build_timing.py`（分片级判语种）重建，字段统一
-`{i, start, end, lang, src, p, text}`。详见 `samples/INDEX.md`。
+已用 `scripts/build_timing.py`（分片级判语种）重建。格式：
+
+```json
+{ "audio_total": 184.3, "covered_span": 67.6, "segments": [{i,start,end,lang,src,p,text}] }
+```
+
+| 素材 | 段数 | 覆盖 | 语种 |
+|---|---|---|---|
+| `e_3min` | 21 | **37%** | en21 |
+| `er_3min` | 42 | 72% | en39/ru3 |
+| `clip222_90s` | 33 | 81% | ja18/en8/ko4/zh2/it1 |
+| `meeting_6min` | 140 | 76% | 11 语种 |
+
+**`e_3min` 只有 37% 覆盖**，184 秒电影里只有 67.6 秒被判为可译语音。
+可能是 VAD 在带音乐床的素材上过于保守，也可能是那段确实以配乐为主。
+**判断方法是人耳听**——先别改 VAD，改 VAD 会影响所有素材。
+
+覆盖率**口径未变**（仍是译出句数比），`covered_span` 只是让分母可见。
 
 ## 仓库
 

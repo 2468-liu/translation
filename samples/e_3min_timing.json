@@ -1,191 +1,195 @@
-[
- {
-  "start": 31.54,
-  "end": 32.66,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.997,
-  "text": "I reckon we should call it a day.",
-  "i": 0
- },
- {
-  "start": 32.78,
-  "end": 34.18,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.998,
-  "text": "It's the final pitch, Tommy.",
-  "i": 1
- },
- {
-  "start": 34.74,
-  "end": 45.02,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.985,
-  "text": "It'll still be there in the morning, I promise.",
-  "i": 2
- },
- {
-  "start": 45.54,
-  "end": 48.55,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.993,
-  "text": "There's a bit of shit weather coming in from over there.",
-  "i": 3
- },
- {
-  "start": 49.33,
-  "end": 50.49,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.994,
-  "text": "Give me one more try.",
-  "i": 4
- },
- {
-  "start": 51.15,
-  "end": 52.77,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.946,
-  "text": "We can both hit the top and make 10.",
-  "i": 5
- },
- {
-  "start": 56.67,
-  "end": 58.21,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.988,
-  "text": "Oh, I want to summit today, Tommy.",
-  "i": 6
- },
- {
-  "start": 58.27,
-  "end": 60.21,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.999,
-  "text": "And that's exactly why you have a climbing partner.",
-  "i": 7
- },
- {
-  "start": 60.65,
-  "end": 63.17,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.992,
-  "text": "So that someone can make the call when one of you loses the plot.",
-  "i": 8
- },
- {
-  "start": 70.05,
-  "end": 73.73,
-  "lang": "en",
-  "src": "auto",
-  "p": 1.0,
-  "text": "It was beautiful climbing up until when it wasn't.",
-  "i": 9
- },
- {
-  "start": 73.73,
-  "end": 84.06,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.951,
-  "text": "Just wondering whether we should take a right check tomorrow.",
-  "i": 10
- },
- {
-  "start": 84.06,
-  "end": 86.85,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.914,
-  "text": "That's all. Are you kidding me? It's just a little weather.",
-  "i": 11
- },
- {
-  "start": 90.02,
-  "end": 95.02,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.983,
-  "text": "You know, just... I just feel like sometimes you rush it a little bit, that's all.",
-  "i": 12
- },
- {
-  "start": 120.0,
-  "end": 121.16,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.999,
-  "text": "You do this every time.",
-  "i": 13
- },
- {
-  "start": 121.3,
-  "end": 125.14,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.999,
-  "text": "You know, the climb gets tough, and then all of a sudden you start talking like this.",
-  "i": 14
- },
- {
-  "start": 125.2,
-  "end": 129.64,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.996,
-  "text": "I'm just talking about slowing it down a little bit, not doing so many extreme things.",
-  "i": 15
- },
- {
-  "start": 135.55,
-  "end": 139.17,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.995,
-  "text": "As an old saying, luck is like anything else you take up the mountain.",
-  "i": 16
- },
- {
-  "start": 139.35,
-  "end": 140.73,
-  "lang": "en",
-  "src": "auto",
-  "p": 1.0,
-  "text": "Eventually, it's going to run out.",
-  "i": 17
- },
- {
-  "start": 143.83,
-  "end": 147.73,
-  "lang": "en",
-  "src": "auto",
-  "p": 1.0,
-  "text": "You're going to tell me your luck has run out halfway up a mountain.",
-  "i": 18
- },
- {
-  "start": 147.73,
-  "end": 149.35,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.943,
-  "text": "I think my lucky compass is saying.",
-  "i": 19
- },
- {
-  "start": 182.51,
-  "end": 183.79,
-  "lang": "en",
-  "src": "auto",
-  "p": 0.977,
-  "text": "We'll get down first thing, okay?",
-  "i": 20
- }
-]
+{
+ "audio_total": 184.28,
+ "covered_span": 67.63,
+ "segments": [
+  {
+   "start": 31.54,
+   "end": 32.66,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.997,
+   "text": "I reckon we should call it a day.",
+   "i": 0
+  },
+  {
+   "start": 32.78,
+   "end": 34.18,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.998,
+   "text": "It's the final pitch, Tommy.",
+   "i": 1
+  },
+  {
+   "start": 34.74,
+   "end": 45.02,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.985,
+   "text": "It'll still be there in the morning, I promise.",
+   "i": 2
+  },
+  {
+   "start": 45.54,
+   "end": 48.55,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.993,
+   "text": "There's a bit of shit weather coming in from over there.",
+   "i": 3
+  },
+  {
+   "start": 49.33,
+   "end": 50.49,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.994,
+   "text": "Give me one more try.",
+   "i": 4
+  },
+  {
+   "start": 51.15,
+   "end": 52.77,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.946,
+   "text": "We can both hit the top and make 10.",
+   "i": 5
+  },
+  {
+   "start": 56.67,
+   "end": 58.21,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.988,
+   "text": "Oh, I want to summit today, Tommy.",
+   "i": 6
+  },
+  {
+   "start": 58.27,
+   "end": 60.21,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "And that's exactly why you have a climbing partner.",
+   "i": 7
+  },
+  {
+   "start": 60.65,
+   "end": 63.17,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.992,
+   "text": "So that someone can make the call when one of you loses the plot.",
+   "i": 8
+  },
+  {
+   "start": 70.05,
+   "end": 73.73,
+   "lang": "en",
+   "src": "auto",
+   "p": 1.0,
+   "text": "It was beautiful climbing up until when it wasn't.",
+   "i": 9
+  },
+  {
+   "start": 73.73,
+   "end": 84.06,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.951,
+   "text": "Just wondering whether we should take a right check tomorrow.",
+   "i": 10
+  },
+  {
+   "start": 84.06,
+   "end": 86.85,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.914,
+   "text": "That's all. Are you kidding me? It's just a little weather.",
+   "i": 11
+  },
+  {
+   "start": 90.02,
+   "end": 95.02,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.983,
+   "text": "You know, just... I just feel like sometimes you rush it a little bit, that's all.",
+   "i": 12
+  },
+  {
+   "start": 120.0,
+   "end": 121.16,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "You do this every time.",
+   "i": 13
+  },
+  {
+   "start": 121.3,
+   "end": 125.14,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "You know, the climb gets tough, and then all of a sudden you start talking like this.",
+   "i": 14
+  },
+  {
+   "start": 125.2,
+   "end": 129.64,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.996,
+   "text": "I'm just talking about slowing it down a little bit, not doing so many extreme things.",
+   "i": 15
+  },
+  {
+   "start": 135.55,
+   "end": 139.17,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.995,
+   "text": "As an old saying, luck is like anything else you take up the mountain.",
+   "i": 16
+  },
+  {
+   "start": 139.35,
+   "end": 140.73,
+   "lang": "en",
+   "src": "auto",
+   "p": 1.0,
+   "text": "Eventually, it's going to run out.",
+   "i": 17
+  },
+  {
+   "start": 143.83,
+   "end": 147.73,
+   "lang": "en",
+   "src": "auto",
+   "p": 1.0,
+   "text": "You're going to tell me your luck has run out halfway up a mountain.",
+   "i": 18
+  },
+  {
+   "start": 147.73,
+   "end": 149.35,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.943,
+   "text": "I think my lucky compass is saying.",
+   "i": 19
+  },
+  {
+   "start": 182.51,
+   "end": 183.79,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.977,
+   "text": "We'll get down first thing, okay?",
+   "i": 20
+  }
+ ]
+}
