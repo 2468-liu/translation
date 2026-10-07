@@ -22,9 +22,27 @@ if (Test-Port 8080) {
     # Audio-native pipeline: one model both hears and translates, so whisper and
     # the text model are not started at all.
     #
-    # The projector stays on the CPU (--mmproj-device none). That is what makes
-    # this fit a 4GB card, and it was measured at 3774 MiB of 4096 with no
-    # measurable quality loss.
+    # The projector stays on the CPU (--mmproj-device none), and the reason is
+    # GPU contention -- not memory.
+    #
+    # It was originally set because the card was believed to be at 3774 of 4096
+    # MiB with 320 to spare, leaving no room for a 532 MB projector. That figure
+    # was wrong by half: nvidia-smi reads 1842, and the projector does fit on the
+    # GPU with room over.
+    #
+    # Measured anyway, changing nothing else, interleaved, three rounds each:
+    # projector on CPU   first packet at  920 ms, 1756 MiB
+    # projector on GPU   first packet at 3442 ms, 2528 MiB
+    # Same quality either way -- zero bad fragments in both -- so the 3.7x is
+    # pure latency, not different output.
+    #
+    # The mechanism: the projector is the audio encoder, and on the GPU its
+    # prefill queues behind the main model's compute instead of running beside
+    # it. On the CPU the two overlap. So the encoder on the CPU is not a
+    # bottleneck to be removed, it is free parallelism to be kept -- which is
+    # also why speculative decoding measured faster here than expected.
+    #
+    # Do not move it to the GPU to "save memory". The GPU is where it lost.
     #
     # MTP is off, and enabling it breaks audio requests rather than slowing them.
     #

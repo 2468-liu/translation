@@ -41,8 +41,14 @@ LLAMA_MODEL = "hy-mt2-1.8b"
 USE_NLLB = False
 
 # Audio-native model (gemma-audio branch): one model both hears and translates, so
-# whisper and hy-mt2 are no longer loaded. The projector stays on CPU, which is
-# what keeps this inside a 4GB card.
+# whisper and hy-mt2 are no longer loaded.
+#
+# The projector stays on the CPU because that is where it is faster, not because
+# it is the only place it fits -- it would fit on the GPU with room over, and
+# measured there it is 3.7x slower (first packet 3442ms against 920ms). The
+# encoder's prefill competes with the main model for one card; on the CPU the two
+# overlap. See scripts/start.ps1 for the full numbers and scripts/sweep_mmproj.ps1
+# to reproduce them.
 AUDIO_MODEL_URL = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1/chat/completions"
 AUDIO_MODEL_NAME = "local"
 # The model will answer in English or start reasoning unless told not to. A
