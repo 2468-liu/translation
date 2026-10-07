@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import socket
+import subprocess
 import threading
+from pathlib import Path
 
 from websockets.asyncio.server import serve
 
@@ -195,6 +197,36 @@ async def handle(ws, asr: AsrEngine | None) -> None:
         await session.close()
 
 
+def _build_revision() -> str:
+    """Which tree this process is, in one token, so daily use can tell versions apart.
+
+    Comparing two builds by behaviour alone is how a merge gets judged on effects
+    nobody intended: the transcript looks different and the only question is
+    whether it is the change or the checkout. So the revision goes on the same
+    line as the configuration.
+
+    Dirty is reported separately because that is the more common case during
+    ordinary editing, and a bare sha would otherwise read as a clean identifier.
+    """
+    def run(*cmd: str) -> str:
+        try:
+            done = subprocess.run(["git", *cmd], cwd=str(_repo_root()),
+                                  capture_output=True, text=True, timeout=10)
+            return done.stdout.strip() if done.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    sha = run("rev-parse", "--short", "HEAD")[:8]
+    if not sha:
+        return "nogit"
+    status = run("status", "--porcelain")
+    return f"{sha}+dirty" if status else sha
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def _report_effective_config() -> None:
     """One line, machine-readable: what this process is actually running with.
 
@@ -219,6 +251,7 @@ def _report_effective_config() -> None:
         "hold_abs_min_ms": caption_window.HOLD_ABS_MIN_MS,
         "hold_abs_max_ms": caption_window.HOLD_ABS_MAX_MS,
         "readable_ratio": caption_window.READABLE_RATIO,
+        "git_rev": _build_revision(),
         "pid": os.getpid(),
     }
     line = "effective.config " + json.dumps(fields, sort_keys=True)
