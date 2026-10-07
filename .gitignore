@@ -11,15 +11,30 @@ runtime.json
 .venv/
 logs/
 
-# Source recordings sitting in the project root, before conversion to 16k mono.
-# Anchored to the root so it cannot reach into samples/, which is tracked: the
-# tests read the converted clips there and they need to be versioned for a
-# sweep to be reproducible.
+# Media is not versioned. samples/ carries two film excerpts and a meeting
+# recording with other people's voices in it, none of which belongs in the
+# repository, and no sweep needs the binaries committed to be reproducible: the
+# timings JSON next to each clip is what the tests read, and the clips are
+# rebuildable from the user's own recordings.
 #
-# Left unignored, the tree listed six hundred megabytes of unreviewable binaries
-# in every status, which is part of how the new samples ended up sitting
-# untracked without anyone noticing.
-/*.wav
+# An earlier version of this file anchored the rule to the root as "/*.wav" on
+# the reasoning that samples/ was tracked and the tests read it. That reasoning
+# was about the timing files, not the audio, and it let 95 MB of film and a
+# meeting recording in through a single `git add samples/`. Anything ending in a
+# media extension is ignored regardless of directory, with an explicit exception
+# list below for the few files a test genuinely needs.
+*.wav
+*.mp4
+*.webm
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# Exceptions: test inputs small enough to keep. fixtures/ holds one short
+# hand-made clip used by the caption-window repeat tests; the others are
+# rebuilt by scripts from a real recording.
+/fixtures/cc-sixty-seconds-16k.wav
 
 # Cut fragments the cost probes make, one per length and model combination.
 logs/asr_cost/
