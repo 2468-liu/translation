@@ -10,3 +10,16 @@ scripts/*.spec
 runtime.json
 .venv/
 logs/
+
+# Source recordings sitting in the project root, before conversion to 16k mono.
+# Anchored to the root so it cannot reach into samples/, which is tracked: the
+# tests read the converted clips there and they need to be versioned for a
+# sweep to be reproducible.
+#
+# Left unignored, the tree listed six hundred megabytes of unreviewable binaries
+# in every status, which is part of how the new samples ended up sitting
+# untracked without anyone noticing.
+/*.wav
+
+# Cut fragments the cost probes make, one per length and model combination.
+logs/asr_cost/
