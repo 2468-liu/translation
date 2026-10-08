@@ -180,14 +180,16 @@ DEFAULT_CHAIN = "whisper-hy"
 CHAINS = {
     "whisper-hy": {
         "label": "whisper 识别 + 混元翻译",
-        "status": "measured, in use",
+        "status": "whisper measured; translator weights swapped to a fine-tune, unmeasured",
         "asr_backend": "whisper",
         "qwen3_port": 0,
         "measured": "e2e first-translation-to-paint p50 55ms on samples/lecture_mix.wav at "
                     "partial 750; asr p50 829ms, 100% of calls over a 250ms budget, 57.1% "
-                    "of wall clock",
+                    "of wall clock -- all of that on the ORIGINAL Hy-MT2 weights",
         "caveat": "whisper overruns both 250ms and 750ms, so 750 is what makes it usable "
                   "rather than what makes it good",
+        "translator_weights": "Hy-MT2-1.8B-StreamRevise-v4-Q4_K_M.gguf (fine-tuned, "
+                              "subtitle-domain; zero measurements of its own)",
     },
     "qwen3-hy": {
         "label": "Qwen3-ASR 识别 + 混元翻译",
