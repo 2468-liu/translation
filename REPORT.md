@@ -4470,8 +4470,19 @@ popup 状态        未开始
 
 3. **「停止按钮的来源」这类问题，浏览器侧状态和宿主状态要分三态，不是两态。** 我一开始把 `up` 加成布尔量就以为完事了，结果「宿主不可达」被折叠进「false」，等于把「不知道」报成「没有」。**三态里最容易被吃掉的就是「不知道」。**
 
+### 同一个 BOM 陷阱，今天第三次
+
+提交信息我照惯例用 `Set-Content -Encoding UTF8` 写，`git log` 的标题就带上了
+`U+FEFF`。同一天、同一个仓库、同一行写法——**而我是在写完上面那条「PS 5.1 的
+UTF8 就是带 BOM 的」之后做的**。改法是 `[System.IO.File]::WriteAllText(path, text,
+UTF8Encoding($false))`，顺带发现 **`Out-File -Encoding utf8NoBom` 在 PS 5.1 里根本
+不存在**（那是 PS 6+ 的参数），所以「换个 cmdlet 就躲开」这条路也是断的。
+
+**判据：写文本文件时，唯一安全的做法是显式指定 `UTF8Encoding($false)`，没有捷径。**
+
 ### 验过的 / 没验的
 
 - **验过**：239 tests pass（新增 3 条钉上面三个 bug）。真起 whisper-hy 后 `runtime.json` 无 BOM、`chain_running='whisper-hy'`。用**真实 native-messaging 协议**问新构建的 exe：`{'ok': True, 'ready': True, 'owned': False, 'up': True, 'chain': 'whisper-hy'}`。`stop_backend()` 1.5s 清空 8765/8080，GPU 归零。
 - **没验**：gemma-e2e 的 `chain_running` 写入**只做了静态验证**。`-DryRun` 在写入块之前就退出，所以 dry run 走不到那里；我没有真起一次 Gemma4 去证明它写出来是 `gemma-e2e` 而不是 null。赋值无条件在分支之前这一点是读出来的，不是跑出来的。
 - **没验**：popup 在浏览器里的实际显示。`node --check` 干净，测试钉了字符串，但「读到 `up:True` 且 `stored.running` 为 false 时状态行说『本地后端仍在运行（不是本次会话启动的）』」这句话我没有在真 Chrome 里看过。**这需要重载扩展。**
+
