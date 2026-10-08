@@ -119,21 +119,23 @@
     background: linear-gradient(90deg, #ffffff, #f4d35e, #ef8354, #d1495b, #7b2cbf, #0077b6, #2a9d8f, #1f2937);
     cursor: pointer;
   }
+  /* One slider rather than two buttons.
+     250 and 750 were the only two values ever offered and both were measured on
+     samples/blog_3min.wav, but the hold work showed the useful range is continuous:
+     the caption floor binds below 620ms and nothing binds above 1000ms because the
+     reference table tops out at 4200. Offering a continuum lets the next reader use
+     what was measured instead of re-picking from a menu of two. */
   .cadence {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr auto;
+    align-items: center;
     gap: 8px;
   }
-  .cadence button {
-    padding: 8px;
-    background: #e7e0d6;
+  .cadence output {
+    font-variant-numeric: tabular-nums;
     color: #4a443b;
-    border: 1px solid #d6cfc5;
-  }
-  .cadence button[aria-pressed="true"] {
-    background: #806900;
-    color: #fff;
-    border-color: #806900;
+    min-width: 5.5ch;
+    text-align: right;
   }
   .hint {
     margin: 6px 0 0;
@@ -171,12 +173,22 @@
     <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
     <label for="fontColor">字幕颜色</label>
     <input id="fontColor" type="color" value="#ffffff" title="选择字幕颜色" />
-    <label for="cadenceFast">改口节奏</label>
+    <label for="cadenceSlider">改口节奏 <span id="cadenceValue">750</span> 毫秒</label>
     <div class="cadence">
-      <button id="cadenceFast" type="button" data-ms="250" aria-pressed="true">250 毫秒（跟得紧）</button>
-      <button id="cadenceSlow" type="button" data-ms="750" aria-pressed="false">750 毫秒（少改口）</button>
+      <input id="cadenceSlider" type="range" min="250" max="1000" step="50" value="750" />
+      <output id="cadenceReadout" for="cadenceSlider">750</output>
     </div>
-    <p class="hint" id="cadenceHint">识别中途每隔多久回一次字幕。750 改口更少，但首句也更晚出现。</p>
+    <p class="hint" id="cadenceHint">识别中途每隔多久回一次字幕。小改口多但跟得紧，大改口少但首句更晚。</p>
+  </div>
+  <div class="section">
+    <p class="section-title">识别线路</p>
+    <label for="chainSelect">线路</label>
+    <select id="chainSelect">
+      <option value="whisper-hy">whisper 识别 + 混元翻译（默认，端到端最快）</option>
+      <option value="qwen3-hy">Qwen3-ASR 识别 + 混元翻译（识别快 5.9 倍，但改口多 2.9 倍）</option>
+      <option value="gemma-e2e" disabled>音频直出（未实现，卡在 4GB 卡的预填充）</option>
+    </select>
+    <p class="hint" id="chainHint">切换会重启后端，大约 10 秒；字幕会中断一下。切不过去会自动回退。</p>
   </div>
   <div class="section">
     <p class="section-title">翻译设置</p>

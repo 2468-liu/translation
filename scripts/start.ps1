@@ -252,6 +252,41 @@ if ($backend.installed) { Write-Note "llama    已装：$($backend.installed)（
 # decides it (server/config.py MT_BACKEND). Read here rather than asked of Python
 # because the port has to be known before Python starts -- and because a
 # translator on the wrong port looks exactly like a translator that is not there.
+# Which pipeline to run. A chain is the whole thing -- which models, which processes,
+# which ports -- not a single recogniser. runtime.json holds the choice and its
+# provenance; the extension writes it and then asks for a restart, so the value is a
+# server-side property rather than a UI preference that only lives in chrome.storage.
+#
+# Read here rather than passed in, because start.ps1 is what the native host invokes
+# with no arguments at all. An unreadable runtime.json falls back to the default chain
+# and says so, rather than refusing to start: a corrupt preference should cost the
+# preference, not the backend.
+$Chain = if ($env:TRANSLATION_CHAIN) { $env:TRANSLATION_CHAIN } else { "whisper-hy" }
+$Qwen3Port = 8099
+if (Test-Path (Join-Path $Root "runtime.json")) {
+    try {
+        $runtimeForChain = Get-Content (Join-Path $Root "runtime.json") -Raw | ConvertFrom-Json
+        if (-not $env:TRANSLATION_CHAIN -and $runtimeForChain.chain) { $Chain = $runtimeForChain.chain }
+        if ($runtimeForChain.qwen3_port) { $Qwen3Port = [int]$runtimeForChain.qwen3_port }
+        if ($runtimeForChain.asr_backend) { $env:TRANSLATION_ASR_BACKEND = $runtimeForChain.asr_backend }
+    } catch {
+        Write-Note "runtime.json 的 chain 读不出来（$($_.Exception.Message)）；按 whisper-hy 继续"
+    }
+}
+
+# Only two of the three have an implementation. The audio-native chain would replace
+# both models with one, which is not what this script knows how to start, so it is named
+# and refused rather than silently mapped onto whisper -- an unimplemented chain that
+# starts would be indistinguishable from an implemented one that works.
+$AsrBackend = if ($env:TRANSLATION_ASR_BACKEND) { $env:TRANSLATION_ASR_BACKEND.ToLower() } else { "whisper" }
+switch ($Chain) {
+    "whisper-hy" { $AsrBackend = "whisper" }
+    "qwen3-hy" { $AsrBackend = "qwen3" }
+    default { throw "未实现的链路：$Chain（可用：whisper-hy、qwen3-hy）。音频直出（gemma-e2e）未实现。" }
+}
+$env:TRANSLATION_ASR_BACKEND = $AsrBackend
+Write-Note "chain    $Chain  (asr=$AsrBackend)"
+
 $MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLower() } else { "hy-mt2" }
 $MtPort = if ($MtBackend -eq "gemma4") { 8082 } else { 8080 }
 Write-Note "mt       $MtBackend  port $MtPort"
@@ -473,6 +508,80 @@ if (Test-Port $MtPort) {
             "-lv", "4"
         ) -RedirectStandardOutput $LlamaOut -RedirectStandardError $LlamaErr -WindowStyle Hidden
         Write-Note "starting llama-server $($gguf.Name)"
+
+        # The Qwen3 recogniser needs a second llama-server, and this has to be here
+        # rather than in the extension. The gap it fills is why: Qwen3AsrEngine posts to
+        # 127.0.0.1:8099, and nothing used to start that port, so selecting the chain
+        # without this would give a backend whose every recognition call hangs -- and
+        # hangs without an exception, which is how the first attempt at this read as a
+        # broken model rather than a missing process.
+        #
+        # Absolute paths, because Start-Process resolves a relative -m against
+        # -WorkingDirectory, which is the backend install directory. That produced a
+        # server that died on a model path it could not find.
+        if ($AsrBackend -eq "qwen3") {
+            $qwenModel = Join-Path $Root $env:TRANSLATION_QWEN3_ASR_MODEL
+            $qwenMmproj = Join-Path $Root $env:TRANSLATION_QWEN3_ASR_MMPROJ
+            if (-not $env:TRANSLATION_QWEN3_ASR_MODEL) {
+                $qwenModel = Join-Path $Root "models\Qwen-ASR-0.6B\Qwen3-ASR-0.6B-Q8_0.gguf"
+                $qwenMmproj = Join-Path $Root "models\Qwen-ASR-0.6B\mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+            }
+            # 2.53.0 is the only installed build with the multimodal projector path this
+            # needs. hy-mt2 stays on 2.47.0, which is what every number in REPORT.md was
+            # measured on, so the two run different builds on purpose.
+            $llama53 = Get-ChildItem "$env:USERPROFILE\.lmstudio\extensions\backends\llama.cpp-$LlamaPlatform-2.53.0\llama-server.exe" -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not (Test-Path $qwenModel) -or -not (Test-Path $qwenMmproj)) {
+                Write-Note "Qwen3-ASR 权重缺失（$qwenModel / $qwenMmproj）；识别会卡住，改用 whisper"
+                $env:TRANSLATION_ASR_BACKEND = "whisper"
+                $AsrBackend = "whisper"
+                Write-Note "chain    实际启动 whisper-hy"
+            } elseif (-not $llama53) {
+                Write-Note "找不到 llama 2.53.0（Qwen3-ASR 需要）；识别会卡住，改用 whisper"
+                $env:TRANSLATION_ASR_BACKEND = "whisper"
+                $AsrBackend = "whisper"
+                Write-Note "chain    实际启动 whisper-hy"
+            } elseif (Test-Port $Qwen3Port) {
+                Write-Note "端口 $Qwen3Port 已被占用，沿用现有的 Qwen3-ASR 服务"
+            } else {
+                # -np 1. Measured: with four slots the 30-second repetition events were
+                # still bounded to the same 128-token cap, so slots were not the trigger,
+                # but one slot removes the concurrency the pipeline does not need anyway.
+                Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port (llama 2.53.0, -np 1, -c 4096)"
+                Start-Process -FilePath $llama53.FullName -WorkingDirectory (Split-Path $llama53.FullName) -ArgumentList @(
+                    "-m", $qwenModel,
+                    "--mmproj", $qwenMmproj,
+                    "--host", "127.0.0.1",
+                    "--port", "$Qwen3Port",
+                    "-ngl", "99",
+                    "-c", "4096",
+                    "-t", "4",
+                    "-np", "1"
+                ) -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
+                   -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden
+                # Poll rather than sleep. Loading the audio tower takes longer than the
+                # python service does, so a fixed wait would hand over a half-ready
+                # recogniser and the first three recognitions would be slow for no
+                # reason a reader could see.
+                $qwenReady = $false
+                for ($i = 0; $i -lt 60; $i++) {
+                    Start-Sleep -Seconds 5
+                    if (Test-Port $Qwen3Port) { $qwenReady = $true; break }
+                }
+                if ($qwenReady) {
+                    Write-Note "Qwen3-ASR ready on $Qwen3Port"
+                } else {
+                    # Falling back beats starting a backend whose recogniser cannot answer.
+                    # The reason goes to the log because there is nowhere else for it to
+                    # go: the extension is told the backend started, and a backend on the
+                    # wrong chain is exactly the kind of thing that must be visible.
+                    Write-Note "Qwen3-ASR 在 75 秒内没就绪；改用 whisper 启动"
+                    $env:TRANSLATION_ASR_BACKEND = "whisper"
+                    $AsrBackend = "whisper"
+                    Write-Note "chain    实际启动 whisper-hy"
+                }
+            }
+        }
     }
 }
 

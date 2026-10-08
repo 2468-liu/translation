@@ -26,6 +26,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     );
     return true;
   }
+  if (message.type === "switch-chain") {
+    switchChain(message.chain).then(
+      (reply) => sendResponse(reply),
+      (error) => sendResponse({ ok: false, error: String((error && error.message) || error) })
+    );
+    return true;
+  }
   if (message.type === "capture-error") {
     captureError = message.error || "";
   }
@@ -94,6 +101,23 @@ async function shutdownBackend() {
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "本地后端停止失败");
   }
+}
+
+async function switchChain(chain) {
+  // The host owns the kill-and-restart: this file never kills a process. A chain is a
+  // set of models and ports, and deciding which of them to keep alive is exactly the
+  // knowledge that belongs in one place -- the same reason the pid file and the port
+  // list live in native_host.py rather than here.
+  //
+  // 180s because the host waits 20s for teardown, then start_backend waits up to 90s,
+  // and a failed attempt is followed by a full second start for the fallback. Anything
+  // less would time out on the slow-but-working path and report a failure that did not
+  // happen.
+  const reply = await nativeRequest("switch-chain", 180000, { chain: String(chain || "") });
+  if (!reply) return { ok: false, error: "本地后端没有回应链路切换" };
+  // rolled_back is not an error to hide: the user clicked something that did not work,
+  // and the popup says so rather than quietly showing the old chain.
+  return reply;
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {

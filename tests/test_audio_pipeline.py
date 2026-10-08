@@ -11,7 +11,7 @@ import unittest
 import numpy as np
 
 from server import audio_mt
-from server.config import AUDIO_CHAT_TEMPLATE_KWARGS, AUDIO_SYSTEM_PROMPT
+from server.config import AUDIO_CHAT_TEMPLATE_KWARGS, AUDIO_SYSTEM_PROMPT, SAMPLE_RATE
 from server.vad import FRAME, audio_model_tuning, whisper_tuning
 
 
@@ -156,16 +156,34 @@ class SplitterLimitTests(unittest.TestCase):
         self.assertNotIn("partial", kinds)
 
     def test_whisper_tuning_still_emits_partials(self):
+        """The shipped tuning must still produce partials on an utterance it can reach.
+
+        The name of this test is the whole point: it asks about whisper_tuning(), the
+        configuration that actually ships, so it cannot use a cadence of its own. It
+        used a 9-frame utterance, 288ms, which only produced a partial while
+        PARTIAL_INTERVAL_MS was 250. At the shipped 750 that pattern is shorter than the
+        cadence and no partial can fire, so the test would have been asserting something
+        the product does not do.
+
+        32 frames is 1024ms, comfortably past a 750ms cadence and past the 250ms early
+        close, so it exercises the shipped path rather than a corner of it.
+        """
         from server.vad import UtteranceSplitter
 
-        speech = [True] * 9 + [False] * 5
+        spoken = 32
+        speech = [True] * spoken + [False] * 5
         splitter = UtteranceSplitter(FakeVad(speech), tuning=whisper_tuning())
         payload = np.concatenate(
-            [np.ones(FRAME, dtype=np.float32) for _ in range(9)]
+            [np.ones(FRAME, dtype=np.float32) for _ in range(spoken)]
             + [np.zeros(FRAME, dtype=np.float32) for _ in range(5)]
         )
         kinds = [k for k, _a, _f in splitter.push(payload)]
+
         self.assertIn("partial", kinds)
+        # And the utterance has to be long enough for the shipped cadence to be able
+        # to fire at all, so a future default raise fails here with the reason rather
+        # than as a StopIteration somewhere further down.
+        self.assertGreater(spoken * FRAME * 1000 / SAMPLE_RATE, whisper_tuning().partial_interval_ms)
 
 
 class MessageTests(unittest.TestCase):

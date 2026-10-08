@@ -15,6 +15,49 @@ from server.vad import (
 )
 
 
+def splitter_for(pattern, **over):
+    """A splitter whose cadence the test chooses, not one it inherits.
+
+    These tests build utterances of 9 to 13 frames, which is 288 to 416ms at FRAME's
+    32ms. They passed for the whole project because PARTIAL_INTERVAL_MS was 250, so a
+    partial landed inside every one of them. Raising the default to 750 made seven fail
+    with no behaviour change: they were asserting on a cadence they had never named.
+
+    The fix is to state the cadence, because that is what each of them is actually
+    about -- the early-close flag, the suppression of a speech frame, the merge. So
+    they ask for a cadence short enough to fire inside a 288ms utterance, and nothing
+    about the shipped default reaches them. The shipped value is pinned once, at the
+    bottom, against server/config.py.
+    """
+    base = dict(
+        min_silence_ms=400,
+        max_utterance_ms=12_000,
+        speech_pad_ms=VAD_SPEECH_PAD_MS,
+        early_end_ms=EARLY_END_SILENCE_MS,
+        soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+        soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+        partial_interval_ms=120,
+        name="test",
+        merge_window_ms=2000,
+    )
+    base.update(over)
+    return UtteranceSplitter(FakeVad(pattern), tuning=Tuning(**base))
+
+
+class ShippedCadenceTests(unittest.TestCase):
+    def test_the_default_is_750(self):
+        """Pinned here rather than only in config.py so the number these tests used to
+        depend on by accident has one visible home."""
+        from server import config
+
+        self.assertEqual(config.PARTIAL_INTERVAL_MS, 750)
+
+    def test_the_test_cadence_is_shorter_than_the_shortest_utterance_these_tests_use(self):
+        """Otherwise the helper's 120ms stops being enough and the failures come back
+        as something that looks like a regression in the splitter."""
+        self.assertLess(120, 9 * FRAME * 1000 // SAMPLE_RATE)
+
+
 class FakeVad:
     def __init__(self, speech):
         self.speech = iter(speech)
@@ -49,7 +92,7 @@ def _kinds(events):
 class VadSuppressionTests(unittest.TestCase):
     def test_non_speech_frames_are_suppressed_inside_utterance(self):
         speech = [True] * 9 + [False] * 13
-        splitter = UtteranceSplitter(FakeVad(speech))
+        splitter = splitter_for(speech)
         payload = np.concatenate(
             [np.ones(FRAME, dtype=np.float32) for _ in range(9)]
             + [np.full(FRAME, 0.4, dtype=np.float32) for _ in range(13)]
@@ -62,7 +105,7 @@ class VadSuppressionTests(unittest.TestCase):
         assert np.max(np.abs(end_audio[9 * FRAME :])) == 0.0
 
     def test_speech_frame_is_not_suppressed(self):
-        splitter = UtteranceSplitter(FakeVad([True] * 9))
+        splitter = splitter_for([True] * 9)
         events = splitter.push(np.ones(FRAME * 9, dtype=np.float32))
 
         partial_audio = next(audio for kind, audio, _flag in events if kind == "partial")
@@ -73,7 +116,7 @@ class VadEarlyCloseTests(unittest.TestCase):
     def test_early_partial_precedes_the_closing_end(self):
         """One partial during the150ms pause, and the end may reuse its text."""
         speech = [True] * 9 + [False] * 13
-        splitter = UtteranceSplitter(FakeVad(speech))
+        splitter = splitter_for(speech)
 
         events = splitter.push(_payload(9, 13))
         flags = _kinds(events)
@@ -85,13 +128,13 @@ class VadEarlyCloseTests(unittest.TestCase):
         assert flags[end[0]][1] is True
 
     def test_no_early_partial_without_a_pause(self):
-        splitter = UtteranceSplitter(FakeVad([True] * 9))
+        splitter = splitter_for([True] * 9)
         events = splitter.push(_payload(9, 0))
         assert [flag for kind, _audio, flag in events if kind == "partial"] == [False]
 
     def test_end_audio_keeps_only_a_short_release(self):
         speech = [True] * 9 + [False] * 13
-        splitter = UtteranceSplitter(FakeVad(speech))
+        splitter = splitter_for(speech)
 
         events = splitter.push(_payload(9, 13))
         end_audio = next(audio for kind, audio, _flag in events if kind == "end")
@@ -103,7 +146,7 @@ class VadEarlyCloseTests(unittest.TestCase):
 
     def test_early_partial_starts_before_the_pause_is_over(self):
         speech = [True] * 9 + [False] * 13
-        splitter = UtteranceSplitter(FakeVad(speech))
+        splitter = splitter_for(speech)
 
         events = splitter.push(_payload(9, 13))
         early_audio = next(
@@ -122,7 +165,7 @@ class VadEarlyCloseTests(unittest.TestCase):
         stops at the first pause.
         """
         speech = [True] * 12 + [False] * 6 + [True] * 4 + [False] * 13
-        splitter = UtteranceSplitter(FakeVad(speech))
+        splitter = splitter_for(speech)
 
         flags = _kinds(splitter.push(_frames(speech)))
 
@@ -141,7 +184,7 @@ class VadSoftCutTests(unittest.TestCase):
         def ends(sample: int) -> bool:
             pattern = [True] * sample + pause
             return any(kind == "end" for kind, _a, _f in
-                       UtteranceSplitter(FakeVad(pattern)).push(_frames(pattern)))
+                       splitter_for(pattern).push(_frames(pattern)))
 
         assert ends(long_speech)
         assert not ends(short_speech)
@@ -149,16 +192,16 @@ class VadSoftCutTests(unittest.TestCase):
     def test_short_speech_still_waits_for_the_full_close(self):
         pause = [False] * 7  # 224ms: enough for a soft cut, not for a normal close
         short = [True] * 100 + pause
-        events = UtteranceSplitter(FakeVad(short)).push(_frames(short))
+        events = splitter_for(short).push(_frames(short))
         assert not any(kind == "end" for kind, _a, _f in events)
 
         longer = [True] * 100 + [False] * 13  # 416ms
-        events = UtteranceSplitter(FakeVad(longer)).push(_frames(longer))
+        events = splitter_for(longer).push(_frames(longer))
         assert any(kind == "end" for kind, _a, _f in events)
 
     def test_utterance_is_capped(self):
         pattern = [True] * (MAX_UTTERANCE_MS // (FRAME * 1000 // SAMPLE_RATE) + 25)
-        events = UtteranceSplitter(FakeVad(pattern)).push(_frames(pattern))
+        events = splitter_for(pattern).push(_frames(pattern))
 
         flags = _kinds(events)
         assert any(kind == "end" for kind, _flag in flags)
@@ -262,7 +305,7 @@ class VadMergeShortUtteranceTests(unittest.TestCase):
         # 160ms is under the shipped 250ms gate, so with the shipped settings it is
         # still discarded -- #6 changes the policy, not this default.
         pattern = [True] * 5 + [False] * 13
-        events = UtteranceSplitter(FakeVad(pattern)).push(_frames(pattern))
+        events = splitter_for(pattern).push(_frames(pattern))
         assert not any(kind == "end" for kind, _a, _f in events)
 
 

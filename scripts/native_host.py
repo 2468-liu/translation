@@ -106,6 +106,64 @@ def process_exists(pid: int) -> bool:
     return str(pid) in output and ("powershell.exe" in output or "pwsh.exe" in output)
 
 
+# The ports this project owns. Written down rather than discovered, because "kill
+# everything on a port I happen to know about" is the only shape that cannot leave an
+# orphan behind: a port nobody remembered becomes an invisible process holding VRAM,
+# which is the same failure the pid file was supposed to prevent.
+OWNED_PORTS = (WS_PORT, LLAMA_PORT, 8099)
+
+
+def pids_on_port(port: int) -> list[int]:
+    """Processes listening on a port, read from netstat.
+
+    netstat rather than Get-NetTCPConnection because that is CIM underneath and CIM is
+    refused in a confined session (probes.ps1 records the same refusal), and a probe
+    that cannot run reads as a probe that passed. netstat gives pid and state as text.
+    """
+    result = subprocess.run(
+        ["netstat", "-ano", "-p", "TCP"],
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[-2] != "LISTENING":
+            continue
+        local = parts[1]
+        if not local.endswith(f":{port}"):
+            continue
+        try:
+            pid = int(parts[-1])
+        except ValueError:
+            continue
+        if pid and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
+def kill_pid_tree(pid: int) -> str | None:
+    """taskkill /T /F, returning an error string instead of raising.
+
+    The returncode is reported rather than discarded. Without it "access denied",
+    "no such process" and "did not exit in time" were the same message, which is three
+    different problems and the reason a stop could not be retried.
+    """
+    result = subprocess.run(
+        ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    if result.returncode == 0:
+        return None
+    detail = (result.stderr or result.stdout or "").strip()
+    return f"taskkill {pid} 返回 {result.returncode}（{detail or '无输出'}）"
+
+
 def read_pid() -> int | None:
     """The first candidate naming a process that still exists.
 
@@ -281,6 +339,122 @@ def stop_backend() -> dict:
     return {"ok": False, "error": reason, "retryable": True, "pid": pid}
 
 
+def _runtime_path() -> Path:
+    return ROOT / "runtime.json"
+
+
+def read_chain() -> str:
+    """The chain currently recorded, or the default when the file is unusable."""
+    try:
+        data = json.loads(_runtime_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        return "whisper-hy"
+    value = data.get("chain")
+    return value if isinstance(value, str) and value else "whisper-hy"
+
+
+def write_chain(chain: str) -> str | None:
+    """Record the chain. Returns an error string instead of raising.
+
+    Writing before starting is what makes a failed start recoverable: the file holds
+    the intended chain, so the fallback has something to put back. It also means a
+    crash between write and start leaves the file naming a chain that is not running,
+    which restart_chain reconciles by starting whatever is recorded.
+    """
+    try:
+        data = json.loads(_runtime_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        return f"runtime.json 读不出来: {exc}"
+    data["chain"] = chain
+    try:
+        _runtime_path().write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return f"runtime.json 写不进去: {exc}"
+    return None
+
+
+def kill_everything() -> list[str]:
+    """Stop the whole backend and return the problems, if any.
+
+    The scope is fixed and written down: every process listening on the three ports
+    this project owns, plus any live entry in the pid file. Not "all llama-server on
+    this machine" -- that would take down an LM Studio chat model the user has open --
+    and not "the pid file only", which is what left the orphan holding VRAM after a
+    stop that failed halfway.
+
+    Logs are flushed by waiting for the ports to close rather than by asking the
+    process to flush: llama-server writes asynchronously, so the last few lines of
+    llama*.err can be lost. That is accepted and documented rather than solved, because
+    a truncated log tail on a deliberate kill is not a fault worth a shutdown hook.
+    """
+    problems: list[str] = []
+    targets: list[int] = []
+    for port in OWNED_PORTS:
+        for pid in pids_on_port(port):
+            if pid not in targets:
+                targets.append(pid)
+    pid_file_pid = read_pid()
+    if pid_file_pid is not None and pid_file_pid not in targets:
+        targets.append(pid_file_pid)
+
+    for pid in targets:
+        problem = kill_pid_tree(pid)
+        if problem:
+            problems.append(problem)
+
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if not any(listening(port) for port in OWNED_PORTS):
+            break
+        time.sleep(0.2)
+    remove_pid()
+
+    still = [port for port in OWNED_PORTS if listening(port)]
+    if still:
+        problems.append(f"端口仍在监听: {', '.join(str(p) for p in still)}")
+    return problems
+
+
+def restart_chain(chain: str) -> dict:
+    """Switch to a chain by stopping everything and starting it again.
+
+    Full teardown rather than a live switch, on purpose. A hot swap would need to know
+    which processes to keep, and "which processes should survive a chain change" is a
+    question that has to be re-answered every time a chain gains a model. Two actions --
+    all down, all up -- cannot be wrong that way.
+
+    The fallback is the point of the whole thing: a chain that will not start has to
+    leave a working backend behind, because the alternative is editing a JSON file by
+    hand to recover from a UI click. The last known-good chain is kept here rather than
+    read from the file, because the file now names the chain being tried.
+    """
+    if chain not in ("whisper-hy", "qwen3-hy"):
+        return {"ok": False, "error": f"未实现的链路: {chain}", "rejected": True}
+
+    previous = read_chain()
+    note = write_chain(chain)
+    if note:
+        return {"ok": False, "error": note}
+
+    problems = kill_everything()
+    started = start_backend(audio_only=False)
+    if started.get("ok"):
+        return {"ok": True, "chain": chain, "previous": previous,
+                "warnings": problems or None}
+
+    # The new chain did not come up. Put the old one back rather than leaving nothing.
+    detail = started.get("error", "未知原因")
+    write_chain(previous)
+    kill_everything()
+    restored = start_backend(audio_only=False)
+    if restored.get("ok"):
+        return {"ok": False, "chain": previous, "rolled_back": True,
+                "error": f"切到 {chain} 失败（{detail}），已回退到 {previous}"}
+    return {"ok": False, "chain": previous, "rolled_back": False,
+            "error": f"切到 {chain} 失败（{detail}），回退到 {previous} 也失败了"}
+
+
 def handle(message: dict) -> dict:
     kind = message.get("type")
     if kind == "ensure":
@@ -288,7 +462,10 @@ def handle(message: dict) -> dict:
     if kind == "shutdown":
         return stop_backend()
     if kind == "status":
-        return {"ok": True, "ready": backend_ready(), "owned": read_pid() is not None}
+        return {"ok": True, "ready": backend_ready(), "owned": read_pid() is not None,
+                "chain": read_chain()}
+    if kind == "switch-chain":
+        return restart_chain(str(message.get("chain") or ""))
     return {"ok": False, "error": f"未知命令: {kind}"}
 
 

@@ -142,7 +142,25 @@ QWEN3_ASR_URL = os.environ.get("TRANSLATION_QWEN3_ASR_URL", "http://127.0.0.1:80
 #
 # Responses that hit the cap are dropped whole, not trimmed: see Qwen3AsrEngine.
 QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
-PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
+# How often recognition re-reads the utterance while it is still growing, which is how
+# often the caption can be revised. 250 was the default for the whole project and it is
+# what every earlier number was measured at.
+#
+# 750 now ships, because the two effects pull in opposite directions and on this
+# material the revision count was the one that hurt. Measured on samples/blog_3min.wav
+# at 250: 215 recognitions over 49 utterances, 4.39 per clause, and 112 caption
+# rewrites. At 750 on samples/lecture_mix.wav: 136 recognitions, and the transcript
+# lengths confirm the stream is no longer fragmented -- median 19 characters, 71% over
+# 10, with only 4.4% under 5. The cost is the first line arriving later, which is why
+# this is still adjustable in the extension rather than removed: 250 measured 382ms
+# first-translation-to-paint against 750's 434ms on the same material, a 52ms
+# difference for 3x fewer revisions.
+#
+# The engine matters here more than the number. turbo at 823ms per call cannot keep up
+# with either value -- it overran a 250ms cadence on every one of 215 calls -- so 750 is
+# what makes the current default usable rather than what makes it good. At 750 turbo
+# still used 57.1% of wall clock on lecture_mix.
+PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 750)
 
 # VAD
 VAD_THRESHOLD = 0.5

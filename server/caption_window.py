@@ -246,6 +246,10 @@ class _Caption:
         # Those are different problems and the fix is opposite for each -- the first
         # is the hold being too long, the second is nothing to fix.
         self._pending_since = 0.0
+        # Last cadence the server confirmed, from ack_switch. Recorded and never drawn:
+        # the readout moved to the extension, and this survives so the ack is not a
+        # packet the window silently swallows.
+        self._cadence_applied = 0
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_color = "#ffffff"
@@ -308,22 +312,18 @@ class _Caption:
             pady=0,
         )
 
-        # Read-only cadence readout. The control moved to the browser extension,
-        # which owns the controls and this window owns the display. What stayed is
-        # the feedback: comparing 250 against 750 is something you do while
-        # watching, and a switch that lands silently cannot be judged while
-        # watching. ack_switch already carries the value (server/caption_window.py
-        # ack_switch sends it as switch_ok's payload), so the read path was
-        # already there and the pump was the only thing dropping it.
-        self._cadence_label = tk.Label(
-            self.root,
-            text="250ms",
-            fg="#888888",
-            bg="#000000",
-            font=("Microsoft YaHei", 9),
-            bd=0,
-            padx=4,
-        )
+        # The ms readout that used to sit here is gone, along with show_cadence.
+        #
+        # It was read-only and it was honest feedback: ack_switch carries the value the
+        # server actually applied, so a switch that landed silently was visible. That
+        # argument no longer applies, because the control is now a continuous slider
+        # rather than two buttons -- confirming a choice you just made, by eye, while
+        # watching, is not what anyone uses a slider for. And the extension shows the
+        # applied value itself, so the information did not go away with the pixels.
+        #
+        # What stays is the ack path, because it is the server's confirmation and not a
+        # display decision: ws_server._switch_partial_interval calls ack_switch, which
+        # sends switch_ok, and the pump below still receives it.
 
         self._drag = None
         self._resize_origin = None
@@ -412,12 +412,6 @@ class _Caption:
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
             self.position_lock_control.place_forget()
-        # The readout sits to the right of whichever control is showing, and stays
-        # visible in both modes: noticing that the cadence is not what you think it
-        # is is something you do mid-playback, not at setup.
-        base = 80 if self.text_only else 160
-        self._cadence_label.configure(bg=bg)
-        self._cadence_label.place(x=base, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -736,22 +730,6 @@ class _Caption:
         name = _LANG.get(lang or "", "")
         self.status = f"{name} → 中文" if name and name != "中文" else ""
 
-    def show_cadence(self, ms: int) -> None:
-        """Display the cadence the server has actually applied.
-
-        Read-only on purpose. The buttons that used to live here are gone: the
-        control is in the extension, and a caption window that can also be
-        controlled from two places is a window whose state nobody can predict.
-        The value arrives from ack_switch, which is sent by _switch_partial_interval
-        on the WebSocket path -- so this shows what the server applied rather than
-        what the extension last asked for.
-        """
-        try:
-            value = int(ms)
-        except (TypeError, ValueError):
-            return
-        self._cadence_label.configure(text=f"{value}ms")
-
     def clear(self) -> None:
         """Blank the line but leave the window up and armed.
 
@@ -1061,7 +1039,12 @@ class _Caption:
             elif kind == "clear":
                 self.clear()
             elif kind == "switch_ok":
-                self.show_cadence(value)
+                # The server's confirmation that it applied the cadence, kept as state
+                # and nothing more. The readout is gone from the window and the
+                # extension shows the value, but the ack still has to land here:
+                # it is what proves the frame arrived, and a control whose confirmation
+                # is dropped is a control that cannot be judged while watching.
+                self._cadence_applied = int(value) if value is not None else 0
             elif kind == "raise":
                 if self.line:
                     self.show()

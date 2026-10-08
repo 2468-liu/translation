@@ -120,18 +120,33 @@ class CadenceHasExactlyOneControlPathTests(unittest.TestCase):
         self.assertIn("_STATE_SOCK.sendto(", self.caption)
         self.assertIn("STATE_PORT", self.caption)
 
-    def test_cadence_stays_readable_on_the_window(self):
-        # The readout is fed by ack_switch, which already carried the value; the
-        # pump was the only thing dropping it. Losing this leaves a switch that
-        # lands silently, which cannot be judged while watching.
-        self.assertIn("def show_cadence", self.caption)
-        self.assertIn('self._cadence_label.configure(text=f"{value}ms")', self.caption)
-        self.assertIn("self.show_cadence(value)", self.caption)
+    def test_the_ack_still_lands_even_though_the_readout_is_gone(self):
+        """The window no longer draws the value, and it still has to receive it.
+
+        ack_switch is the server's confirmation that it applied the cadence. Dropping
+        it on the way to the window would leave a control that lands silently, which
+        is the failure this whole test file exists to prevent -- it just moves from
+        "drawn in the wrong place" to "not observable at all". So the pump keeps the
+        frame and records it as state.
+        """
+        self.assertIn('kind == "switch_ok"', self.caption)
+        self.assertIn("self._cadence_applied", self.caption)
+        self.assertIn("def ack_switch", self.caption)
+        self.assertIn('_send("switch_ok"', self.caption)
+        # And the drawing is really gone, rather than merely unused.
+        self.assertNotIn("def show_cadence", self.caption)
+        self.assertNotIn("_cadence_label", self.caption)
 
     def test_the_extension_still_owns_the_control(self):
         self.assertIn('type: "cadence"', self.popup)
-        self.assertIn('data-ms="250"', (ROOT / "extension" / "popup.html").read_text(encoding="utf-8"))
-        self.assertIn('data-ms="750"', (ROOT / "extension" / "popup.html").read_text(encoding="utf-8"))
+        html = (ROOT / "extension" / "popup.html").read_text(encoding="utf-8")
+        self.assertIn('id="cadenceSlider"', html)
+        # The caption window used to carry two buttons with these values and a
+        # data-ms attribute each; asserting on those pinned a menu of two. The control
+        # is a range now, so what has to hold is that the extension still owns it and
+        # that no control is left behind on the window.
+        self.assertNotIn('id="cadenceFast"', html)
+        self.assertNotIn('id="cadenceSlow"', html)
 
 
 class WebSocketConfigCarriesTheSwitchTests(unittest.TestCase):
@@ -162,19 +177,41 @@ class WebSocketConfigCarriesTheSwitchTests(unittest.TestCase):
         # Stored, or a fresh start would silently revert to the default.
         self.assertIn("chrome.storage.local.set({ partialIntervalMs", self.popup)
 
-    def test_popup_offers_exactly_the_two_cadences_under_test(self):
-        self.assertIn('data-ms="250"', self.popup_html)
-        self.assertIn('data-ms="750"', self.popup_html)
+    def test_popup_offers_the_measured_range(self):
+        """250 to 1000 in steps of 50, and the slider's own bounds are the claim.
+
+        Both ends are measured rather than chosen: below 620ms the caption hold floor
+        stops clamping anything, so a lower bound would be offering a setting that
+        cannot change the output; above 1000ms the reference table tops out at 4200ms
+        and only the first-line delay grows. A wider range would advertise values no
+        measurement covers.
+        """
+        self.assertIn('min="250"', self.popup_html)
+        self.assertIn('max="1000"', self.popup_html)
+        self.assertIn('step="50"', self.popup_html)
+        for name, value in (("CADENCE_MIN_MS", 250), ("CADENCE_MAX_MS", 1000),
+                            ("CADENCE_STEP_MS", 50)):
+            self.assertIn(f"{name} = {value}", self.popup)
+
+    def test_every_sent_value_is_inside_the_slider_bounds(self):
+        """A stored value from an older build can be anything, and the server applies
+        whatever arrives without clamping it. If the popup forwards it unchecked then
+        a stale 150 reaches the splitter, so the clamp has to be on the send path and
+        not only on the widget."""
+        for snippet in ("clampCadence(cadenceSlider.value)",
+                        "chrome.storage.local.set({ partialIntervalMs: v })"):
+            self.assertIn(snippet, self.popup)
 
     def test_popup_default_matches_the_server_default(self):
         # Otherwise pressing 开始 silently changes the cadence: the extension
         # sends its stored value on the opening config frame, and the server
-        # applies whatever arrives.
+        # applies whatever arrives. This is the invariant that used to be violated by
+        # the default moving to 750 on the server while the popup still sent 250.
         from server import config
 
-        self.assertIn("partialIntervalMs: CADENCE_MS.fast", self.popup)
-        self.assertEqual(config.PARTIAL_INTERVAL_MS, 250)
-        self.assertIn("fast: 250", self.popup)
+        self.assertIn("partialIntervalMs: DEFAULT_CADENCE_MS", self.popup)
+        self.assertEqual(config.PARTIAL_INTERVAL_MS, 750)
+        self.assertIn("const DEFAULT_CADENCE_MS = 750", self.popup)
 
 
 if __name__ == "__main__":
