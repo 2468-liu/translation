@@ -62,12 +62,36 @@ class HoldTests(unittest.TestCase):
         self.assertLessEqual(expected, HOLD_ABS_MAX_MS)
 
     def test_a_very_short_line_falls_to_the_floor(self):
-        # 1000ms is what the reference table gives two units. The 0.80 factor at
-        # pace 1.0 takes that to 800, and the floor is 800, so the number that
-        # ships is the floor. Asserting 1000 here is what made the old self-check
-        # wrong rather than the code.
+        # The reference table gives two units 1000ms. What ships is the scaled value
+        # clamped into [HOLD_ABS_MIN_MS, HOLD_ABS_MAX_MS], and which of those two
+        # numbers wins depends on the floor -- at 800 the clamp caught it exactly, at
+        # 600 the scaled value of 800 passes through untouched. Asserting the floor
+        # here rather than the expression made this test a floor test wearing a hold
+        # test's name, and it failed on a floor change that was the whole point.
+        scaled = round(_reference_hold_ms(_read_units("你好")) * speech_hold_factor(1.0))
         self.assertEqual(_reference_hold_ms(_read_units("你好")), 1000)
-        self.assertEqual(hold_ms("你好"), HOLD_ABS_MIN_MS)
+        self.assertEqual(hold_ms("你好"), max(HOLD_ABS_MIN_MS, min(HOLD_ABS_MAX_MS, scaled)))
+
+    def test_the_floor_reaches_at_least_one_band(self):
+        """A floor below 620ms is an inert parameter, and that has to fail loudly.
+
+        The reference table bottoms out at 1000ms for one to three units and the fastest
+        pace factor is 0.62, so 620ms is the smallest value the table and the factor can
+        produce between them. A floor at or below that clamps nothing, and the minimum
+        hold becomes 620 whatever the setting says.
+
+        That was measured, not assumed: at 600 the clamp stopped reaching anything and
+        held-group gap p50 moved 1482ms to 1502ms while every short line lost 180ms. So
+        the change looked harmless on the metric and cost real readability, which is why
+        the floor went back to 800. This test keeps the arithmetic visible so a future
+        attempt to lower it has to read this before running the experiment.
+        """
+        fastest_band = _reference_hold_ms(_read_units("你")) * speech_hold_factor(0.0)
+        self.assertAlmostEqual(fastest_band, 620.0, places=1)
+        self.assertGreater(
+            HOLD_ABS_MIN_MS, fastest_band,
+            "the floor is at or below the 620ms the table can produce, so it clamps "
+            "nothing and the minimum hold is 620 regardless of this setting")
 
     def test_longer_lines_hold_longer(self):
         self.assertGreater(hold_ms("这是十三字的一行参考字幕"), hold_ms(BASE))

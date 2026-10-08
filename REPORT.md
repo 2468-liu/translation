@@ -4193,3 +4193,85 @@ with a 10.9s median segment -- TTS, and the least bursty of the six samples. The
 long pauses. Arrival intervals need measuring on that material, and `enqueue_qlen`
 is the ASR-side input queue, not the translation queue, so it cannot answer it by
 itself.
+
+## 42. The caption stall: attribution first, and the floor was the wrong knob
+
+### What the felt symptom turned out to be
+
+"卡一下，上来，又卡一下" had been chased through the recogniser and the translation
+queue. Neither was it. On `blog_3min` the translation queue is empty (depth p50 0,
+max 3) and translation arrivals are not clustered (0 of 198 gaps under 300ms), so the
+stall was never a queue. The display layer's own dwell was the candidate, and it looked
+the same on both engines: 74% and 72% of gaps over a second, with 1282 and 1420
+characters dropped during them.
+
+### The gap alone could not say why
+
+A dwell is either the hold sitting on text that was already drawable, or the stream
+having nothing to say. Those need opposite responses, and `gap` did not separate them:
+p50 1622ms against a 3.25s reference gap, 68 of 68 gaps over a second, on material with
+18 to 22 second stretches of film-only audio where no caption could be drawn at all.
+
+So `caption.dwell` now carries `why=held|empty` and splits the gap into `waiting` (text
+ready and undrawn) and `idle` (nothing had arrived). One arm, whisper, partial 750:
+
+```
+                      count      >1s      gap p50   waiting p50
+empty                  19  27.5%   17/19       2253ms         0ms
+held                   50  72.5%   38/50       1482ms       808ms
+```
+
+Both were present. 72.5% of gaps had text waiting, and 62.1% of all gap time was
+recoverable by a shorter hold. But the `empty` minority was the longest ones (p50 2253ms
+against 1482ms, max 11377ms) and 100% idle, which no hold change can touch. A hold
+experiment judged on the pooled count would have been credited with the film's silence,
+so the criterion has to be per-cause: `held` moving, `empty` unchanged.
+
+### Settle was ruled out before anything ran
+
+`caption_window.py` already carried the measurement: over 6831 and 6906 decisions at
+`SETTLE_MS` 450 and 150, settle set the deadline 5 times and 2 times while hold set it
+91% and 93%. The reason is structural, not a sample size -- `hold_ms()` never returns
+less than `HOLD_ABS_MIN_MS` while `settle_until` is at most `SETTLE_MS`, so anything
+below the floor cannot bind. Choosing settle would have been a no-op by construction.
+
+### The floor was tried, and put back
+
+`HOLD_ABS_MIN_MS` 800 to 600, one variable, injectable as
+`TRANSLATION_HOLD_ABS_MIN_MS`:
+
+```
+                      floor 800    floor 600
+held gap p50             1482ms      1502ms      noise
+held waiting p50          808ms       820ms      noise
+recoverable share          62.1%       58.6%      noise
+empty group             19 / 2253ms  22 / 2102ms  noise
+```
+
+Nothing moved, and the cost was real: 180ms on every one-to-three-character line, which
+is the only band the floor reaches. The mechanism is that the reference table bottoms
+out at 1000ms and the fastest pace factor is 0.62, so 620ms is the smallest value the
+two can produce together. At 800 the floor still clamped those lines; at 600 it clamped
+nothing at all, which makes 600 an inert parameter rather than a tighter hold. Held back
+to 800, with a test that fails if the floor ever drops to where it cannot bind.
+
+What actually drives the median is the 9-to-18 character band: 13 characters is 2400ms
+in the reference table and 1488ms after the factor, which is the measured held-group p50
+almost exactly. So the remaining candidate is the pace factor floor, and that is a
+readability trade rather than a free win -- it lowers every band at once. Judging it
+means finding where the factor stops being readable, not how much dwell it recovers.
+
+### An inference of mine that was wrong, kept so it is not repeated
+
+The 600 run was chosen because `waiting p50` measured 808ms against a floor of 800, and
+that reads like the floor setting the wait. It does not. `hold_ms` is one candidate
+among several, and the wait it produces is the remainder, not the hold: the smallest
+`waiting` values in the two runs were 54ms and 157ms. Two figures landing near each other
+is not one figure explaining the other. That is the same shape as reading prefix cache
+hits off a latency curve -- a number placed next to another number and treated as a
+relationship it does not have.
+
+### Kept
+
+`why`, `waiting` and `idle` stay, since they are what made the two causes separable.
+The 600 experiment left only the comments and the test. 208 tests pass.

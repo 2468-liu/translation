@@ -41,7 +41,32 @@ PACE_MIN = 0.62
 PACE_MAX = 1.48
 PACE_MIN_GAPS = 3
 READABLE_RATIO = 0.70
-HOLD_ABS_MIN_MS = 800
+# The floor on how long a line stays up, whatever its length or the speaker's pace.
+#
+# This was tried at 600 and put back, and the reason is worth keeping: it is the wrong
+# knob for the stall. Lowering it to 600 moved held-group gap p50 from 1482ms to 1502ms
+# and waiting p50 from 808ms to 820ms -- both inside noise -- while costing 180ms on
+# every one-to-three-character line, the only band the floor reaches. The floor only
+# clamps when the reference table scaled below it, and the table bottoms out at 1000ms,
+# so 620ms is the smallest value the table and the fastest pace factor can produce
+# together. At 800 that floor still clamped those lines; at 600 it stopped clamping
+# anything at all, which makes 600 an inert parameter rather than a tighter hold.
+#
+# What drives the median instead is the 9-to-18 character band: 13 characters is
+# 2400ms in the reference table and 1488ms after the 0.62 factor, which is the measured
+# held-group p50 almost exactly. Only that band and the pace factor can move it, and the
+# factor is a readability trade rather than a free win.
+#
+# ⚠️ One inference here was wrong and is worth not repeating. The 600 run was chosen
+# because waiting p50 measured 808ms against a floor of 800, which reads like the floor
+# setting the wait. It does not: the 800 floor was never in that number, because hold_ms
+# is one candidate among several and the wait it produces is the remainder, not the
+# hold. The same numbers' smallest values were 54ms and 157ms. Two figures landing near
+# each other is not one figure explaining the other.
+#
+# Injectable, like every other threshold, so an experiment moves one number instead of
+# editing the file the last one measured.
+HOLD_ABS_MIN_MS = _env_int("TRANSLATION_HOLD_ABS_MIN_MS", 800)
 HOLD_ABS_MAX_MS = 4200
 # Settle is the pause after a one-character revision before the change is drawn,
 # so a stream of single-character corrections does not flicker. It is also a
