@@ -21,13 +21,25 @@
 ASR_DEVICE          cuda
 ASR_COMPUTE_TYPE    float16
 ASR_MODEL           faster-whisper-small
-PARTIAL_INTERVAL_MS 250
+PARTIAL_INTERVAL_MS 750   ← 生效值。**这一行原来写的是 250，而这是一份「生效值」表，
+                            最不该错的字段。**750 的理由不是"更快"：823ms 的 ASR 在
+                            250 节奏下 215 次全部 overrun，750 下占墙钟 57.1%。
+                            750 让 turbo *能用*，不是让它*好*。popup 滑杆 250~1000。
 AUDIO_NATIVE        0（音频直出关闭）
+HOLD_ABS_MIN_MS     800   （caption_window.py:69。参考表最底 1000 × 最快节奏 0.62
+                            = 620 是这张表能产出的最低值 ⇒ 地板 ≤620 是空操作。
+                            试过 600，无效，已回退。见 REPORT 42）
+默认链路            whisper-hy（config.DEFAULT_CHAIN）
+                     可选 whisper-hy / qwen3-hy / gemma-e2e（切换 = 全拆 + 重启）
 投影层              CPU (--mmproj-device none)
 翻译后端            启动取**本机已装最新**：win-x86_64-nvidia-cuda12-avx2-2.53.0（本条 2026-10-07 晚临时改）
                     已装 2.33.0 / 2.47.0 / 2.51.0 / 2.52.0 / 2.53.0
-                    2.47.0 仍是 pin，也是 REPORT 里全部延迟数的前提；
-                    回到它：scripts\start.ps1 -UsePinned（改常量的理由见 REPORT 20.4）
+                    **版本政策（2026-10-08 定，AGENT.md §5 第九条）：默认走最新，
+                    测量走绑定。**测量用 scripts\start.ps1 -UsePinned → 2.47.0
+                    ⚠ REPORT 里全部延迟数是 2.47.0 上的，出货默认跑 2.53.0 ⇒
+                      **默认组合从未在它出货的 build 上被测过**，引用旧数要带 build 号。
+                      我此前说过「hy-mt2 仍在 2.47.0」，是错的，见 REPORT 44。
+                      start.ps1:563 的注释也描述了一个代码没实现的意图，已改。
 翻译模型            MT_BACKEND=hy-mt2（默认，8080）｜gemma4（8082，文本翻译，不带 --mmproj）
                     gemma4 = 36 层上 32 层 + MTP 草稿 5/5 层，VRAM 2337 MiB，50 tok/s
                     ngl 99 + 投影放 CPU：75.4 tok/s（更快，见 REPORT 25.3 脚注）

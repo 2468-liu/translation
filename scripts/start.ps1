@@ -289,6 +289,18 @@ $ChainSpec = $ChainInfo | ConvertFrom-Json
 # whisper pipeline pointed at a Gemma4 endpoint, and neither is the thing the chain names.
 # It was reachable before only by exporting both by hand, which is why the first version
 # of this switch left it out -- the reason was a missing branch, not a missing pipeline.
+# Record what is actually going to start, which is not always what was asked for: the
+# qwen3 branch below falls back to whisper if the Qwen3 weights or the 2.53.0 build are
+# missing, and a runtime.json that keeps saying qwen3-hy after that makes the dropdown
+# name a chain the backend is not on. `chain` keeps what was requested, so the fallback
+# still knows what to return to.
+#
+# Set here, before the branches, because the gemma-e2e branch has no fallback and so
+# never reaches the else-branch copy. Assigning it inside the else meant gemma-e2e wrote
+# a null chain_running, which the host then had to fall back to `chain` for -- the exact
+# substitution this is meant to remove.
+$ChainRunning = $Chain
+
 if ($Chain -eq "gemma-e2e") {
     $env:TRANSLATION_MT_BACKEND = "gemma4"
     $env:TRANSLATION_AUDIO_NATIVE = "1"
@@ -548,8 +560,15 @@ if (Test-Port $MtPort) {
                 $qwenMmproj = Join-Path $Root "models\Qwen-ASR-0.6B\mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
             }
             # 2.53.0 is the only installed build with the multimodal projector path this
-            # needs. hy-mt2 stays on 2.47.0, which is what every number in REPORT.md was
-            # measured on, so the two run different builds on purpose.
+            # needs. It is resolved by absolute path so this one is pinned regardless of
+            # what $Llama is.
+            #
+            # The original comment here said "hy-mt2 stays on 2.47.0, which is what every
+            # number in REPORT.md was measured on, so the two run different builds on
+            # purpose." That described an intent the code did not implement: hy-mt2 is
+            # started with $Llama, which is the newest installed build unless -UsePinned
+            # is passed, so hy-mt2 was running 2.53.0 too. REPORT 44 keeps the error --
+            # the start.log line that said "newest installed" was right there.
             $llama53 = Get-ChildItem "$env:USERPROFILE\.lmstudio\extensions\backends\llama.cpp-$LlamaPlatform-2.53.0\llama-server.exe" -ErrorAction SilentlyContinue |
                 Select-Object -First 1
             if (-not (Test-Path $qwenModel) -or -not (Test-Path $qwenMmproj)) {
@@ -557,11 +576,13 @@ if (Test-Port $MtPort) {
                 $env:TRANSLATION_ASR_BACKEND = "whisper"
                 $AsrBackend = "whisper"
                 Write-Note "chain    实际启动 whisper-hy"
+                $ChainRunning = "whisper-hy"
             } elseif (-not $llama53) {
                 Write-Note "找不到 llama 2.53.0（Qwen3-ASR 需要）；识别会卡住，改用 whisper"
                 $env:TRANSLATION_ASR_BACKEND = "whisper"
                 $AsrBackend = "whisper"
                 Write-Note "chain    实际启动 whisper-hy"
+                $ChainRunning = "whisper-hy"
             } elseif (Test-Port $Qwen3Port) {
                 Write-Note "端口 $Qwen3Port 已被占用，沿用现有的 Qwen3-ASR 服务"
             } else {
@@ -600,6 +621,7 @@ if (Test-Port $MtPort) {
                     $env:TRANSLATION_ASR_BACKEND = "whisper"
                     $AsrBackend = "whisper"
                     Write-Note "chain    实际启动 whisper-hy"
+                $ChainRunning = "whisper-hy"
                 }
             }
         }
@@ -608,5 +630,24 @@ if (Test-Port $MtPort) {
 
 # TRANSLATION_AUDIO_NATIVE=1 is read by server/ws_server.py, which then skips
 # loading the recogniser entirely.
+# Record the chain that is actually going to run, which the dropdown reads so it
+# cannot name a chain the backend is not on. Written after the fallbacks above and
+# before the service starts, because that is the last moment the answer is known.
+# `chain` keeps what was asked for, so a fallback still knows what to return to.
+try {
+    $rtPath = Join-Path $Root "runtime.json"
+    # utf-8 without a BOM, explicitly. PS 5.1's "UTF8" *is* UTF8 with a BOM, and a
+    # BOM makes json.loads fail on a strict utf-8 read -- so writing it this way
+    # silently broke the host's own read_chain(), which then answered with the
+    # default and made the dropdown name a chain nothing was running. Same trap as
+    # the native host manifest in install_native_host.ps1.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $rt = Get-Content $rtPath -Raw | ConvertFrom-Json
+    $rt | Add-Member -NotePropertyName chain_running -NotePropertyValue $ChainRunning -Force
+    [System.IO.File]::WriteAllText($rtPath, ($rt | ConvertTo-Json -Depth 6), $utf8NoBom)
+} catch {
+    Write-Note "runtime.json 的 chain_running 写不进去（$($_.Exception.Message)）；下拉会继续显示请求的链路"
+}
+
 $env:PYTHONUNBUFFERED = "1"
 & $Python -m server

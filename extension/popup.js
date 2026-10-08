@@ -189,7 +189,18 @@ async function refresh(keepMessage) {
   apiKey.value = theme.apiKey || "";
   apiModel.value = theme.apiModel || "";
   showApiFields();
+  // The host is the authority on whether a backend exists. Browser-side state --
+  // storage.session and the offscreen document -- only records whether *this*
+  // extension started one, and it is empty after a browser restart, after the popup
+  // is reopened, and whenever the offscreen document was closed by something else.
+  //
+  // Reading only those is what made "终止后端不杀进程" true in the worst way: the popup
+  // showed 未开始 and a 开始 button while llama-server held 3.4 of 4.0 GB, so there
+  // was no stop button to press. Pressing 开始 called start_backend, which saw the
+  // ports open and returned success, and nothing appeared to happen.
   let running = Boolean(stored.running);
+  let hostUp = null;
+  let hostReachable = true;
   try {
     const offscreen = await chrome.runtime.sendMessage({ type: "get-status" });
     if (offscreen && typeof offscreen.running === "boolean") running = offscreen.running;
@@ -197,26 +208,42 @@ async function refresh(keepMessage) {
     running = false;
   }
   if (stored.language) language.value = stored.language;
-  // The host reports the chain it is actually running, which is the only source that
-  // can be right: the popup's own storage may name a chain that failed to start.
+  // One probe answers both questions: which chain is live, and is anything running.
   try {
     const probe = await chrome.runtime.sendMessage({ type: "ping-backend" });
-    const live = probe && probe.reply && probe.reply.chain;
+    const reply = probe && probe.reply;
+    const live = reply && reply.chain;
     if (live) {
       chainSelect.value = live;
       chainSelect.dataset.applied = live;
     }
+    if (reply && typeof reply.up === "boolean") hostUp = reply.up;
   } catch (_error) {
-    // The host being unreachable is reported by the status line; the dropdown keeps
-    // whatever it has.
+    // Unreachable is different from stopped, and the two were being reported the same
+    // way. If the host cannot be reached we do not claim nothing is running, because
+    // that is the claim that hides a live backend.
+    hostReachable = false;
   }
+  if (hostUp !== null) running = running || hostUp;
+
   toggle.textContent = running ? "终止后端" : "开始";
   toggle.classList.toggle("stop", running);
   mediaState.textContent = running ? "●" : "○";
   mediaState.style.color = running ? "#806900" : "#aaa39b";
-  status.textContent = keepMessage || (running
-    ? "正在采集。字幕由 Windows 原生置顶窗口显示，不改网页内容或全屏状态。"
-    : "未开始");
+  if (keepMessage) {
+    status.textContent = keepMessage;
+  } else if (!hostReachable) {
+    status.textContent = "本地后端宿主连不上，无法确认是否在运行。";
+  } else if (running && !Boolean(stored.running)) {
+    // The host says something is up that this extension did not start, or no longer
+    // remembers starting. Saying so is the difference between a stop button that works
+    // and a button that appears to do nothing.
+    status.textContent = "本地后端仍在运行（不是本次会话启动的）。点「终止后端」可停止。";
+  } else {
+    status.textContent = running
+      ? "正在采集。字幕由 Windows 原生置顶窗口显示，不改网页内容或全屏状态。"
+      : "未开始";
+  }
   if (keepMessage) status.classList.add("error");
   else status.classList.remove("error");
 }

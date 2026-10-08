@@ -313,6 +313,64 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.assertIn('nativeRequest("switch-chain"', self.background)
         self.assertIn('kind == "switch-chain"', self.host)
 
+    def test_the_stop_button_comes_from_the_host_not_from_browser_storage(self):
+        """The failure this pins is the one reported as "clicking stop does not kill it".
+
+        The popup read `running` from chrome.storage.session and the offscreen document,
+        both of which only record what this extension session started. With neither --
+        a reopened popup, a restarted browser, an offscreen document closed by something
+        else -- it showed 未开始 and a 开始 button while llama-server held 3.4 of 4.0 GB.
+        There was no stop button to press. Pressing 开始 called start_backend, which saw
+        the ports open and returned success, so nothing happened and it read as a stop
+        that did not work.
+        """
+        popup_js = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+        self.assertIn('typeof reply.up === "boolean"', popup_js)
+        self.assertIn("if (hostUp !== null) running = running || hostUp", popup_js)
+        # And an unreachable host must not be reported as "nothing is running", which is
+        # the claim that hides a live backend.
+        self.assertIn("hostReachable = false", popup_js)
+        self.assertIn("本地后端宿主连不上", popup_js)
+        # The button text follows the state, and stop is the branch that kills.
+        self.assertIn('toggle.textContent = running ? "终止后端" : "开始"', popup_js)
+        # The host has to actually report it.
+        self.assertIn('"up": any(listening(port) for port in OWNED_PORTS)', self.host)
+
+    def test_start_ps1_records_the_chain_it_actually_started(self):
+        """The dropdown read `chain`, which is what was asked for, and start.ps1 falls
+        back to whisper on its own when the Qwen3 weights or the 2.53.0 build are
+        missing. So the dropdown named a chain the backend was not on -- an arm's
+        identity taken from its name, which is the substitution this repository has
+        recorded four times now.
+        """
+        self.assertIn("chain_running", self.start)
+        self.assertIn('$ChainRunning = "whisper-hy"', self.start)
+        # Recorded after the fallbacks, not before. Match the Add-Member, not the bare
+        # field name: a comment that explains the fallback mentions chain_running too,
+        # and the first version of this assertion matched the comment and passed for the
+        # wrong reason.
+        write = "Add-Member -NotePropertyName chain_running"
+        self.assertIn(write, self.start)
+        self.assertGreater(
+            self.start.index(write),
+            self.start.rindex('$ChainRunning = "whisper-hy"'),
+            "chain_running is written before the fallbacks are known")
+        # And initialised before the branches, not inside one. The first version put the
+        # assignment in the else-branch, so the gemma-e2e branch -- which has no
+        # fallback and so never reached it -- wrote a null chain_running and the host
+        # silently fell back to the requested chain again.
+        self.assertLess(
+            self.start.index("$ChainRunning = $Chain"),
+            self.start.index('if ($Chain -eq "gemma-e2e")'),
+            "$ChainRunning is initialised after the gemma-e2e branch can skip it")
+        # The write must not go through PS 5.1's Set-Content -Encoding UTF8, which emits a
+        # BOM that breaks the host's own read.
+        self.assertIn("System.Text.UTF8Encoding($false)", self.start)
+        self.assertNotIn("Set-Content -Path $rtPath -Encoding UTF8", self.start)
+
+    def test_the_host_prefers_the_running_chain_over_the_requested_one(self):
+        self.assertIn('for field in ("chain_running", "chain")', self.host)
+
 
 if __name__ == "__main__":
     unittest.main()

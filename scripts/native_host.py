@@ -370,13 +370,34 @@ def _runtime_path() -> Path:
 
 
 def read_chain() -> str:
-    """The chain currently recorded, or the default when the file is unusable."""
+    """The chain the backend is actually running, falling back to the requested one.
+
+    Two fields, and the difference matters. `chain` is what was asked for;
+    `chain_running` is what start.ps1 ended up starting after its own fallbacks -- it
+    drops to whisper when the Qwen3 weights or the 2.53.0 build are missing, and it does
+    that silently apart from one line in start.log. Reporting `chain` to the dropdown
+    made it name a chain the backend was not on, which is the same substitution as
+    reading an arm's identity off its name.
+
+    Preferring the observed field is what makes the dropdown honest, and it also means a
+    file written by an older start.ps1, with no chain_running, still answers with the
+    requested chain rather than nothing.
+    """
     try:
-        data = json.loads(_runtime_path().read_text(encoding="utf-8"))
+        # utf-8-sig rather than utf-8, because the writer may have been PowerShell.
+        # PS 5.1's Set-Content -Encoding UTF8 emits a BOM, and a strict utf-8 read
+        # raises on it -- which turns a readable file into the default chain, silently.
+        # install_native_host.ps1 records the same trap for the host manifest; start.ps1
+        # now writes without a BOM, and this side tolerates one anyway because a file
+        # that cannot be read reports the wrong chain rather than no chain.
+        data = json.loads(_runtime_path().read_text(encoding="utf-8-sig"))
     except (FileNotFoundError, ValueError, OSError):
         return "whisper-hy"
-    value = data.get("chain")
-    return value if isinstance(value, str) and value else "whisper-hy"
+    for field in ("chain_running", "chain"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            return value
+    return "whisper-hy"
 
 
 def write_chain(chain: str) -> str | None:
@@ -388,7 +409,7 @@ def write_chain(chain: str) -> str | None:
     which restart_chain reconciles by starting whatever is recorded.
     """
     try:
-        data = json.loads(_runtime_path().read_text(encoding="utf-8"))
+        data = json.loads(_runtime_path().read_text(encoding="utf-8-sig"))
     except (FileNotFoundError, ValueError, OSError) as exc:
         return f"runtime.json 读不出来: {exc}"
     data["chain"] = chain

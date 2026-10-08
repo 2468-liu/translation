@@ -24,8 +24,26 @@ class PopupFailureVisibilityTests(unittest.TestCase):
         self.html = (ROOT / "extension" / "popup.html").read_text(encoding="utf-8")
 
     def test_refresh_keeps_the_failure_instead_of_resetting_it(self):
+        """A failure must survive refresh, which is the bug this file exists for.
+
+        The original was `status.textContent = keepMessage || (running ? ... : ...)`.
+        It is now an if/else chain because the status has three more cases (host
+        unreachable, host up but not started by this session, the normal one), so the
+        assertion follows the intent rather than the expression: keepMessage is checked
+        before anything can overwrite it.
+        """
         self.assertIn("async function refresh(keepMessage)", self.popup)
-        self.assertIn("status.textContent = keepMessage || (running", self.popup)
+        body = self.popup.split("async function refresh(keepMessage)", 1)[1]
+        branch = body.split("if (keepMessage) {", 1)
+        self.assertEqual(len(branch), 2, "keepMessage is no longer checked in refresh")
+        # It must be the first branch, so nothing else can claim the line first.
+        after = branch[1]
+        self.assertLess(
+            after.index("status.textContent = keepMessage"),
+            after.index("} else if"),
+            "keepMessage must be checked before the other cases")
+        self.assertNotIn("keepMessage ||", after,
+                         "an unconditional fallback would overwrite the failure again")
 
     def test_click_handler_forwards_the_failure_to_refresh(self):
         self.assertIn("await refresh(failure)", self.popup)

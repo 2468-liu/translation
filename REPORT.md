@@ -4391,6 +4391,24 @@ the metric while costing 180ms of real readability on every short line.
 taken on 2.47.0. That is now a deliberate choice rather than a drift: the pinned path is an
 explicit field, `-UsePinned` returns to it, and the two-model chain runs 2.47.0 for hy-mt2
 and 2.53.0 for Qwen3 because that is the combination measured. `runtime.json` keeps its
+
+> **Correction, section 44.** The sentence above claims the chain runs 2.47.0 for hy-mt2.
+> It does not. `$Llama` resolves to the newest installed build unless `-UsePinned` is
+> passed, so the default path hands hy-mt2 **2.53.0**, and the combination measured in this
+> file is not the combination that ships. Left in place rather than rewritten, because the
+> error is the interesting part: the claim was checked against a start.log line that said
+> `newest installed` and read past it.
+
+**The version policy, decided 2026-10-08** (AGENT.md §5 rule nine): ship on the newest
+installed build, measure on `-UsePinned`. Two reasons, both stated by the user: 体感 is
+what is being optimised, and some models need a newer build to be supported at all. So
+the default stays on newest — **this correction changes no code.**
+
+What the correction does change is what "measured" means. Every number above was taken on
+2.47.0 while the default runs 2.53.0, so **the shipping combination has never been
+measured on the build it ships with**, and any number quoted from this file has to carry
+its build. Whether to pin hy-mt2 back to 2.47.0 or to re-measure on 2.53.0 is a decision
+with two options and one variable; neither was started here.
 dead fields under `_deprecated` with a date, because the value of `llama_server` naming an
 uninstalled build is the answer to "why is 2.33.0 in here", and that answer is a date.
 
@@ -4405,3 +4423,55 @@ uninstalled build is the answer to "why is 2.33.0 in here", and that answer is a
 而且我第一版写的「瓶颈转移到翻译」也是错的——翻译队列是空的。真实机制是**改口次数 ×2.9 让字幕重写成为限制**。**台账写错方向，下次就会按错的方向排查，走一遍已经走过的弯路。**
 
 判据：**任何「换掉 X 会更快」的结论，必须在 e2e 上验，而不是在 X 的指标上验。**如果 e2e 变差，正确结论是「X 的更快没有意义」，不是「Y 成了新瓶颈」——后者需要单独测量，不是前者自动推出的。
+
+## 44. "点终止后端杀不掉进程"：不是杀不掉，是没有那个按钮
+
+用户报告的是「后台不死」。截图里有三行，合起来把问题指完了：
+
+```
+popup 按钮        开始          ← 不是「终止后端」
+popup 状态        未开始
+专用 GPU 内存     3.4 / 4.0 GB  ← 还在
+```
+
+进程确实活着（`8765` pid 3116，`8080` pid 23040）。`stop_backend()` 直接调用是好的：**1.5 秒，两个端口都空，GPU 归零**。所以杀进程这一步从来没坏过。
+
+坏的是**按钮的状态来源**。`refresh()` 的 `running` 只读两个浏览器侧来源：`chrome.storage.session` 和 offscreen 文档的 `get-status`。这两个只记录**本次扩展会话启动过什么**，在三种情况下都是空的：浏览器重启后、popup 重开后、offscreen 文档被别人关掉时。
+
+于是 popup 说「未开始」、给一个「开始」按钮，而 llama-server 端着 3.4/4.0 GB。**用户没有可以按的停止键。** 按「开始」走 `start_backend`，它看到端口已开就直接返回 ok——什么都不变，看起来就像「终止杀不掉」。
+
+这一条和之前十几次同一类：**测量/显示的那一侧不是用户感受到的那一侧。**ASR p50 是引擎侧，popup 的 running 是浏览器侧，而卡在中间的是「宿主手上有没有一个后端」。宿主本来就知道答案（端口有没有人听），我给 `status` 加了 `up` 字段，却没让 popup 用它。
+
+改成 `running = running || hostUp`，并且把「宿主连不上」和「没在运行」分成两句话。**「连不上」不能报成「没在运行」——那正是藏住活后端的那句话。** 宿主不可达时状态行明说「无法确认是否在运行」。
+
+### 下拉显示的链路也不是在跑的那条
+
+同时暴露的第二个问题：下拉显示 `gemma-e2e`，实际跑的是 whisper-hy。`read_chain()` 读的是 runtime.json 里的 `chain`，那是**请求**的链路；`start.ps1` 会在 Qwen3 权重缺失或 2.53.0 找不到时**自己降级到 whisper**，只往 start.log 写一行。请求和运行因此会长期分叉。
+
+**这和「臂身份看观测状态而不是臂名」是同一个替换**，只是这次替换发生在 UI 而不是实验里。所以加了 `chain_running`：start.ps1 把自己**最终启动的那条**写回去，宿主优先读它。`chain` 保留请求值，降级才知道该退回哪条。
+
+这个字段第一次写出来是 `null`，三次才写对，每次都是同一个写错的方式：
+
+**一、`$ChainRunning` 赋值在 `else` 分支里。** gemma-e2e 分支没有降级、根本走不到 `else`，于是它写的是未赋值的变量。改成分支之前统一赋值。
+
+**二、`Set-Content -Encoding UTF8`。** PS 5.1 的 "UTF8" **就是带 BOM 的 UTF8**，而 `read_chain()` 用 `utf-8` 读——`json.loads` 抛异常，被 `except` 吞掉，返回默认值。**宿主读不出自己的配置文件，于是一切看起来正常。** 这和 `install_native_host.ps1` 里记过的宿主清单那个坑是同一个，我在同一个仓库里踩了第二次。写入改成 `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))`，读取改成 `utf-8-sig`——两端都改，因为读不出来的后果是**报错链路**而不是报错。
+
+**三、测试断言匹配到注释。** `assertIn("chain_running", start)` 会命中我解释降级机制的那段注释，于是「写在降级之后」这条断言**因为错误的原因通过**。改成匹配 `Add-Member -NotePropertyName chain_running`。
+
+### 三条我自己的方法论错误，按发生顺序
+
+1. **我说过「hy-mt2 仍在 2.47.0」。错的。** `start.ps1` 的 `$Llama` 默认解析成**已装的最新**（现在是 2.53.0），只有 `-UsePinned` 才回到 2.47.0。日志里那条 `llama win-x86_64-nvidia-cuda12-avx2-2.53.0 (newest installed)` 就是证据，我当时读到了却没对。REPORT 43 节那句「the two-model chain runs 2.47.0 for hy-mt2 and 2.53.0 for Qwen3」同样错，`start.ps1:563` 的注释「hy-mt2 stays on 2.47.0, which is what every number in REPORT.md was measured on」**描述的是一个代码没有实现的意图**。
+
+   **这条的重量超过它看起来的样子：REPORT 里每一个数都是在 2.47.0 上测的，而默认路径给 hy-mt2 的是 2.53.0。** 也就是说**出货的组合从来没有在它出货的 build 上被测过**。
+
+   **政策定了（默认最新、测量绑定），所以默认代码不动**，但推论落在两处：AGENT.md §5 加了第九条纪律；引用这份报告里的任何数都必须带 build 号。**剩下的活是「在 2.53.0 上测一次 whisper-hy」**——它同时是三项待测之一的前置条件，因为 `audio_end_to_paint` 的分布必须在出货 build 上取。**固定回 2.47.0 是另一条路，一次只走一条。**
+
+2. **新写的测试指错了文件。** `PopupAndHostAgreeTests` 里的 `self.popup` 指向 `popup.html`，而改动在 `popup.js`，于是断言在一个 HTML 文件里找一个 JS 表达式。测试失败原因是「文件里没有这段代码」，和被测行为完全无关——**但它确实失败了**，所以这次是白板而不是谎报。反过来另一条更值得说：旧的 `test_refresh_keeps_the_failure_instead_of_resetting_it` 钉的是 `status.textContent = keepMessage || (running` 这个**语法**，我把它改成 if/else 链之后它失败了，而它的**意图**（`keepMessage` 优先于一切）并没有被破坏。改的是测试，钉的改成意图：切到 `if (keepMessage) {` 之后、任何 `} else if` 之前必须赋值给 status，并断言这个分支里不再有 `keepMessage ||`。
+
+3. **「停止按钮的来源」这类问题，浏览器侧状态和宿主状态要分三态，不是两态。** 我一开始把 `up` 加成布尔量就以为完事了，结果「宿主不可达」被折叠进「false」，等于把「不知道」报成「没有」。**三态里最容易被吃掉的就是「不知道」。**
+
+### 验过的 / 没验的
+
+- **验过**：239 tests pass（新增 3 条钉上面三个 bug）。真起 whisper-hy 后 `runtime.json` 无 BOM、`chain_running='whisper-hy'`。用**真实 native-messaging 协议**问新构建的 exe：`{'ok': True, 'ready': True, 'owned': False, 'up': True, 'chain': 'whisper-hy'}`。`stop_backend()` 1.5s 清空 8765/8080，GPU 归零。
+- **没验**：gemma-e2e 的 `chain_running` 写入**只做了静态验证**。`-DryRun` 在写入块之前就退出，所以 dry run 走不到那里；我没有真起一次 Gemma4 去证明它写出来是 `gemma-e2e` 而不是 null。赋值无条件在分支之前这一点是读出来的，不是跑出来的。
+- **没验**：popup 在浏览器里的实际显示。`node --check` 干净，测试钉了字符串，但「读到 `up:True` 且 `stored.running` 为 false 时状态行说『本地后端仍在运行（不是本次会话启动的）』」这句话我没有在真 Chrome 里看过。**这需要重载扩展。**
