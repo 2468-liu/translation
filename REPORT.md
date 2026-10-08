@@ -4071,3 +4071,125 @@ which reads -0.26s with the feature off because _trim cuts the trailing silence.
 has to be read off the splitter, not reconstructed.
 
 170 passed. The default remains off.
+## 40. Swapping the recogniser: turbo cannot keep up, Qwen3-ASR can
+
+### The case for swapping was structural, not a hunch
+
+turbo takes 823ms per call while the partial cadence is 250ms. Those two numbers
+cannot coexist: the recogniser is asked to finish in less time than it takes to do
+the work, so it either falls behind permanently or drops candidates. The A arm
+measured exactly that, once, on `samples/blog_3min.wav` (187.4s):
+
+```
+asr_ms                   n=215  p50=823  p90=923  p99=1090  max=1478
+asr share of wall clock   96.1%  (sum 180.0s / 187.3s)
+asr by kind           {'partial': 215}
+asr >250ms                215/215 (100%)
+pipeline.drop               366
+enqueue_qlen       n=630  p50=1.0  p90=3.0  p99=4.0  max=5.0
+```
+
+96% of the wall clock in the recogniser, every single call over budget, and 366 of
+630 candidates thrown away. There was no headroom left to argue about.
+
+### Qwen3-ASR
+
+A second llama-server (2.53.0, mmproj + Qwen3-ASR) alongside hy-mt2 (2.47.0) costs
+1938 + 1286 = 3223 MiB of 4096. **There was never a VRAM problem.** Per call it
+takes 130-310ms.
+
+### A/B, one arm each, same material
+
+```
+                        A whisper/turbo     B qwen3
+asr_ms            n=215 p50=823        n=579 p50=140  p90=248  p99=373  max=525
+asr >250ms               215/215 (100%)       55/579 (9%)
+asr share of wall clock  96.1%                49.2%
+pipeline.drop            366                  6
+enqueue_qlen      p90    3.0                  0.0
+ttft_ms           p50    40.6ms              21.4ms
+translate_total_ms p50   156ms               88.3ms
+coverage                 41/49 (84%)          41/49 (84%)
+sentences with a final translation   16/16    16/16
+```
+
+Translation got **faster**, not slower. That matters because "the queue argument for
+holding off" was the reason to hesitate, and it is now measured rather than assumed:
+the queue was never the bottleneck, the recogniser was.
+
+Arm identity is read from `asr_backend` in each run's meta, not from the arm name.
+
+### The cost is on the paint side, and the criteria did not cover it
+
+```
+                        A whisper/turbo     B qwen3
+audio_end_to_paint      p50=647             p50=787
+audio_end >1000ms       10/49 (20%)         20/49 (41%)
+e2e_first_tr_to_paint   p50=382             p50=925
+e2e >1000ms             3/16 (19%)          7/16 (44%)
+sentences overwritten    11                  28
+overwrite_held_ms       p50=819             p50=1388
+```
+
+579 partials instead of 215 means 2.7x as many revisions, and each revision now
+lands sooner because the recogniser is fast. **The pre-registered criteria covered
+asr time and ttft and did not mention paint latency.** That is the same shape as the
+`M2 is VOID` lesson -- criteria written before data have to name what "better" means
+for the felt goal, and "the recogniser is fast" was not the whole of it.
+
+So adopting this is not one switch. `#4` (`partial_interval_ms` 250 -> 750) is part
+of the same change: fast partials are exactly what make the slower cadence
+affordable, and the slower cadence is what stops the caption from rewriting itself
+three times per sentence.
+
+### Two bugs, both of which read as "the model is broken"
+
+The first B run produced `pipeline.asr 0` with `vad.end 49` and `pipeline.enqueue
+630`, and no error anywhere. Two things had to be untangled before the real fault
+was visible:
+
+- **"No error printed" was not evidence.** `replay.ps1` does not capture what the
+  server writes to its console handle, so the exception was being printed into
+  nothing. Re-running the call in-process was the only way to see it.
+- **The actual fault was a 400**, not a hang: `Qwen3AsrEngine` was sending raw PCM
+  while declaring `format: "wav"`, and llama.cpp answered `Failed to load image or
+  audio file`. My earlier probe had passed because it used the `wave` module to write
+  a real header; `_pcm_bytes` had been factored out for the prefix test and then
+  used directly as the request body. **This would have read as a verdict on
+  Qwen3-ASR itself.**
+
+Fixed by `_wav_bytes()`, which wraps the payload in a real container. `_pcm_bytes`
+stays separate and keeps its purpose: a wav header carries the data length, so it
+would make every clip differ in its first 44 bytes and the prefix test meaningless.
+
+Separately, a shared `httpx.Client` built at engine construction time hangs on the
+first request made from the pipeline's executor threads, with no exception. A client
+per call costs nothing at roughly one call per second.
+
+### One correction to carry forward
+
+The first pass at the queue question compared `pipeline.enqueue` against
+`pipeline.ttotal` per 10s window and reported a cumulative **+431** over 190s, which
+reads as a queue diverging sharply. It was wrong: enqueue fires for every partial and
+most of those are dropped as superseded (366 of 630 here), so the metric was counting
+candidates that were never going to be translated. On the correct pairing --
+recogniser output against translation completion -- the A arm is steady:
+
+```
+per 10s window   net -3 .. +1,  cumulative -16 over 190s
+translation gaps  median 852ms  p90 1163ms  max 2081ms
+gaps under 100ms   0/198 = 0%   (not clustered)
+```
+
+Same failure class as scoring a wav container instead of PCM, and as reading prefix
+cache hits off a latency curve: a clean-looking number produced by the wrong
+quantity.
+
+### What this does not answer
+
+The burst question is still open. Both arms ran `blog_3min`, which is 93.4% speech
+with a 10.9s median segment -- TTS, and the least bursty of the six samples. The
+"stalls, appears, stalls again" symptom is on real lecture and podcast audio with
+long pauses. Arrival intervals need measuring on that material, and `enqueue_qlen`
+is the ASR-side input queue, not the translation queue, so it cannot answer it by
+itself.
