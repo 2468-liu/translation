@@ -1,0 +1,114 @@
+{
+  "speech_source": "meeting_6min",
+  "bed_source": "e_3min",
+  "target_s": 90.0,
+  "spacing_s": 6.0,
+  "snr_db": 10.0,
+  "clauses": [
+    {
+      "i": 0,
+      "start": 0.4,
+      "end": 1.4,
+      "dur": 1.0,
+      "text": "Hi, how are you?"
+    },
+    {
+      "i": 1,
+      "start": 6.4,
+      "end": 7.4,
+      "dur": 1.0,
+      "text": "I'm great, thank you."
+    },
+    {
+      "i": 2,
+      "start": 12.4,
+      "end": 13.4,
+      "dur": 1.0,
+      "text": "you play guitar?"
+    },
+    {
+      "i": 3,
+      "start": 18.4,
+      "end": 19.4,
+      "dur": 1.0,
+      "text": "Yeah, I bring"
+    },
+    {
+      "i": 4,
+      "start": 24.4,
+      "end": 25.4,
+      "dur": 1.0,
+      "text": "A little bit."
+    },
+    {
+      "i": 5,
+      "start": 30.4,
+      "end": 31.4,
+      "dur": 1.0,
+      "text": "Yeah, please."
+    },
+    {
+      "i": 6,
+      "start": 36.4,
+      "end": 37.4,
+      "dur": 1.0,
+      "text": "Fine, thanks."
+    },
+    {
+      "i": 7,
+      "start": 42.4,
+      "end": 43.4,
+      "dur": 1.0,
+      "text": "Where you from?"
+    },
+    {
+      "i": 8,
+      "start": 48.4,
+      "end": 49.4,
+      "dur": 1.0,
+      "text": "From Serbia."
+    },
+    {
+      "i": 9,
+      "start": 54.4,
+      "end": 55.4,
+      "dur": 1.0,
+      "text": "model"
+    },
+    {
+      "i": 10,
+      "start": 60.4,
+      "end": 61.4,
+      "dur": 1.0,
+      "text": "Hello?"
+    },
+    {
+      "i": 11,
+      "start": 66.4,
+      "end": 67.4,
+      "dur": 1.0,
+      "text": "Hi. Hi, how are you?"
+    },
+    {
+      "i": 12,
+      "start": 72.4,
+      "end": 73.4,
+      "dur": 1.0,
+      "text": "I'm fine."
+    },
+    {
+      "i": 13,
+      "start": 78.4,
+      "end": 79.6,
+      "dur": 1.2,
+      "text": "Should I play something?"
+    },
+    {
+      "i": 14,
+      "start": 84.4,
+      "end": 85.52,
+      "dur": 1.12,
+      "text": "Yeah, please."
+    }
+  ]
+}

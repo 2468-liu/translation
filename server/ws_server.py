@@ -106,14 +106,12 @@ def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
             continue
         kind = message.get("kind")
 
-        # The switch the user flips while watching. Carried over the channel that
-        # already runs the other way, so no new port and no second protocol.
-        if kind == "config":
-            value = message.get("value") or {}
-            ms = value.get("partial_interval_ms")
-            if ms:
-                loop.call_soon_threadsafe(_switch_partial_interval, int(ms))
-            continue
+        # kind == "config" used to be handled here, over UDP, for the caption
+        # window's own 250/750 buttons. Those buttons are gone -- the control is
+        # in the extension, which reaches _switch_partial_interval through the
+        # WebSocket config frame instead. The listener stays because kind ==
+        # "state" still carries the window's position lock and transparency, and
+        # removing it would take those with it.
         if kind != "state":
             continue
         value = message.get("value") or {}

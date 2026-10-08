@@ -3817,3 +3817,155 @@ Chrome 侧是否真的必要）。**但现在失败不会再被吞掉了**：
 ```
 
 **请把那行红字原样告诉我。**这一行的信息量比前两轮所有排查加起来都大。
+
+## 38. Sparse speech under music: the fault is a missing leading pre-roll (2026-10-08 傍晚)
+
+The reported symptom, with its preconditions: there is sound and nothing is
+translated, and it happens when the speech is short -- a few words, one short
+clause -- under background music.
+
+## 38.1 The control cleanup
+
+The caption window's 250/750 buttons are gone and so is the UDP `config` branch
+that fed them. Kept, deliberately:
+
+- `_switch_partial_interval` -- the extension's WebSocket frame calls it, and after
+  REPORT 36 that is the only live path
+- `_listen_caption_state` and port 8767 -- it still carries kind == "state", which
+  is the position lock and the transparency sync. Only the config arm came off.
+- `ack_switch` and a read-only readout on the window
+
+The readout was the open question, and keeping it costs almost nothing:
+`ack_switch` already sends the value as `switch_ok`'s payload and `_pump` was the
+only thing dropping it. So the window now shows the cadence the server applied,
+not what the extension last asked for. A switch that lands silently cannot be
+judged while watching, and comparing 250 against 750 is something you do while
+watching.
+
+Six new tests in `CadenceHasExactlyOneControlPathTests`, including that the UDP
+listener no longer mentions `partial_interval_ms` while its state branch and its
+socket survive. They assert over executable lines only -- the comment explaining
+the removal names the branch it removed, which is the trap REPORT 37 records, hit
+again one commit later.
+
+## 38.2 A material that reproduces the precondition
+
+None of the six samples has it. Measured: blog_3min is 93.4% speech with a 10.93s
+median segment, er_3min is 71.8% with a 0.00s median gap, e_3min is 36.7%. A
+short-phrase-under-music fault measured on those measures something else.
+
+So the conditions are constructed from real audio, by `scripts/build_sparse_music.py`:
+
+```
+samples/sparse_music.wav        90.0s   the material
+samples/sparse_music_bed.wav    90.0s   the bed alone
+samples/sparse_music_speech.wav 90.0s   the clauses alone
+samples/sparse_music_plan.json           clause times, levels, text
+```
+
+  speech  15 English clauses of 1.0s lifted from meeting_6min, which is two people
+          talking: "A little bit.", "Yeah, please.", "Hi, how are you?" Real
+          conversational speech at real boundaries, so no clause is the clipped
+          remainder of a longer sentence. 15.3s of 90.0s = 17.0% occupancy, one
+          clause every 6 seconds. Scarcity is the point.
+  bed     the complement of e_3min's own timeline: 112.6s of that clip with every
+          speech span removed, which is its score and its camera sounds, at
+          -14 to -15 dBFS. The gaps come from different points in the film, so the
+          bed cuts where the film cuts.
+  level   speech placed at a stated +10 dB over the bed. A material whose
+          difficulty is a feeling cannot be compared against another one.
+
+⚠️ It is synthetic, and that bounds what it can settle. The speech is real but
+repositioned, the bed is real but re-cut, and the combination never occurred. It is
+a probe, not a substitute for the commentary video.
+
+## 38.3 It reproduces the symptom
+
+`scripts/check_sparse_music.py` matches by time, not by count -- a count would be
+satisfied by the bed's own blips.
+
+```
+完整送达  5/15
+部分送达  9/15
+完全没到  1/15      "Hello?"
+起始延迟  中位 +0.19s   最大 +0.72s
+```
+
+The partial deliveries are the interesting ones:
+
+```
+clause at 18.4s  "Yeah, I bring"   utterance starts 18.9s   0.60s of 1.00s delivered
+clause at 72.4s  "I'm fine."       utterance starts 73.1s   0.41s of 1.00s delivered
+```
+
+## 38.4 Denoising does not fix this, and the number says why
+
+I said earlier that denoising looked worthless, on the strength of er_3min. That
+conclusion was about a different fault and it does not transfer. On a material
+built for this precondition the answer is still no, but now for a reason with a
+number attached:
+
+```
+speech opening vs bed, per clause:  median +11.5 dB   min +2.9   max +13.9
+clauses where speech is below the bed:  0 of 15
+```
+
+The speech is 11.5 dB *above* the music and Silero still starts late. Nothing is
+masked. Cleaning the bed quieter cannot make a detector fire sooner.
+
+## 38.5 Nor is the threshold
+
+```
+VAD_THRESHOLD   完整  部分  没到   起始延迟 中位/最大
+  0.5             5     9     1      +0.19 / +0.72
+  0.4             4    10     1      +0.26 / +0.72
+  0.3             4    11     0      +0.26 / +0.72
+  0.2             4    11     0      +0.26 / +0.72
+```
+
+0.5 to 0.2 moves the onset lag not at all and costs a complete delivery.
+(VAD_THRESHOLD is a plain constant, not env-overridable; the sweep patches the
+module global in the probe, which is read at call time, so no production file
+changes.)
+
+## 38.6 What it actually is
+
+```
+vad.py:64    VAD_SPEECH_PAD_MS = 120
+vad.py:528   used only inside _trim, and only for the trailing release
+vad.py:333   self.utterance.append(frame)     the utterance begins exactly at the
+                                              first frame Silero marked as speech
+```
+
+**There is no leading pre-roll.** Every millisecond of detector latency is a
+millisecond of lost words, and on a 1.0s clause the observed onset lag is 19% of it
+at the median and 72% at worst.
+
+The two settings are coupled, which is why this has to be one change and not two:
+pre-roll frames are by definition frames the detector called non-speech, and
+`NON_SPEECH_GAIN = 0.0` would zero them. Pre-roll added without changing that gain
+is pre-roll full of silence, and the words are still gone.
+
+## 38.7 The four items, answered by measurement
+
+| item | verdict | evidence |
+|---|---|---|
+| 噪声过滤 | **does not help** | speech is +11.5 dB over the bed; nothing is masked |
+| 回声去重 | does not exist | no echo or duplicate-suppression code anywhere |
+| pysbd 分句 | unrelated | sentence splitting is a translation-quality lever; the loss is upstream of ASR |
+| ≤8 字符合并 | **opposite** | it folds short clauses away; the complaint is that short clauses never appear |
+| VAD 触发延迟 + 缺前导预卷 | **this is the fault** | onset lag +0.19s median / +0.72s max, unmoved by threshold, unmasked |
+
+The merge window does not apply here either: these fragments *are* delivered, just
+truncated, so holding them for a neighbour has nothing to rescue.
+
+## 38.8 One error of mine, caught
+
+The first attempt at the per-clause SNR compared identical RMS values at fifteen
+different offsets -- 0.1560 and 0.2047 for every clause. Real audio cannot do that.
+The reconstruction of the bed from the source clips was the bug. Fixed by having the
+builder write the bed and the clauses as separate files, so nothing has to be
+reconstructed; the numbers above are from those files and the window RMS on the
+finished mix varies from 0.0282 to 0.1456, as it should.
+
+170 passed.

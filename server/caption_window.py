@@ -276,41 +276,22 @@ class _Caption:
             pady=0,
         )
 
-        # The switcher. It exists so the two cadences can be compared while
-        # watching rather than from memory: an A/B read off two separate replays
-        # confounds the setting with everything else that differed between runs,
-        # and the difference here is small enough that memory is not a fair test.
-        #
-        # Plain buttons rather than a dropdown, because the state that matters is
-        # which one is active, and three buttons show that at a glance.
-        self._switch_var = tk.StringVar(value="250")
-        self._switch_buttons: dict[str, tk.Button] = {}
-        for label, ms in (("250", 250), ("750", 750)):
-            button = tk.Button(
-                self.root,
-                text=label,
-                command=lambda m=ms: self.switch_partial_interval(m),
-                fg="#ffffff",
-                bg="#000000",
-                activeforeground="#000000",
-                activebackground="#ffffff",
-                font=("Microsoft YaHei", 9),
-                bd=0,
-                highlightthickness=0,
-                padx=4,
-                pady=0,
-            )
-            self._switch_buttons[label] = button
-        self._switch_note = tk.Label(
+        # Read-only cadence readout. The control moved to the browser extension,
+        # which owns the controls and this window owns the display. What stayed is
+        # the feedback: comparing 250 against 750 is something you do while
+        # watching, and a switch that lands silently cannot be judged while
+        # watching. ack_switch already carries the value (server/caption_window.py
+        # ack_switch sends it as switch_ok's payload), so the read path was
+        # already there and the pump was the only thing dropping it.
+        self._cadence_label = tk.Label(
             self.root,
-            text="",
+            text="250ms",
             fg="#888888",
             bg="#000000",
-            font=("Microsoft YaHei", 8),
+            font=("Microsoft YaHei", 9),
             bd=0,
-            padx=2,
+            padx=4,
         )
-        self._paint_switch_state()
 
         self._drag = None
         self._resize_origin = None
@@ -399,15 +380,12 @@ class _Caption:
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
             self.position_lock_control.place_forget()
-        # The switcher sits to the right of whichever control is showing, and
-        # stays visible in both modes: comparing cadences is something you do
-        # while watching, not something you set once.
+        # The readout sits to the right of whichever control is showing, and stays
+        # visible in both modes: noticing that the cadence is not what you think it
+        # is is something you do mid-playback, not at setup.
         base = 80 if self.text_only else 160
-        for offset, key in enumerate(("250", "750")):
-            self._switch_buttons[key].configure(bg=bg, activebackground=bg)
-            self._switch_buttons[key].place(x=base + offset * 44, y=3, anchor="nw")
-        self._switch_note.configure(bg=bg)
-        self._switch_note.place(x=base + 92, y=5, anchor="nw")
+        self._cadence_label.configure(bg=bg)
+        self._cadence_label.place(x=base, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -686,33 +664,21 @@ class _Caption:
         name = _LANG.get(lang or "", "")
         self.status = f"{name} → 中文" if name and name != "中文" else ""
 
-    def switch_partial_interval(self, ms: int) -> None:
-        """Ask the server for a new cadence, and clear what is on screen.
+    def show_cadence(self, ms: int) -> None:
+        """Display the cadence the server has actually applied.
 
-        The clear happens here rather than waiting for the server's reply: the
-        text currently displayed was produced under the old cadence, and holding
-        it while the switch travels would show the old value under the new label.
+        Read-only on purpose. The buttons that used to live here are gone: the
+        control is in the extension, and a caption window that can also be
+        controlled from two places is a window whose state nobody can predict.
+        The value arrives from ack_switch, which is sent by _switch_partial_interval
+        on the WebSocket path -- so this shows what the server applied rather than
+        what the extension last asked for.
         """
-        self._switch_var.set(str(ms))
-        self.clear()
-        self._paint_switch_state(pending=True)
         try:
-            payload = json.dumps(
-                {"kind": "config", "value": {"partial_interval_ms": int(ms)}},
-                ensure_ascii=False,
-            ).encode("utf-8")
-            _STATE_SOCK.sendto(payload, ("127.0.0.1", STATE_PORT))
-        except OSError:
-            self._switch_note.configure(text="切换失败")
-
-    def _paint_switch_state(self, pending: bool = False) -> None:
-        active = self._switch_var.get()
-        for label, button in self._switch_buttons.items():
-            if label == active:
-                button.configure(fg="#000000", bg="#ffffff")
-            else:
-                button.configure(fg="#ffffff", bg="#000000")
-        self._switch_note.configure(text="切换中" if pending else "")
+            value = int(ms)
+        except (TypeError, ValueError):
+            return
+        self._cadence_label.configure(text=f"{value}ms")
 
     def clear(self) -> None:
         """Blank the line but leave the window up and armed.
@@ -1020,7 +986,7 @@ class _Caption:
             elif kind == "clear":
                 self.clear()
             elif kind == "switch_ok":
-                self._paint_switch_state(pending=False)
+                self.show_cadence(value)
             elif kind == "raise":
                 if self.line:
                     self.show()

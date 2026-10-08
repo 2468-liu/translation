@@ -57,6 +57,83 @@ class SwitchReachesTheSessionTests(unittest.TestCase):
         ack.assert_not_called()
 
 
+class CadenceHasExactlyOneControlPathTests(unittest.TestCase):
+    """One control, one path. The caption window's buttons are gone.
+
+    Two live paths to the same switch was the reason the change was made: the
+    extension's frame reached _switch_partial_interval while the caption window's
+    UDP frame also did, and a control reachable from two places is a control whose
+    state nobody can predict. The listener itself stays, because kind == "state"
+    still carries the position lock and transparency.
+    """
+
+    def setUp(self):
+        self.ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
+        self.caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
+        self.popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _listener_body(source: str) -> str:
+        """The UDP listener's executable lines, comments removed.
+
+        The comment explaining the removal names the branch it removed, so the
+        string being banned is present in the prose explaining the ban -- the
+        same trap REPORT 37 records, hit here one commit later. Assertions run
+        over the executable lines.
+        """
+        start = source.index("def _listen_caption_state")
+        body = source[start:source.index("async def handle", start)]
+        kept = []
+        in_doc = False
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.count('"""') % 2 == 1:
+                in_doc = not in_doc
+                continue
+            if in_doc or stripped.startswith("#"):
+                continue
+            kept.append(line)
+        return "\n".join(kept)
+
+    def test_udp_listener_no_longer_handles_config(self):
+        listener = self._listener_body(self.ws_server)
+        self.assertNotIn('kind == "config"', listener)
+        self.assertNotIn("partial_interval_ms", listener)
+        # The state branch must survive: it is not part of this change.
+        self.assertIn('if kind != "state":', listener)
+        self.assertIn("STATE_PORT", listener)
+        self.assertIn("run_coroutine_threadsafe", listener,
+                      "the loop parameter is still used by the state branch")
+
+    def test_the_websocket_path_is_the_one_that_remains(self):
+        self.assertIn("_switch_partial_interval", self.ws_server)
+        self.assertIn('if data.get("partial_interval_ms"):', self.ws_server)
+
+    def test_caption_window_has_no_cadence_button_left(self):
+        for gone in ("_switch_buttons", "_switch_var", "_switch_note",
+                     "def switch_partial_interval", "_paint_switch_state"):
+            self.assertNotIn(gone, self.caption, f"{gone} still in the caption window")
+
+    def test_caption_window_still_sends_over_udp_for_the_position_lock(self):
+        # Removing the switch's sendto must not have removed the listener's other
+        # use of the same socket.
+        self.assertIn("_STATE_SOCK.sendto(", self.caption)
+        self.assertIn("STATE_PORT", self.caption)
+
+    def test_cadence_stays_readable_on_the_window(self):
+        # The readout is fed by ack_switch, which already carried the value; the
+        # pump was the only thing dropping it. Losing this leaves a switch that
+        # lands silently, which cannot be judged while watching.
+        self.assertIn("def show_cadence", self.caption)
+        self.assertIn('self._cadence_label.configure(text=f"{value}ms")', self.caption)
+        self.assertIn("self.show_cadence(value)", self.caption)
+
+    def test_the_extension_still_owns_the_control(self):
+        self.assertIn('type: "cadence"', self.popup)
+        self.assertIn('data-ms="250"', (ROOT / "extension" / "popup.html").read_text(encoding="utf-8"))
+        self.assertIn('data-ms="750"', (ROOT / "extension" / "popup.html").read_text(encoding="utf-8"))
+
+
 class WebSocketConfigCarriesTheSwitchTests(unittest.TestCase):
     """Text-level, because the config branch sits inside the socket handler.
 
