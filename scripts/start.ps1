@@ -280,16 +280,33 @@ if (-not $Chain) { $Chain = & $Python -c "from server.config import DEFAULT_CHAI
 $ChainInfo = & $Python -c "import json;from server.config import CHAINS;c=CHAINS.get('$Chain');print(json.dumps(c) if c else '')"
 if (-not $ChainInfo) {
     $names = (& $Python -c "from server.config import CHAINS; print('、'.join(CHAINS))").Trim()
-    throw "未实现的链路：$Chain（已知：$names）。音频直出（gemma-e2e）未实现。"
+    throw "未知的链路：$Chain（已知：$names）。"
 }
 $ChainSpec = $ChainInfo | ConvertFrom-Json
-if ($ChainSpec.asr_backend) { $AsrBackend = $ChainSpec.asr_backend } else { $AsrBackend = "" }
-if ($ChainSpec.asr_backend -eq $null) {
-    throw "链路 $Chain 还没有实现（$($ChainSpec.status)）；它需要的是 $($ChainSpec.caveat)"
+# gemma-e2e is two switches rather than one: the translator becomes Gemma4 E2B and the
+# recogniser disappears, because one model both hears and translates. Setting only one
+# of them gives either the audio-native pipeline with a text-only translator or a
+# whisper pipeline pointed at a Gemma4 endpoint, and neither is the thing the chain names.
+# It was reachable before only by exporting both by hand, which is why the first version
+# of this switch left it out -- the reason was a missing branch, not a missing pipeline.
+if ($Chain -eq "gemma-e2e") {
+    $env:TRANSLATION_MT_BACKEND = "gemma4"
+    $env:TRANSLATION_AUDIO_NATIVE = "1"
+    $MtPort = 8082
+    $AsrBackend = ""
+    Write-Note "chain    $Chain  (音频直出：Gemma4 E2B 同时听和译，8082)"
+    Write-Note "         ⚠ 实测在干净旁白上可用，对白压在配乐下会崩（REPORT 25.3）"
+} else {
+    if ($ChainSpec.asr_backend) { $AsrBackend = $ChainSpec.asr_backend } else { $AsrBackend = "" }
+    $Qwen3Port = if ($ChainSpec.qwen3_port) { [int]$ChainSpec.qwen3_port } else { $Qwen3Port }
+    $env:TRANSLATION_ASR_BACKEND = $AsrBackend
+    if ($env:TRANSLATION_MT_BACKEND -eq "gemma4") {
+        # A previous gemma-e2e left these set in the environment this process inherited.
+        $env:TRANSLATION_MT_BACKEND = "hy-mt2"
+        $env:TRANSLATION_AUDIO_NATIVE = "0"
+    }
+    Write-Note "chain    $Chain  (asr=$AsrBackend, $($ChainSpec.status))"
 }
-$Qwen3Port = if ($ChainSpec.qwen3_port) { [int]$ChainSpec.qwen3_port } else { $Qwen3Port }
-$env:TRANSLATION_ASR_BACKEND = $AsrBackend
-Write-Note "chain    $Chain  (asr=$AsrBackend, $($ChainSpec.status))"
 
 $MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLower() } else { "hy-mt2" }
 $MtPort = if ($MtBackend -eq "gemma4") { 8082 } else { 8080 }

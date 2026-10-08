@@ -97,10 +97,16 @@ async function ensureBackend(audioOnly) {
 }
 
 async function shutdownBackend() {
-  const response = await nativeRequest("shutdown", 15000);
+  // 30s, not 15. The host waits 15s for the ports to close after taskkill, so a 15s
+  // request timeout expired at the same moment the host was still working and reported
+  // a failure for a teardown that then succeeded -- the popup showing an error over a
+  // backend that had actually stopped. Same class as the ok:true-that-stopped-nothing
+  // this sits next to.
+  const response = await nativeRequest("shutdown", 30000);
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "本地后端停止失败");
   }
+  return response;
 }
 
 async function switchChain(chain) {

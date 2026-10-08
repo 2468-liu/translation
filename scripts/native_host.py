@@ -302,13 +302,39 @@ def start_backend(audio_only: bool = False) -> dict:
 
 
 def stop_backend() -> dict:
+    """Stop the backend, and say so honestly when it could not.
+
+    The pid file was the only handle here for a long time, and it is not enough on
+    its own. A chain switch calls kill_everything() first, which clears the pid file
+    and then starts a fresh backend -- but if that fresh start did not write one, or
+    the powershell it launched has since exited, stop_backend read None and returned
+    {"ok": True, "stopped": False}. The popup checks only `ok`, so it reported success
+    while llama-server went on holding the card. That is the failure this was reported
+    as: "clicking stop does not kill the model".
+
+    So the pid file is now the fast path and the ports are the authority. If any port
+    is still listening after the kill, the answer is a failure with retryable set,
+    which is a different reply from "nothing was running" and has to look different.
+    """
     pid = read_pid()
     if pid is None:
         # read_pid skips a file naming a pid that is gone, so a stale entry can
         # still be sitting there. Clearing it here is what stops one outliving
         # the process it names and confusing every later read.
         remove_pid()
-        return {"ok": True, "stopped": False, "message": "没有由扩展启动的后端"}
+        busy = [port for port in OWNED_PORTS if listening(port)]
+        if not busy:
+            return {"ok": True, "stopped": False, "message": "没有在运行的后端"}
+        # Something is still up and nothing owns it. That is not "nothing to stop".
+        problems = kill_everything()
+        still = [port for port in OWNED_PORTS if listening(port)]
+        if still:
+            return {"ok": False, "retryable": True,
+                    "error": f"端口仍在监听: {', '.join(str(p) for p in still)}；"
+                              + "; ".join(problems or ["没有可归因的进程"]),
+                    "stopped": False}
+        return {"ok": True, "stopped": True,
+                "message": f"没有 pid 文件，已按端口清掉 {', '.join(str(p) for p in busy)}"}
 
     killed = subprocess.run(
         ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
@@ -429,7 +455,7 @@ def restart_chain(chain: str) -> dict:
     hand to recover from a UI click. The last known-good chain is kept here rather than
     read from the file, because the file now names the chain being tried.
     """
-    if chain not in ("whisper-hy", "qwen3-hy"):
+    if chain not in ("whisper-hy", "qwen3-hy", "gemma-e2e"):
         return {"ok": False, "error": f"未实现的链路: {chain}", "rejected": True}
 
     previous = read_chain()
@@ -462,7 +488,12 @@ def handle(message: dict) -> dict:
     if kind == "shutdown":
         return stop_backend()
     if kind == "status":
-        return {"ok": True, "ready": backend_ready(), "owned": read_pid() is not None,
+        # `owned` used to be the pid file's answer, which is not the question anyone
+        # asks. What matters is whether a backend is up, and that is the ports. Both are
+        # reported because a disagreement between them is the orphan case.
+        return {"ok": True, "ready": backend_ready(),
+                "owned": read_pid() is not None,
+                "up": any(listening(port) for port in OWNED_PORTS),
                 "chain": read_chain()}
     if kind == "switch-chain":
         return restart_chain(str(message.get("chain") or ""))

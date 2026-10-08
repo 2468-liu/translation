@@ -69,15 +69,27 @@ class KillScopeTests(unittest.TestCase):
 
 
 class RollbackTests(unittest.TestCase):
-    def test_an_unimplemented_chain_is_refused_without_killing_anything(self):
-        """gemma-e2e is in the dropdown and disabled, but a message can still name it.
-        Tearing everything down for a chain that cannot start would turn a typo into an
-        outage."""
+    def test_an_unknown_chain_is_refused_without_killing_anything(self):
+        """A message can name anything. Tearing everything down for a chain that does
+        not exist would turn a typo into an outage."""
         with patch.object(nh, "kill_everything") as kill:
-            reply = nh.restart_chain("gemma-e2e")
+            reply = nh.restart_chain("gemma-e9")
         self.assertFalse(reply["ok"])
         self.assertTrue(reply["rejected"])
         kill.assert_not_called()
+
+    def test_gemma_e2e_is_accepted_now(self):
+        """It needs two switches rather than one -- a Gemma4 translator on 8082 and no
+        recogniser at all -- so accepting it here is not the same as accepting a name."""
+        with (
+            patch.object(nh, "read_chain", return_value="whisper-hy"),
+            patch.object(nh, "write_chain", return_value=None),
+            patch.object(nh, "kill_everything", return_value=[]),
+            patch.object(nh, "start_backend", return_value={"ok": True, "ready": True}),
+        ):
+            reply = nh.restart_chain("gemma-e2e")
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["chain"], "gemma-e2e")
 
     def test_a_failed_start_restores_the_previous_chain(self):
         calls: list[str] = []
@@ -204,6 +216,25 @@ class RuntimeJsonSelectionTests(unittest.TestCase):
             self.skipTest("runtime.json is machine-local and absent")
         self.assertIn(self.data["chain"], config.CHAINS)
 
+    def test_the_selection_is_something_start_can_actually_start(self):
+        """runtime.json holds a selection, not a wish.
+
+        This caught a real one. A manual restart_chain('gemma-e2e') -- run outside the
+        suite, with write_chain stubbed nowhere because it was the real thing being
+        exercised -- left chain=gemma-e2e in the file, and every later DryRun came up in
+        audio-native even though config.DEFAULT_CHAIN said whisper-hy. Nothing in the
+        test suite had written the file; the suite was not the cause, and a test that
+        reads the file could not have told that from a legitimate switch.
+
+        So the guard is on the value: the selection has to be one start.ps1 can start,
+        and a chain whose branch does not exist is a failure rather than a curiosity.
+        """
+        if not self.data:
+            self.skipTest("runtime.json is machine-local and absent")
+        self.assertIn(self.data["chain"], config.STARTABLE_CHAINS,
+                      "runtime.json selects a chain start.ps1 has no branch for, so the "
+                      "backend comes up as something else than what the file says")
+
     def test_the_deprecated_fields_are_kept_and_labelled(self):
         """They are provenance. Deleting them loses the answer to "why does 2.33.0
         appear here", and the answer is a date."""
@@ -231,34 +262,42 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.host = (ROOT / "scripts" / "native_host.py").read_text(encoding="utf-8")
         self.start = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
 
-    def test_the_select_offers_what_start_can_start(self):
-        """A chain in the dropdown that start.ps1 refuses would be a control that
-        selects a value the backend then throws on.
+    def test_the_select_offers_every_chain_start_can_start(self):
+        """All three, because gemma-e2e is startable now.
 
-        gemma-e2e is listed and disabled rather than absent, and its label has to say
-        why. The reason is not "not implemented" -- it is implemented and measured and
-        loses on music-backed material, which is a different sentence and a different
-        thing for the next reader to conclude.
+        The first version of this switch left gemma-e2e out with a comment saying the
+        reason was a missing branch. That was true of this switch and it was also true
+        that start.ps1 already had a 132-line gemma4 branch -- reached by
+        TRANSLATION_MT_BACKEND rather than by the chain. So the branch existed and the
+        chain selector just did not know about it, which is a different fault from the
+        one the comment described.
+
+        The label still has to say what the measurements said, because "available" here
+        means reachable, not recommended.
         """
-        declared = set(config.CHAINS)
-        offered = {"whisper-hy", "qwen3-hy"}
-        self.assertEqual(declared - offered, {"gemma-e2e"},
-                         "a new chain needs a dropdown row and a start.ps1 branch")
+        self.assertEqual(set(config.CHAINS), {"whisper-hy", "qwen3-hy", "gemma-e2e"})
         self.assertIn('id="chainSelect"', self.popup)
-        for chain in offered:
+        for chain in config.CHAINS:
             self.assertIn(f'value="{chain}"', self.popup)
-        for chain in declared - offered:
-            self.assertIn(f'value="{chain}" disabled', self.popup)
-        # The label must not claim it was never built.
+        self.assertNotIn("disabled", self.popup.split('id="chainSelect"')[1].split("</select>")[0])
         row = [l for l in self.popup.splitlines() if 'value="gemma-e2e"' in l][0]
         self.assertNotIn("未实现", row)
+        self.assertIn("崩", row, "the label must carry the measured failure")
 
-    def test_start_ps1_refuses_the_chain_it_cannot_start(self):
+    def test_start_ps1_refuses_a_chain_it_has_never_heard_of(self):
+        """Unimplemented is not the same as unrecognised. gemma-e2e used to be caught by
+        an unimplemented-chain guard that no longer describes anything."""
         self.assertIn("gemma-e2e", self.start)
-        self.assertIn("未实现的链路", self.start)
+        self.assertIn("未知的链路", self.start)
 
-    def test_the_host_only_accepts_the_implemented_chains(self):
-        self.assertIn('if chain not in ("whisper-hy", "qwen3-hy")', self.host)
+    def test_the_host_accepts_exactly_the_chains_the_table_declares(self):
+        """Three places name the chains -- the table, the host's allow-list and the
+        dropdown -- and a fourth place disagreeing is how a control ends up selecting
+        something the backend refuses."""
+        self.assertIn(
+            'if chain not in ("whisper-hy", "qwen3-hy", "gemma-e2e")', self.host)
+        for chain in config.CHAINS:
+            self.assertIn(f'value="{chain}"', self.popup)
 
     def test_the_qwen3_chain_starts_the_port_its_engine_calls(self):
         """8099 is in three places and they have to agree: the engine's default URL, the
