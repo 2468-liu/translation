@@ -22,7 +22,26 @@ def project_root() -> Path:
 
 
 ROOT = project_root()
-PID_FILE = Path(os.environ.get("LOCALAPPDATA", ROOT)) / "translation-backend" / "server.pid"
+# Two places for the pid file, tried in order.
+#
+# The pid file is the only handle the extension has on the backend process tree:
+# 终止后端 reads it and nothing else. So it cannot depend on one writable
+# directory. Writing it under LOCALAPPDATA failed with PermissionError from
+# inside the frozen exe while the same path written from a plain python.exe in
+# the same shell succeeded -- so the file that decides whether the backend can be
+# stopped at all was landing in a place this process cannot reach. With no pid
+# file, 终止后端 answered "没有由扩展启动的后端" every time while a live backend
+# kept both ports, and the button became a one-way door.
+#
+# ROOT/logs sits next to the exe, which is writable by definition -- that is how
+# the exe got installed. It is gitignored.
+def _pid_candidates() -> list[Path]:
+    candidates = []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "translation-backend" / "server.pid")
+    candidates.append(ROOT / "logs" / "server.pid")
+    return candidates
 
 
 def send(payload: dict) -> None:
@@ -70,38 +89,83 @@ def process_exists(pid: int) -> bool:
 
 
 def read_pid() -> int | None:
-    try:
-        pid = int(PID_FILE.read_text(encoding="ascii").strip())
-    except (FileNotFoundError, OSError, ValueError):
-        return None
-    return pid if process_exists(pid) else None
+    """The first candidate naming a process that still exists.
+
+    A file naming a dead pid is skipped rather than returned, and the next
+    candidate is tried -- so a stale entry in one place cannot shadow a live one
+    in another.
+    """
+    for candidate in _pid_candidates():
+        try:
+            pid = int(candidate.read_text(encoding="ascii").strip())
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if process_exists(pid):
+            return pid
+    return None
 
 
-def write_pid(pid: int) -> None:
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(pid), encoding="ascii")
+def write_pid(pid: int) -> str | None:
+    """Record the pid we started. Returns an error string instead of raising.
+
+    This runs after the backend has already been spawned. Raising here aborted
+    start_backend, so ensure answered ok:false while a working backend was coming
+    up behind it: the popup showed a failure, the button stayed on 开始, and the
+    user pressed it again against a backend that was already there. A bookkeeping
+    failure must not undo the operation it was recording.
+
+    Every candidate is tried before giving up, because losing this file means
+    终止后端 can no longer stop what was just started.
+    """
+    problems = []
+    for candidate in _pid_candidates():
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text(str(pid), encoding="ascii")
+            return None
+        except OSError as error:
+            problems.append(f"{candidate}: {type(error).__name__}: {error}")
+    detail = " | ".join(problems)
+    print(f"warning: backend started as pid {pid} but no pid file could be "
+          f"written ({detail}); 终止后端 will not be able to stop it",
+          file=sys.stderr, flush=True)
+    return detail
 
 
 def remove_pid() -> None:
-    try:
-        PID_FILE.unlink()
-    except FileNotFoundError:
-        pass
+    for candidate in _pid_candidates():
+        try:
+            candidate.unlink()
+        except (FileNotFoundError, OSError):
+            pass
 
 
 def backend_ready() -> bool:
     return listening(WS_PORT) and listening(LLAMA_PORT)
 
 
-def wait_for_existing_backend() -> dict | None:
-    """Wait for a backend already opening either port instead of duplicating it."""
+def wait_for_existing_backend(owned_pid: int | None = None) -> dict | None:
+    """Wait for a backend already opening either port instead of duplicating it.
+
+    ``owned_pid`` is what separates the two cases that both look like "a port is
+    open". A pid file means a backend this host started is still coming up, so
+    waiting is right and duplicating it would fight it for the port. No pid file
+    plus an open port means an orphan -- a llama-server left behind by an earlier
+    session, which is exactly the state a killed stop leaves behind -- and waiting
+    for it to turn into a whole backend holds the button down until the clock runs
+    out and then fails. Return None there, so the caller starts the missing half.
+
+    Without that distinction the wait could not tell a peer from a corpse.
+    """
     if not (listening(WS_PORT) or listening(LLAMA_PORT)):
+        return None
+    if owned_pid is None:
         return None
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         if backend_ready():
             return {"ok": True, "ready": True, "owned": False}
-        if not (listening(WS_PORT) or listening(LLAMA_PORT)):
+        if not listening(WS_PORT) and not listening(LLAMA_PORT):
             return None
         time.sleep(0.25)
     return {"ok": False, "error": "检测到已有后端正在启动，等待超时；未重复启动新后端"}
@@ -112,7 +176,7 @@ def start_backend(audio_only: bool = False) -> dict:
     if backend_ready():
         return {"ok": True, "ready": True, "owned": owned_pid is not None}
 
-    existing = wait_for_existing_backend()
+    existing = wait_for_existing_backend(owned_pid)
     if existing is not None:
         return existing
 
@@ -144,38 +208,59 @@ def start_backend(audio_only: bool = False) -> dict:
         env=environment,
         creationflags=flags,
     )
-    write_pid(process.pid)
+    pid_note = write_pid(process.pid)
 
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         if backend_ready():
-            return {"ok": True, "ready": True, "owned": True}
+            reply = {"ok": True, "ready": True, "owned": True}
+            if pid_note:
+                reply["pid_file_error"] = pid_note
+            return reply
         if process.poll() is not None:
             remove_pid()
             return {"ok": False, "error": "本地后端启动失败"}
         time.sleep(0.25)
 
-    return {"ok": False, "error": "本地后端启动超时"}
+    return {"ok": False, "error": "本地后端启动超时", "pid": process.pid}
 
 
 def stop_backend() -> dict:
     pid = read_pid()
-    remove_pid()
     if pid is None:
+        # read_pid skips a file naming a pid that is gone, so a stale entry can
+        # still be sitting there. Clearing it here is what stops one outliving
+        # the process it names and confusing every later read.
+        remove_pid()
         return {"ok": True, "stopped": False, "message": "没有由扩展启动的后端"}
 
-    subprocess.run(
+    killed = subprocess.run(
         ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
         capture_output=True,
+        text=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
     )
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if not listening(WS_PORT) and not listening(LLAMA_PORT):
+            remove_pid()
             return {"ok": True, "stopped": True}
         time.sleep(0.2)
-    return {"ok": False, "error": "后端进程未能及时退出"}
+
+    # The pid file stays. It used to be removed before the kill was checked, so a
+    # stop that failed left nothing behind to retry with: every later stop read
+    # "no backend was started by the extension" while the backend was still
+    # running and holding the ports. One bad stop was a one-way door.
+    #
+    # taskkill's status is reported too. check=False with a discarded returncode
+    # turned "access denied" and "no such process" into the same message as "it
+    # did not exit in time", which are three different problems.
+    detail = (killed.stderr or killed.stdout or "").strip()
+    reason = "后端进程未能及时退出"
+    if killed.returncode != 0:
+        reason = f"taskkill 返回 {killed.returncode}（{detail or '无输出'}）；{reason}"
+    return {"ok": False, "error": reason, "retryable": True, "pid": pid}
 
 
 def handle(message: dict) -> dict:

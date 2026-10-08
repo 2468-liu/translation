@@ -3515,3 +3515,145 @@ pysbd 放 partial = 延迟代价，直接违背体感目标，不做
 `thresholds` 只覆盖可调项，ASR 模型是个路径不是阈值。这与"12 个 MTP 开全部是关的"
 是同一个形状：**名字代替事实**。已把 `asr_model` / `asr_fallback` 加进 meta 的
 `thresholds` 字典（`replay.ps1:356`），以后读 `asr_model`，不读臂名。
+
+## 36. 开始/终止的链条在代码层是不连通的：五个缺陷，逐个证明（2026-10-08 下午）
+
+用户按下「终止后端」后再按「开始」，启不动。要求在代码层检查开始与终止的逻辑
+链条是否打通、多次开始终止是否连通。
+
+**结论：不通。找到 5 个缺陷，其中 2 个各自单独就足以让终止后端永远杀不掉后端。**
+
+### 36.1 怎么查的：不靠推断，靠能失败的测试
+
+`tests/test_backend_cycle.py`（11 条）直接驱动真实的 `scripts/native_host.py`，
+只把进程与套接字两条边打桩，时钟也打桩（不打桩的话 4 条测试要跑 94 秒）。
+
+**第一轮 4 条失败、3 条通过。第二轮 5 条失败、4 条通过。**
+通过的那条两轮循环测试说明了问题的形状：**循环只在 stop 完全成功时才是连通的。**
+
+### 36.2 缺陷一：失败的 stop 是单向门（pid 文件被提前删掉）
+
+```python
+ pid = read_pid()
+ remove_pid()          ← 删在 kill 被验证之前
+ if pid is None: return "没有由扩展启动的后端"
+ taskkill ...
+ 轮询 10 秒
+ 端口没空 → return {"ok": False, "error": "后端进程未能及时退出"}
+```
+
+**端口没空时 pid 文件已经没了**，所以下一次 stop 读到"没有由扩展启动的后端"，
+而后端还在跑、还占着两个端口。**一次失败的 stop 让后端永远停不掉。**
+
+修法：端口空之前不删；失败时把 pid 一起返回，标 `retryable: true`。
+
+### 36.3 缺陷二：`wait_for_existing_backend` 分不清同伴与尸体
+
+这是上一节我自己引入的回归，用户刚好踩中。它的判据是「有端口开着 ⇒ 另有一个实例
+正在启动」，于是等 90 秒再报错。而 stop 失败留下的正是**半开状态**：
+llama-server 活着占 8080，python server 已死。
+
+```
+从弹窗看：一个按钮按下去，一分半钟没反应，然后失败
+```
+
+修法：pid 文件是判据。有 pid ⇒ 是同伴，值得等；无 pid 而端口开着 ⇒ 是孤儿，
+立刻返回让调用方把缺的那一半起起来。
+
+### 36.4 缺陷三：`write_pid` 的异常会杀死已经成功的启动
+
+`write_pid` 跑在 `Popen` **之后**。它抛异常 ⇒ `handle()` 兜住 ⇒ `ensure` 回
+`ok:false`。但**后端已经在起**：
+
+```
+ensure      {"ok": false, "error": "[Errno 13] Permission denied: ...server.pid"}
+ports       {8080: 'up', 8765: 'up'}
+进程        {'llama-server': True, 'python.exe': 4}      ← 真在跑
+```
+
+这是实测撞见的：一次探针调用之后，14:04:12 起了一个 powershell、14:04:17 起了
+llama-server 和 python-server，**而接口说的是"启动失败"**。
+弹窗显示失败、按钮留在「开始」、用户再按一次——对着一个已经在跑的后端。
+
+修法：`write_pid` 返回错误字符串而不是抛；就绪后回 `ok:true` 并附 `pid_file_error`。
+
+### 36.5 缺陷四（根因）：`write_pid` 在 exe 里被拒，而同一路径普通 Python 能写
+
+```
+exe 内:  PermissionError: [Errno 13] ... AppData\Local\translation-backend\server.pid
+普通 python.exe 同一时刻同一路径:  写成功
+PowerShell Set-Content 同一路径:   写成功
+目录 ACL: time202301\20693 FullControl
+```
+
+**这不是目录权限问题。**而 pid 文件是扩展手里**唯一**的进程树把手
+（`终止后端` 只读它），所以它落在一个本进程到不了的地方，
+**代价就是终止后端永远杀不掉任何东西**——这与缺陷一叠加，等于后端只能起不能停。
+
+修法：pid 文件改成**候选列表**，逐个试。
+
+```python
+LOCALAPPDATA\translation-backend\server.pid     ← 原来的位置
+ROOT\logs\server.pid                            ← 回退，紧挨 exe，必然可写
+```
+
+`logs/` 已被 `.gitignore:12` 覆盖，回退文件不会进库。
+
+### 36.6 缺陷五：`taskkill` 的退出码被丢弃
+
+`check=False` 且返回值不接，于是「拒绝访问」「没有那个进程」「它没在 10 秒内退出」
+——三个不同的问题、三个不同的修法——被压成同一句话。修法：接 `returncode`，
+失败时把 taskkill 的状态与输出写进错误消息。
+
+### 36.7 顺带修掉一个新引入的回归
+
+缺陷一的修法（不再提前删 pid）带来一个泄漏：pid 文件陈旧时 `read_pid()` 返回 None，
+而 `stop_backend` 也不删它了——**它会永远留下**，让 `read_pid` 一直报一个
+taskkill 用不了的 pid。已修：None 分支里清掉所有候选。
+
+### 36.8 修完之后的实测：同一个探针，两次循环
+
+```
+--- 第 1 次开始 ---
+ensure      {"ok": true, "ready": true, "owned": true}   (10s)
+ports       {8080: 'up', 8765: 'up'}
+--- 第 1 次终止 ---
+shutdown    {"ok": true, "stopped": true}   (1s)
+ports       {8080: 'down', 8765: 'down'}
+进程        {'llama-server': False, 'python.exe': 2}      ← llama-server 真没了
+--- 第 2 次开始 ---
+ensure      {"ok": true, "ready": true, "owned": true}   (9s)
+--- 第 2 次终止 ---
+shutdown    {"ok": true, "stopped": true}   (1s)
+stderr      (空)
+```
+
+**四次操作全部符合预期，两轮循环都通。**对比修之前：两次终止都是
+`stopped:false` + 「没有由扩展启动的后端」+ 端口一直占着。
+
+### 36.9 一个我仍然无法从这里判定的问题
+
+缺陷四的 Permission denied **只在 exe 内出现**，普通 Python 和 PowerShell 都能写。
+我无法确定这是 exe 的问题还是我这个受限 shell 的问题（和 WMI 被拒同源）。
+
+**所以：exe 已重建并验证（Python 侧行为、pid 回退、两次循环都实测过），
+但你的桌面会话能不能加载这个新 exe、以及那个 Permission denied 会不会也在你那里
+出现，我看不到。** 回退路径让"pid 写不进去"不再是致命的，但如果你那边仍然是
+Permission denied，`stderr` 里那行 warning 会直接说明。
+
+**要你验**：重新加载扩展 → 开始 → 终止 → 再开始 → 再终止。四步都通才算修好。
+
+### 36.10 ⚠️ 这条链上有两个东西我没法从代码层验证，只能靠你
+
+```
+一、offscreen 文档的 2 秒预算
+   sendWhenReady 重试 20 次 × 100ms = 2s。closeDocument 之后的下一次
+   createDocument 加脚本加载可能超过 2s，超了就抛"offscreen 无响应"。
+   这是我读代码读出来的怀疑，不是我测出来的。
+
+二、MV3 service worker 约 30 秒空闲就被挂起
+   挂起 ⇒ 原生端口断开 ⇒ native_host.main() 的 finally: stop_backend()
+   ⇒ **看播客看到一半，后端被杀**。main() 的 finally 是有意写的
+   （有测试钉着），但它和 service worker 生命周期叠在一起的后果没人验证过。
+   如果你遇到过"看着看着字幕没了"，就是这条。
+```
