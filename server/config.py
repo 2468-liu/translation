@@ -162,6 +162,60 @@ QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
 # still used 57.1% of wall clock on lecture_mix.
 PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 750)
 
+# The chains, and the default, live here rather than in runtime.json.
+#
+# runtime.json is machine-local and gitignored -- it holds absolute paths to this
+# machine's llama builds and that is exactly why it is not versioned. Putting the chain
+# table there made a fresh clone have no default at all, and eleven tests that read it
+# failed on a clean checkout: the defaults for a shipped configuration cannot live in a
+# file that is not shipped.
+#
+# A chain is the whole pipeline, not a recogniser. gemma-e2e is the audio-native path
+# where one model both hears and translates, which removes the translator process
+# entirely -- calling that "an ASR engine" would misdescribe it and would make a fourth
+# option look like a fourth engine.
+#
+# `status` is what stops an unimplemented chain from being offered as if it worked.
+DEFAULT_CHAIN = "whisper-hy"
+CHAINS = {
+    "whisper-hy": {
+        "label": "whisper 识别 + 混元翻译",
+        "status": "measured, in use",
+        "asr_backend": "whisper",
+        "qwen3_port": 0,
+        "measured": "e2e first-translation-to-paint p50 55ms on samples/lecture_mix.wav at "
+                    "partial 750; asr p50 829ms, 100% of calls over a 250ms budget, 57.1% "
+                    "of wall clock",
+        "caveat": "whisper overruns both 250ms and 750ms, so 750 is what makes it usable "
+                  "rather than what makes it good",
+    },
+    "qwen3-hy": {
+        "label": "Qwen3-ASR 识别 + 混元翻译",
+        "status": "implemented, measured, not adopted",
+        "asr_backend": "qwen3",
+        # The port Qwen3AsrEngine posts to. It is named here rather than in the engine
+        # because three places have to agree -- the engine's default URL, the host's kill
+        # scope and the server start -- and two agreeing is not enough.
+        "qwen3_port": 8099,
+        "measured": "asr p50 140ms against 823ms, 5.9x, 9% of calls over 250ms; but e2e went "
+                    "the other way on both samples (382->925ms on blog_3min, 55->434ms on "
+                    "lecture_mix) because 2.9x more revisions left the display doing the work",
+        "caveat": "5 of 149 calls repeated until the context filled, 30-33s each; capped at "
+                  "128 tokens and dropped whole, trigger still unknown",
+    },
+    "gemma-e2e": {
+        "label": "音频直出（一个模型同时听和译）",
+        "status": "not implemented",
+        "asr_backend": None,
+        "qwen3_port": 0,
+        "measured": "not measured",
+        "caveat": "unlocked by GPU compute, not by more of this card: 4GB is the binding "
+                  "constraint",
+    },
+}
+IMPLEMENTED_CHAINS = tuple(n for n, s in CHAINS.items() if s["status"] != "not implemented")
+QWEN3_ASR_PORT = CHAINS["qwen3-hy"]["qwen3_port"]
+
 # VAD
 VAD_THRESHOLD = 0.5
 # Leading pre-roll cap. 0 disables it, which is the production value until #20 is

@@ -27,6 +27,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts import native_host as nh
+from server import config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -125,55 +126,75 @@ class RollbackTests(unittest.TestCase):
         self.assertEqual(reply["chain"], "whisper-hy")
 
 
-class RuntimeJsonTests(unittest.TestCase):
-    """runtime.json is read by start.ps1 and written by this host, so its shape is a
-    contract between two languages."""
+class ChainTableTests(unittest.TestCase):
+    """The chain table is in server/config.py, not runtime.json.
 
-    def setUp(self):
-        self.data = json.loads((ROOT / "runtime.json").read_text(encoding="utf-8"))
+    It was in runtime.json first, and runtime.json is gitignored because it holds this
+    machine's absolute paths to llama builds. Eleven of these tests passed on the
+    working tree and failed on a fresh clone, because the defaults for a shipped
+    configuration were living in a file that is not shipped.
+    """
 
     def test_the_default_chain_is_one_that_exists(self):
-        self.assertEqual(self.data["chain"], "whisper-hy")
-        self.assertIn(self.data["chain"], self.data["_chains"])
+        self.assertIn(config.DEFAULT_CHAIN, config.CHAINS)
+        self.assertEqual(config.DEFAULT_CHAIN, "whisper-hy")
 
-    def test_every_chain_names_its_processes_and_its_status(self):
-        # Keys starting with _ are notes, not chains. They live in the same object
-        # because the file is read by two languages and a note that needed its own
-        # table would be a second file to keep in step -- but then every reader has to
-        # skip them, and this is the test that says so.
-        for name, spec in self.data["_chains"].items():
-            if name.startswith("_"):
-                self.assertIsInstance(spec, str, f"{name} looks like a chain, not a note")
-                continue
-            for field in ("label", "status", "processes", "measured"):
+    def test_every_chain_names_what_it_is_and_what_it_measured(self):
+        for name, spec in config.CHAINS.items():
+            for field in ("label", "status", "asr_backend", "qwen3_port", "measured"):
                 self.assertIn(field, spec, f"{name} is missing {field}")
 
-    def test_no_chain_key_is_ambiguous_with_a_note(self):
-        """A note that does not start with _ would be offered as a chain by anything
-        iterating the table, and the dropdown would then list it."""
-        for name in self.data["_chains"]:
-            self.assertTrue(
-                name.startswith("_") or not name.startswith("_"),
-                "sanity",
-            )
-        chains = [n for n in self.data["_chains"] if not n.startswith("_")]
-        self.assertTrue(chains)
-        self.assertNotIn("_note", chains)
+    def test_the_unimplemented_chain_is_excluded_from_implemented(self):
+        """Which is the single fact that decides whether the dropdown offers it."""
+        self.assertNotIn("gemma-e2e", config.IMPLEMENTED_CHAINS)
+        self.assertEqual(config.CHAINS["gemma-e2e"]["status"], "not implemented")
+        self.assertEqual(set(config.IMPLEMENTED_CHAINS),
+                         {"whisper-hy", "qwen3-hy"})
 
-    def test_the_unimplemented_chain_says_so_rather_than_looking_available(self):
-        self.assertEqual(self.data["_chains"]["gemma-e2e"]["status"], "not implemented")
+    def test_the_unimplemented_chain_has_no_backend_rather_than_a_wrong_one(self):
+        """None, not "whisper". Mapping it onto a working engine would make an
+        unimplemented chain indistinguishable from an implemented one."""
+        self.assertIsNone(config.CHAINS["gemma-e2e"]["asr_backend"])
+
+    def test_the_qwen3_port_is_named_in_one_place(self):
+        self.assertEqual(config.QWEN3_ASR_PORT, 8099)
+        self.assertEqual(config.CHAINS["qwen3-hy"]["qwen3_port"], 8099)
+        self.assertTrue(config.QWEN3_ASR_URL.endswith(":8099"))
+
+    def test_runtime_json_is_not_where_the_defaults_live(self):
+        """It may carry this machine's selection, but a clone must not need it."""
+        self.assertIn("runtime.json", (ROOT / ".gitignore").read_text(encoding="utf-8"))
+        self.assertNotIn("CHAINS", (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
+                         [:0] or "")
+
+
+class RuntimeJsonSelectionTests(unittest.TestCase):
+    """What runtime.json is still for: this machine's current selection, and the
+    provenance of the fields that stopped being read."""
+
+    def setUp(self):
+        path = ROOT / "runtime.json"
+        self.data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+    def test_the_selection_is_a_chain_that_exists(self):
+        if not self.data:
+            self.skipTest("runtime.json is machine-local and absent")
+        self.assertIn(self.data["chain"], config.CHAINS)
 
     def test_the_deprecated_fields_are_kept_and_labelled(self):
-        """They are provenance. Deleting them would lose the answer to "why does
-        2.33.0 appear in this file", and the answer is a date."""
-        old = self.data["_deprecated"]
+        """They are provenance. Deleting them loses the answer to "why does 2.33.0
+        appear here", and the answer is a date."""
+        if not self.data:
+            self.skipTest("runtime.json is machine-local and absent")
+        old = self.data.get("_deprecated", {})
         for field in ("llama_server", "gguf", "ngl", "ctx"):
             self.assertIn(field, old)
         self.assertIn("2026", old["_note"])
 
     def test_the_deprecated_fields_are_not_readable_as_settings(self):
-        """They live under _deprecated, so nothing reads them by accident, and the
-        first test proves the live chain is the one start.ps1 will use."""
+        """They live under _deprecated, so nothing reads them by accident."""
+        if not self.data:
+            self.skipTest("runtime.json is machine-local and absent")
         self.assertNotIn("llama_server", {k for k in self.data if not k.startswith("_")})
         self.assertNotIn("gguf", {k for k in self.data if not k.startswith("_")})
 
@@ -186,14 +207,13 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.background = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
         self.host = (ROOT / "scripts" / "native_host.py").read_text(encoding="utf-8")
         self.start = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
-        self.runtime = json.loads((ROOT / "runtime.json").read_text(encoding="utf-8"))
 
     def test_the_select_offers_exactly_the_implemented_chains(self):
         """A chain in the dropdown that start.ps1 refuses would be a control that
         selects a value the backend then throws on. The unimplemented one is listed
         but disabled, so the reason it is not available is visible rather than absent.
         """
-        declared = {n for n in self.runtime["_chains"] if not n.startswith("_")}
+        declared = set(config.CHAINS)
         implemented = {"whisper-hy", "qwen3-hy"}
         self.assertEqual(declared - implemented, {"gemma-e2e"},
                          "a new chain needs a dropdown row and a start.ps1 branch")
@@ -217,7 +237,7 @@ class PopupAndHostAgreeTests(unittest.TestCase):
 
         self.assertTrue(QWEN3_ASR_URL.endswith(":8099"))
         self.assertIn(8099, nh.OWNED_PORTS)
-        self.assertEqual(self.runtime["qwen3_port"], 8099)
+        self.assertEqual(config.QWEN3_ASR_PORT, 8099)
 
     def test_the_message_reaches_the_host(self):
         self.assertIn('message.type === "switch-chain"', self.background)

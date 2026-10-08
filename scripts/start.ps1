@@ -261,31 +261,35 @@ if ($backend.installed) { Write-Note "llama    已装：$($backend.installed)（
 # with no arguments at all. An unreadable runtime.json falls back to the default chain
 # and says so, rather than refusing to start: a corrupt preference should cost the
 # preference, not the backend.
-$Chain = if ($env:TRANSLATION_CHAIN) { $env:TRANSLATION_CHAIN } else { "whisper-hy" }
+$Chain = if ($env:TRANSLATION_CHAIN) { $env:TRANSLATION_CHAIN } else { "" }
 $Qwen3Port = 8099
 if (Test-Path (Join-Path $Root "runtime.json")) {
     try {
         $runtimeForChain = Get-Content (Join-Path $Root "runtime.json") -Raw | ConvertFrom-Json
-        if (-not $env:TRANSLATION_CHAIN -and $runtimeForChain.chain) { $Chain = $runtimeForChain.chain }
-        if ($runtimeForChain.qwen3_port) { $Qwen3Port = [int]$runtimeForChain.qwen3_port }
-        if ($runtimeForChain.asr_backend) { $env:TRANSLATION_ASR_BACKEND = $runtimeForChain.asr_backend }
+        if (-not $Chain -and $runtimeForChain.chain) { $Chain = $runtimeForChain.chain }
     } catch {
-        Write-Note "runtime.json 的 chain 读不出来（$($_.Exception.Message)）；按 whisper-hy 继续"
+        Write-Note "runtime.json 的 chain 读不出来（$($_.Exception.Message)）；按默认链路继续"
     }
 }
+# The chain table is server/config.py, not runtime.json: runtime.json holds this
+# machine's absolute paths and is gitignored, so a fresh clone has no chain table at all
+# and no default either. Python is asked rather than the file parsed, so the table has
+# one definition that both sides read.
+if (-not $Chain) { $Chain = & $Python -c "from server.config import DEFAULT_CHAIN; print(DEFAULT_CHAIN)" }
 
-# Only two of the three have an implementation. The audio-native chain would replace
-# both models with one, which is not what this script knows how to start, so it is named
-# and refused rather than silently mapped onto whisper -- an unimplemented chain that
-# starts would be indistinguishable from an implemented one that works.
-$AsrBackend = if ($env:TRANSLATION_ASR_BACKEND) { $env:TRANSLATION_ASR_BACKEND.ToLower() } else { "whisper" }
-switch ($Chain) {
-    "whisper-hy" { $AsrBackend = "whisper" }
-    "qwen3-hy" { $AsrBackend = "qwen3" }
-    default { throw "未实现的链路：$Chain（可用：whisper-hy、qwen3-hy）。音频直出（gemma-e2e）未实现。" }
+$ChainInfo = & $Python -c "import json;from server.config import CHAINS;c=CHAINS.get('$Chain');print(json.dumps(c) if c else '')"
+if (-not $ChainInfo) {
+    $names = (& $Python -c "from server.config import CHAINS; print('、'.join(CHAINS))").Trim()
+    throw "未实现的链路：$Chain（已知：$names）。音频直出（gemma-e2e）未实现。"
 }
+$ChainSpec = $ChainInfo | ConvertFrom-Json
+if ($ChainSpec.asr_backend) { $AsrBackend = $ChainSpec.asr_backend } else { $AsrBackend = "" }
+if ($ChainSpec.asr_backend -eq $null) {
+    throw "链路 $Chain 还没有实现（$($ChainSpec.status)）；它需要的是 $($ChainSpec.caveat)"
+}
+$Qwen3Port = if ($ChainSpec.qwen3_port) { [int]$ChainSpec.qwen3_port } else { $Qwen3Port }
 $env:TRANSLATION_ASR_BACKEND = $AsrBackend
-Write-Note "chain    $Chain  (asr=$AsrBackend)"
+Write-Note "chain    $Chain  (asr=$AsrBackend, $($ChainSpec.status))"
 
 $MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLower() } else { "hy-mt2" }
 $MtPort = if ($MtBackend -eq "gemma4") { 8082 } else { 8080 }
