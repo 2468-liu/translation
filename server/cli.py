@@ -10,7 +10,7 @@ import sys
 import numpy as np
 import soundfile as sf
 
-from .asr import AsrEngine
+from .asr import build_asr
 from .config import SAMPLE_RATE
 from .pipeline import Session
 
@@ -31,7 +31,7 @@ def load_audio(path: str) -> np.ndarray:
 
 
 async def run(path: str, language: str) -> None:
-    asr = AsrEngine()
+    asr = build_asr()
     session = Session(asr)
     session.set_language(language)
 

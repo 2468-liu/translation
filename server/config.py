@@ -109,6 +109,22 @@ ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
 ASR_BEAM_SIZE = 1
+# Which recogniser runs. "whisper" is faster-whisper/CTranslate2 in this process;
+# "qwen3" is a Qwen3-ASR gguf served by a second llama-server.
+#
+# The switch exists so a bad run costs one env var rather than a revert. The
+# measurement behind it: turbo spends asr p50 821ms and 96% of wall clock re-decoding
+# the same utterance prefix every 250ms (REPORT 38), and Qwen3-ASR does the same
+# shape in 130-210ms. Shape unchanged, engine changed -- the KV cache does not help
+# us, because llama.cpp retains one prompt and a request must be a prefix of it, and
+# our partials grow past the retained one every time. The gain is speed only.
+#
+# The cost measured alongside it: hy-mt2's ttft goes from about 40ms to 150-245ms
+# with the second model resident on the same card.
+ASR_BACKEND = os.environ.get("TRANSLATION_ASR_BACKEND", "whisper").strip().lower()
+QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
+QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+QWEN3_ASR_URL = os.environ.get("TRANSLATION_QWEN3_ASR_URL", "http://127.0.0.1:8099")
 PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
 
 # VAD

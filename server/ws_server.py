@@ -14,7 +14,7 @@ from websockets.asyncio.server import serve
 
 from . import perf
 from . import config
-from .asr import AsrEngine
+from .asr import AsrEngine, build_asr
 from .caption_window import (
     ack_switch,
     arm_caption,
@@ -367,7 +367,7 @@ async def main() -> None:
     if os.environ.get("TRANSLATION_AUDIO_NATIVE") == "1":
         print("pipeline: audio-native (no ASR)")
     else:
-        asr = AsrEngine()
+        asr = build_asr()
         print("pipeline: whisper + text model")
     print(f"WebSocket ws://{WS_HOST}:{WS_PORT}/ws")
     async with serve(
