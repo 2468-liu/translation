@@ -306,6 +306,22 @@ async def _play(timing: list[dict]) -> dict:
         audio = _resample(audio, rate)
     pcm = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
     hop = int(SAMPLE_RATE * 0.1)
+    # What actually goes over the wire, hashed and announced.
+    #
+    # Two runs of this client and the offline splitter probe disagreed by 25x on
+    # the same file (53 closings with a 96ms median here against 32 with 1632ms
+    # there), and every candidate difference was eliminated one at a time: the
+    # socket, the 100ms chunking, the real-time pacing, the sample rate, the
+    # int16 conversion. What none of those tests could see is whether this client
+    # sends the audio it thinks it sends. So it now says so, and a mismatch
+    # between this line and the probe becomes a fact instead of an inference.
+    import hashlib
+    print(
+        f"audio out: {pcm.size} samples {pcm.size / SAMPLE_RATE:.2f}s "
+        f"sha256 {hashlib.sha256(pcm.tobytes()).hexdigest()[:16]} "
+        f"peak {int(np.abs(pcm).max())} source {_sample_wav()}",
+        flush=True,
+    )
     events: list[dict] = []
     state = {"audio_sec": 0.0}
 

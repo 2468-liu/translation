@@ -49,13 +49,29 @@ class CaptionLayoutTests(unittest.TestCase):
         self.assertAlmostEqual(speech_hold_factor(1.35), 0.98, places=2)
 
     def test_local_inference_prefers_gpu(self):
-        from server.config import ASR_DEVICE, ASR_COMPUTE_TYPE, LLAMA_NGL_DEFAULT, MT_COMPUTE_TYPE, MT_DEVICE
+        from server.config import ASR_COMPUTE_TYPE, ASR_DEVICE, LLAMA_NGL_DEFAULT
 
         self.assertEqual(ASR_DEVICE, "cuda")
         self.assertEqual(ASR_COMPUTE_TYPE, "float16")
-        self.assertEqual(MT_DEVICE, "cuda")
-        self.assertEqual(MT_COMPUTE_TYPE, "int8")
         self.assertEqual(LLAMA_NGL_DEFAULT, 99)
+
+    def test_no_removed_translation_engine_is_referenced(self):
+        """The NLLB/CTranslate2 translator is gone; nothing may reach for it.
+
+        It was a `USE_NLLB = False` branch in stream_translation with a whole
+        engine module behind it and models that were no longer on disk, so it
+        could never run and could only be mistaken for a live path. The
+        assertion is on the source rather than on an import because the failure
+        mode was a hardcoded constant, not a missing module.
+        """
+        import server.config as config
+        import server.translate as translate
+
+        self.assertFalse(hasattr(config, "USE_NLLB"))
+        self.assertFalse(hasattr(config, "MT_DIR"))
+        for module in (config, translate):
+            source = Path(module.__file__).read_text(encoding="utf-8-sig")
+            self.assertNotIn("nllb", source.lower())
 
     def test_llama_gpu_layers_scale_with_vram(self):
         from server.config import resolve_llama_runtime

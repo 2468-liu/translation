@@ -1,4 +1,4 @@
-﻿"""Speech gate. Prefers Silero ONNX; falls back to RMS energy."""
+"""Speech gate. Prefers Silero ONNX; falls back to RMS energy."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from . import perf
 from .config import (
     SAMPLE_RATE,
     SILERO_ONNX,
+    VAD_MERGE_WINDOW_MS,
     VAD_MIN_SILENCE_MS,
     VAD_MIN_SPEECH_MS,
     VAD_THRESHOLD,
@@ -146,6 +147,8 @@ class Tuning:
         soft_cut_silence_ms: int,
         partial_interval_ms: int,
         name: str = "",
+        min_speech_ms: int = VAD_MIN_SPEECH_MS,
+        merge_window_ms: int = VAD_MERGE_WINDOW_MS,
     ):
         self.min_silence_ms = min_silence_ms
         self.max_utterance_ms = max_utterance_ms
@@ -154,6 +157,12 @@ class Tuning:
         self.soft_cut_speech_ms = soft_cut_speech_ms
         self.soft_cut_silence_ms = soft_cut_silence_ms
         self.partial_interval_ms = partial_interval_ms
+        # Below this much speech an utterance is too short to stand alone. What
+        # happens to it next is merge_window_ms's business, not this value's.
+        self.min_speech_ms = min_speech_ms
+        # Silence allowed while holding a too-short utterance open for a
+        # neighbour. 0 = never hold, i.e. discard it the way this used to.
+        self.merge_window_ms = merge_window_ms
         self.name = name
 
 
@@ -245,6 +254,17 @@ class UtteranceSplitter:
         self.frame_ms = FRAME * 1000 / SAMPLE_RATE
         self._outside_silence_ms = 0.0
         self._unreported_silence = 0.0
+        # Silence accumulated since a too-short utterance was held open for a
+        # neighbour. Kept apart from self.silence_ms because that counter drives
+        # the ordinary closing rule, and letting it keep growing would make the
+        # same utterance close itself again on the next frame.
+        self._held_silence_ms = 0.0
+        # True while a closed utterance is being kept for a neighbour instead of
+        # being dropped. Distinct from early_partial on purpose: an utterance
+        # held before any early partial existed has no partial text to reuse, and
+        # keying the hold off early_partial made those two cases indistinguishable
+        # -- which is what the merge test caught.
+        self._holding = False
 
     def _note_silence_run(self, ms: float, inside: int) -> None:
         """Emit one silence run, whether or not it closed an utterance.
@@ -279,6 +299,8 @@ class UtteranceSplitter:
         self.silence_ms = 0
         self.since_partial_ms = 0
         self.early_partial = False
+        self._held_silence_ms = 0.0
+        self._holding = False
         self.engine.reset()
 
     def push(self, samples: np.ndarray) -> list[tuple[str, np.ndarray | None, bool]]:
@@ -299,6 +321,8 @@ class UtteranceSplitter:
                     self.early_partial = False
                     self.utterance = []
                     self._unreported_silence = 0.0
+                    self._held_silence_ms = 0.0
+                    self._holding = False
                     self._close_outside_silence()
                     events.append(("start", None, False))
                 resumed = self.silence_ms > 0
@@ -309,6 +333,8 @@ class UtteranceSplitter:
                 self.utterance.append(frame)
                 self.speech_ms += self.frame_ms
                 self.silence_ms = 0
+                self._held_silence_ms = 0.0
+                self._holding = False
                 if resumed:
                     # Speech came back before the utterance closed, so the early
                     # partial only covered part of the sentence: never reuse it.
@@ -327,7 +353,7 @@ class UtteranceSplitter:
                     events.append(("end", self._take(), self.early_partial))
                 elif (
                     t.partial_interval_ms
-                    and self.speech_ms >= VAD_MIN_SPEECH_MS
+                    and self.speech_ms >= t.min_speech_ms
                     and self.since_partial_ms >= t.partial_interval_ms
                 ):
                     self.since_partial_ms = 0
@@ -335,22 +361,46 @@ class UtteranceSplitter:
             elif self.in_speech:
                 self.utterance.append(frame * NON_SPEECH_GAIN)
                 self.silence_ms += self.frame_ms
+                # Only counts while an utterance is being held open, so it cannot
+                # be confused with the ordinary closing silence above.
+                if self._holding:
+                    self._held_silence_ms += self.frame_ms
                 self.since_partial_ms += self.frame_ms
                 t = self.tuning
+                if (
+                    t.merge_window_ms > 0
+                    and self._holding
+                    and self._held_silence_ms >= t.merge_window_ms
+                ):
+                    # The neighbour never came. Close it as its own fragment,
+                    # which is the outcome that used to happen immediately; the
+                    # merge window only buys the chance of a better one.
+                    perf.emit(
+                        "vad",
+                        "end",
+                        why="held_timeout",
+                        speech_ms=round(self.speech_ms, 1),
+                        silence_ms=round(self.silence_ms, 1),
+                        early_partial=1,
+                    )
+                    events.append(("end", self._take(), True))
+                    continue
                 if (
                     t.partial_interval_ms
                     and not self.early_partial
                     and t.early_end_ms <= self.silence_ms < t.min_silence_ms
-                    and self.speech_ms >= VAD_MIN_SPEECH_MS
+                    and self.speech_ms >= t.min_speech_ms
                     and self.since_partial_ms >= t.partial_interval_ms
                 ):
                     # The words stopped; only the closing silence is missing.
                     self.early_partial = True
                     self.since_partial_ms = 0
                     events.append(("partial", self._trim(self._copy()), True))
-                if self.silence_ms >= t.min_silence_ms or (
-                    self.speech_ms >= t.soft_cut_speech_ms
-                    and self.silence_ms >= t.soft_cut_silence_ms
+                if not self._holding and (
+                    self.silence_ms >= t.min_silence_ms or (
+                        self.speech_ms >= t.soft_cut_speech_ms
+                        and self.silence_ms >= t.soft_cut_silence_ms
+                    )
                 ):
                     # Why it closed, and the run that closed it, recorded here
                     # while both are still true.
@@ -374,9 +424,43 @@ class UtteranceSplitter:
                         early_partial=1 if self.early_partial else 0,
                     )
                     self._note_silence_run(self.silence_ms, inside=1)
-                    if self.speech_ms >= VAD_MIN_SPEECH_MS:
+                    if self.speech_ms >= t.min_speech_ms:
                         events.append(("end", self._trim(self._copy()), self.early_partial))
-                    self._drop()
+                        self._drop()
+                    elif t.merge_window_ms > 0:
+                        # Too short to stand alone: hold it for a neighbour
+                        # instead of discarding it.
+                        #
+                        # This used to be an unconditional `_drop()`, which is
+                        # how a 250-1000ms burst of real speech disappeared
+                        # before anything downstream saw it. The audio stays in
+                        # self.utterance and the next speech frame resumes it
+                        # through the `resumed` path above.
+                        #
+                        # `self._holding` then suppresses this whole closing
+                        # block until the fragment is either resumed or the merge
+                        # window expires. It has to: `silence_ms` was just zeroed
+                        # for the hold, so it climbs back to min_silence_ms a few
+                        # frames later and the block would fire again -- first
+                        # holding a second time, then taking this branch's
+                        # discard path, so the fragment was never emitted and the
+                        # merge window never got a chance to expire. The merge
+                        # tests caught that as three holds and no end event.
+                        self.silence_ms = 0
+                        self.since_partial_ms = 0
+                        self._held_silence_ms = 0.0
+                        self._holding = True
+                        perf.emit(
+                            "vad",
+                            "held",
+                            speech_ms=round(self.speech_ms, 1),
+                            merge_window_ms=t.merge_window_ms,
+                            why="short",
+                        )
+                    else:
+                        # Merging switched off: the fragment is discarded, which
+                        # is exactly what this did before #6.
+                        self._drop()
             elif not self.in_speech:
                 # Outside an utterance a silence run is still a pause in the
                 # material, and on a TTS clip these are the long ones the closing
@@ -386,7 +470,11 @@ class UtteranceSplitter:
 
     def flush(self) -> list[tuple[str, np.ndarray | None, bool]]:
         self._close_outside_silence()
-        if self.in_speech and self.speech_ms >= VAD_MIN_SPEECH_MS and self.utterance:
+        # A held fragment still waiting for a neighbour is a real utterance when
+        # the stream ends. Judging it by min_speech_ms here would throw it away at
+        # the last moment, which is the failure mode #6 exists to remove.
+        held = self._holding and self.utterance
+        if self.in_speech and (self.speech_ms >= self.tuning.min_speech_ms or held) and self.utterance:
             perf.emit(
                 "vad",
                 "end",
@@ -428,4 +516,6 @@ class UtteranceSplitter:
         self.silence_ms = 0
         self.since_partial_ms = 0
         self.early_partial = False
+        self._held_silence_ms = 0.0
+        self._holding = False
 

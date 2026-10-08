@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -126,7 +125,9 @@ def main() -> int:
     q.add_argument("--top", type=int, default=5)
     q.add_argument("--full", action="store_true", help="print the whole section")
     q.add_argument("--file", help="print one file in full instead of searching")
-    lst = sub.add_parser("list", help="list indexed files and section counts")
+    # No name needed: add_parser registers the subcommand as a side effect, and
+    # the branch below dispatches on args.cmd rather than on the parser object.
+    sub.add_parser("list", help="list indexed files and section counts")
     args = ap.parse_args()
 
     if args.cmd == "list":

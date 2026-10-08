@@ -43,6 +43,7 @@ import wave
 from pathlib import Path
 
 import httpx
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -68,9 +69,12 @@ TARGETS = {
 }
 
 
-def load_wav() -> "np.ndarray":
-    import numpy as np
-
+def load_wav() -> np.ndarray:
+    # numpy is imported at module level. It used to be imported inside this
+    # function while the annotation above was a quoted string, so nothing ever
+    # resolved the name: the code ran, and any tool that reads the annotation --
+    # pyflakes, a typing helper, a reader checking what this returns -- saw an
+    # undefined name instead of an array.
     with wave.open(str(WAV), "rb") as src:
         assert src.getframerate() == SAMPLE_RATE, src.getframerate()
         pcm = np.frombuffer(src.readframes(src.getnframes()), dtype="<i2")
@@ -128,8 +132,6 @@ async def one(client: httpx.AsyncClient, audio_b64: str) -> dict:
 
 
 async def run(reps: int, shifts: list[float]) -> dict:
-    import numpy as np  # noqa: F401
-
     samples = load_wav()
     sentences = json.loads(TIMING.read_text(encoding="utf-8"))
     rows: list[dict] = []

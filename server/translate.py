@@ -9,8 +9,15 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from .config import LLAMA_MODEL, LLAMA_URL, TRANSLATE_MAX_TOKENS, TRANSLATE_TEMPERATURE, USE_NLLB
-from .mt import get_engine, stream_mt
+from .config import (
+    GEMMA_TRANSLATOR_URL,
+    LLAMA_MODEL,
+    LLAMA_URL,
+    MT_BACKEND,
+    MT_CONTEXT_SENTENCES,
+    TRANSLATE_MAX_TOKENS,
+    TRANSLATE_TEMPERATURE,
+)
 
 
 def collapse_translation_repeats(text: str) -> str:
@@ -106,9 +113,89 @@ def _drop_think(piece: str, thinking: bool) -> tuple[str, bool]:
     return "".join(out), thinking
 
 
-def build_messages(text: str, language: str | None, context: list[tuple[str, str]]) -> list[dict]:
-    del language, context
+_LANG_NAME = {
+    "en": "英语",
+    "ja": "日语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "it": "意大利语",
+    "pt": "葡萄牙语",
+    "vi": "越南语",
+    "th": "泰语",
+    "id": "印尼语",
+    "ar": "阿拉伯语",
+}
+
+# The Gemma translator is an instruct model, so it gets a role-separated prompt
+# instead of the one-line instruction the Hy-MT2 fine-tune was trained on. The
+# two prompts are NOT interchangeable and this is measurable: Hy-MT2 was tuned on
+# the bare "将以下文本翻译为中文" form, and Gemma answers that form too, but it
+# answers a system-prompted translation request more consistently and it is the
+# only one of the two that can carry the preceding conversation usefully.
+_GEMMA_SYSTEM = (
+    "你是字幕翻译。把用户给出的内容译成简体中文，只输出译文。"
+    "保留人名与专有名词。句子不完整就按现有内容翻译，不要补写剧情。"
+)
+
+
+def context_pairs(context: list[tuple[str, str]] | None, sentences: int) -> list[tuple[str, str]]:
+    """The tail of the conversation, as (source, translation) pairs.
+
+    ``sentences <= 0`` returns nothing, which is the control arm of the
+    context-injection measurement: the rest of the request is byte-identical,
+    so the difference between the two arms is the context and nothing else.
+    """
+    if sentences <= 0 or not context:
+        return []
+    return [(src, zh) for src, zh in context[-sentences:] if zh]
+
+
+def _context_block(pairs: list[tuple[str, str]]) -> str:
+    return "\n".join(f"- {src}  →  {zh}" for src, zh in pairs)
+
+
+def build_messages(
+    text: str,
+    language: str | None,
+    context: list[tuple[str, str]] | None = None,
+    backend: str = "",
+    context_sentences: int | None = None,
+) -> list[dict]:
+    """Chat messages for one line, for whichever backend is serving.
+
+    The context used to be accepted and thrown away -- the signature had it and
+    the body began with ``del language, context``. That made "does context help"
+    unanswerable from the live pipeline and quietly turned every translation into
+    a cold start, which is the shape of failure that reads as a bad model rather
+    than a missing feature.
+    """
+    backend = (backend or MT_BACKEND).lower()
+    budget = MT_CONTEXT_SENTENCES if context_sentences is None else context_sentences
+    pairs = context_pairs(context, budget)
+    if backend == "gemma4":
+        user = f"源语言：{_LANG_NAME.get(language or '', language or '外语')}\n"
+        if pairs:
+            user += (
+                "前文（已经翻译过，不要重复翻译，也不要续写）：\n"
+                f"{_context_block(pairs)}\n\n"
+            )
+        user += f"当前原文：\n{text}"
+        return [
+            {"role": "system", "content": _GEMMA_SYSTEM},
+            {"role": "user", "content": user},
+        ]
+    # Hy-MT2, and everything measured on it, was tuned on this exact one-liner.
+    # Context is appended rather than restructured so the no-context arm stays
+    # byte-identical to the prompt in REPORT.md.
     user = f"将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n\n{text}"
+    if pairs:
+        user = (
+            "前文（仅供参考，不要重复翻译）：\n"
+            f"{_context_block(pairs)}\n\n" + user
+        )
     return [{"role": "user", "content": user}]
 
 
@@ -127,6 +214,7 @@ async def stream_translation(
     api: dict | None = None,
 ) -> AsyncIterator[str]:
     remote = api if api and api.get("enabled") and api.get("url") and api.get("model") else None
+    gemma = MT_BACKEND == "gemma4" and not remote
     payload = {
         "model": remote["model"] if remote else LLAMA_MODEL,
         "stream": True,
@@ -140,10 +228,15 @@ async def stream_translation(
         key = (remote.get("key") or "").strip()
         if key:
             headers["Authorization"] = f"Bearer {key}"
-    elif USE_NLLB and get_engine().ready:
-        async for piece in stream_mt(text, language):
-            yield piece
-        return
+    elif gemma:
+        # Same sampling family the audio-native branch settled on for these exact
+        # weights: near-greedy with a small repeat penalty, which is what keeps a
+        # subtitle line from looping without making the wording adventurous.
+        url = GEMMA_TRANSLATOR_URL
+        payload["temperature"] = 0.7
+        payload["top_p"] = 0.6
+        payload["top_k"] = 20
+        payload["repeat_penalty"] = 1.05
     else:
         url = LLAMA_URL
         payload["temperature"] = 0.7

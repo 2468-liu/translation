@@ -102,28 +102,59 @@ $second = "smoke10s-b"
 # So the dependency is made explicit. If it cannot be started, say that, rather
 # than reporting a downstream symptom.
 if (-not $AudioNative) {
-    if (-not (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue)) {
-        $Llama = (& .\scripts\resolve_llama.ps1 | Select-Object -Last 1).path
-        $gguf = (Get-ChildItem "models\hy-mt2-1.8b\*.gguf" | Select-Object -First 1).FullName
-        if (-not $gguf) {
-            Write-Host "  FAIL  no Hy-MT2 weights in models\hy-mt2-1.8b"
-            $bad = $true
-        } else {
-            Write-Host "  starting llama-server for Hy-MT2"
-            Start-Process -FilePath $Llama -ArgumentList @(
-                "-m", $gguf, "--host", "127.0.0.1", "--port", "8080",
-                "-ngl", "99", "-c", "2048", "-t", "4", "-np", "1", "-lv", "4"
-            ) -NoNewWindow -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
-            $up = $false
-            for ($i = 0; $i -lt 60; $i++) {
-                Start-Sleep -Seconds 5
-                if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { $up = $true; break }
-            }
-            Check "translation backend on 8080" $up "the whisper route needs it"
-            if (-not $up) { $bad = $true }
-        }
+    . .\scripts\probes.ps1
+
+    # Name the weights. Do not take the first file in the directory.
+    #
+    # models\hy-mt2-1.8b holds two GGUFs: Hy-MT2-1.8B-Q4_K_M.gguf, which every
+    # number in REPORT.md was measured on, and Hy-MT2-1.8B-1.25bit-v2.gguf, which
+    # has never been tried and does not load -- llama-server exits on it with
+    # "tensor 'blk.0.attn_k_norm.weight' has offset ... expected ...".
+    # "Select-Object -First 1" picked the second, so this script started a server
+    # that died on startup and then reported the symptom three steps downstream as
+    # "the translation backend is not on 8080". start.ps1 already filtered on
+    # *Q4_K_M*; this now matches it.
+    #
+    # Two matches is a failure rather than a coin flip: an ambiguous set of weights
+    # is the same class of problem as a mismatched one.
+    $ggufs = @(Get-ChildItem "models\hy-mt2-1.8b\*Q4_K_M*.gguf" -ErrorAction SilentlyContinue)
+    $gguf = $null
+    if ($ggufs.Count -eq 0) {
+        Write-Host "  FAIL  no Hy-MT2 Q4_K_M weights in models\hy-mt2-1.8b"
+        $bad = $true
+    } elseif ($ggufs.Count -gt 1) {
+        Write-Host "  FAIL  more than one Q4_K_M gguf: $($ggufs.Name -join ', ')"
+        $bad = $true
     } else {
+        $gguf = $ggufs[0].FullName
+    }
+
+    # Socket, not Get-NetTCPConnection. That cmdlet is CIM underneath and is
+    # refused in a confined session, so with SilentlyContinue on it returns nothing
+    # and a live server reads as absent. probes.ps1 exists for this and replay.ps1
+    # already uses it; this file did not.
+    if (Test-TcpPort 8080) {
         Check "translation backend on 8080" $true "already up"
+    } elseif ($gguf) {
+        $Llama = (& .\scripts\resolve_llama.ps1 | Select-Object -Last 1).path
+        Write-Host "  starting llama-server for Hy-MT2"
+        Start-Process -FilePath $Llama -ArgumentList @(
+            "-m", $gguf, "--host", "127.0.0.1", "--port", "8080",
+            "-ngl", "99", "-c", "2048", "-t", "4", "-np", "1", "-lv", "4"
+        ) -NoNewWindow -RedirectStandardOutput "logs\llama.out" -RedirectStandardError "logs\llama.err"
+        $up = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 5
+            if (Test-TcpPort 8080) { $up = $true; break }
+        }
+        Check "translation backend on 8080" $up "the whisper route needs it"
+        if (-not $up) {
+            # "the health check timed out" is not the useful fact. What the server
+            # said on its way out is, and it names the file and the reason.
+            $tail = if (Test-Path "logs\llama.err") { (Get-Content "logs\llama.err" -Tail 3) -join " | " } else { "(no logs\llama.err)" }
+            Write-Host "        llama-server said: $tail"
+            $bad = $true
+        }
     }
 }
 

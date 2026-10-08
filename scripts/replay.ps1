@@ -31,16 +31,26 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 $Python = "D:\minanconda\envs\pytorch\python.exe"
 
+# Port and process probes that do not need WMI. WMI is refused in a confined
+# session, and every silenced WMI call here used to read as a passing check.
+. (Join-Path $PSScriptRoot "probes.ps1")
+
 if (-not (Test-Path $Python)) { throw "python not found: $Python" }
 
 Write-Host "stopping server and caption window (llama-server on 8080 stays up)"
-Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# Get-Process, not Get-CimInstance.
+#
+# WMI/CIM is refused outright in a confined session ("Get-CimInstance : 拒绝访问",
+# HRESULT 0x80041003), and with $ErrorActionPreference = "Stop" that refusal is a
+# terminating error -- so the script died on its first line of work and no replay
+# ever ran. Process listing through the provider path needs no WMI service.
+Get-Process -Name python, pythonw -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 if ($AudioNative -and -not $KeepBackend) {
     # The audio model and whisper's model cannot both stay resident on a 4GB
     # card, and the two pipelines serve different models on 8080.
-    Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-Process -Name llama-server -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
 }
 Start-Sleep -Seconds 2
 
@@ -92,8 +102,14 @@ $LlamaVersion = $backend.version
 # --no-translate escape either: skipping translation makes this a different script,
 # and a run that is half a replay should not be reportable as a replay.
 if (-not $AudioNative) {
+    # Named by pattern, not by directory order. models\hy-mt2-1.8b holds two
+    # GGUFs and the first one alphabetically is the 1.25-bit build that does not
+    # load, so this label named the wrong expected model. It only ever appears in
+    # the mismatch message, but a guard that reports the wrong expectation is
+    # worse than one that reports none.
     $expectedModel = if (Test-Path "models\hy-mt2-1.8b") {
-        (Get-ChildItem "models\hy-mt2-1.8b\*.gguf" | Select-Object -First 1).BaseName
+        @(Get-ChildItem "models\hy-mt2-1.8b\*Q4_K_M*.gguf" -ErrorAction SilentlyContinue) |
+            Select-Object -First 1 | ForEach-Object { $_.BaseName }
     } else { "" }
 
     $served = $null
@@ -128,9 +144,11 @@ if ($AudioNative -and $KeepBackend) {
     # That is the whole point of -KeepBackend, so read the live process rather
     # than assuming. What it was launched with goes into the meta below; an arm
     # name is not evidence of what ran.
-    $live = Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if (-not $live) { throw "-KeepBackend was asked for but no llama-server is running" }
+    $live = Get-ProcessCommandLine -Name llama-server
+    if (-not (Get-Process -Name llama-server -ErrorAction SilentlyContinue)) {
+        throw "-KeepBackend was asked for but no llama-server is running"
+    }
+    if (-not $live) { throw "-KeepBackend was asked for but the running llama-server's command line could not be read (WMI refused), so what it was launched with cannot be recorded" }
     Write-Host "keeping the llama-server that is already up (started by the caller)"
 }
 elseif ($AudioNative) {
@@ -163,7 +181,7 @@ elseif ($AudioNative) {
     $ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 5
-        if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+        if (Test-TcpPort -Port 8080) {
             $ready = $true
             break
         }
@@ -231,6 +249,27 @@ if ($AudioNative) {
     Remove-Item Env:TRANSLATION_AUDIO_NATIVE -ErrorAction SilentlyContinue
 }
 
+# The replay's audio source is part of what a replay *is*, so the script decides
+# it rather than the shell that invoked it.
+#
+# A replay injects PCM over the WebSocket. If the server is left on its product
+# default (loopback, which captures the machine's speakers through WASAPI) then
+# ws_server ignores every binary frame -- by design, since exactly one producer
+# may own the splitter -- and the replay produces a clean run with no utterances
+# in it: vad.end=0, no translations, no error. That happened here, and the run
+# looked like a translation-model failure three steps downstream.
+#
+# So: default to socket, which is the measurement口径 recorded in REPORT 24-27,
+# and let a caller who deliberately wants to measure the loopback path ask for it
+# explicitly. Print it, because "which source was this run" belongs in the run
+# log next to the code stamp rather than in whoever's shell history.
+$env:TRANSLATION_AUDIO_SOURCE = if ($env:TRANSLATION_AUDIO_SOURCE) {
+    $env:TRANSLATION_AUDIO_SOURCE
+} else {
+    "socket"
+}
+Write-Host "audio source: $($env:TRANSLATION_AUDIO_SOURCE) (socket = PCM injected by this replay)"
+
 # Stamp the run now, while the tree still looks the way it did when the audio
 # played. perf_compare reading git later would only report where HEAD is when
 # the numbers are analysed, which is not the same thing.
@@ -241,12 +280,27 @@ $stamp = "$sha$dirty"
 Write-Host "code $stamp"
 
 Write-Host "starting server"
-Start-Process -FilePath $Python -ArgumentList "-m", "server" -NoNewWindow | Out-Null
+# -PassThru, not a lookup afterwards. The lookup was `Get-Process python | Sort-Object
+# StartTime -Descending | Select-Object -First 1`, which is wrong twice over: reading
+# StartTime needs a privilege a confined session does not grant, so it threw
+# "Access is denied" and aborted the run before the clip played; and even where it
+# works, "newest python" is a guess about which process is the server rather than
+# knowledge of it. The process object handed back here is the one that was started.
+$serverProc = Start-Process -FilePath $Python -ArgumentList "-m", "server" -NoNewWindow -PassThru
 Start-Sleep -Seconds $StartupWait
 
-$listening = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
-if (-not $listening) { throw "server did not come up on 8765" }
-Write-Host "server pid $($listening.OwningProcess)"
+# Poll the socket rather than asking the OS who owns the port: Get-NetTCPConnection
+# is CIM-based and is refused outright in a confined session, where it returns
+# nothing and reads as "the server never came up" while it is in fact serving.
+# Loading the recogniser takes longer than the startup wait, so a single check is
+# not enough even when the query works.
+$up = $false
+for ($i = 0; $i -lt 36; $i++) {
+    if (Test-TcpPort -Port 8765) { $up = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (-not $up) { throw "server did not come up on 8765" }
+Write-Host "server pid $($serverProc.Id)"
 
 # The clip and its duration come from the file, not from a constant. Every number
 # this file used to carry about the sample -- the name, the "about 3.5 minutes" --
@@ -294,18 +348,16 @@ if ($trCount -eq 0) {
 # sweep all read "+dirty" because the sweep was rewriting config.py between
 # them, so no two of them could be shown to be the same code, and nothing in the
 # meta said which partial interval any of them had run at.
-$effective = & $Python -c @"
-import json
-from server import config
-print(json.dumps({
-    'partial_interval_ms': config.PARTIAL_INTERVAL_MS,
-    'gemma_min_silence_ms': config.GEMMA_MIN_SILENCE_MS,
-    'gemma_max_utterance_ms': config.GEMMA_MAX_UTTERANCE_MS,
-    'audio_context_sentences': config.AUDIO_CONTEXT_SENTENCES,
-    'audio_repeat_penalty': config.AUDIO_REPEAT_PENALTY,
-    'audio_chinese_share_min': config.AUDIO_CHINESE_SHARE_MIN,
-}))
-"@
+# One line on purpose. This was a multi-line here-string piped into `python -c`,
+# and PowerShell mangled it into an unterminated dict -- the run then recorded
+# `thresholds: ""` while reporting nothing wrong, so the meta said the
+# configuration was unrecorded and the reader had no way to know why. A dict
+# built by assignment has no braces for the outer language to lose.
+$effective = & $Python -c "import json; from server import config; d = {}; d['partial_interval_ms'] = config.PARTIAL_INTERVAL_MS; d['gemma_min_silence_ms'] = config.GEMMA_MIN_SILENCE_MS; d['gemma_max_utterance_ms'] = config.GEMMA_MAX_UTTERANCE_MS; d['audio_context_sentences'] = config.AUDIO_CONTEXT_SENTENCES; d['audio_repeat_penalty'] = config.AUDIO_REPEAT_PENALTY; d['audio_chinese_share_min'] = config.AUDIO_CHINESE_SHARE_MIN; d['vad_min_speech_ms'] = config.VAD_MIN_SPEECH_MS; d['vad_merge_window_ms'] = config.VAD_MERGE_WINDOW_MS; d['mt_backend'] = config.MT_BACKEND; d['mt_context_sentences'] = config.MT_CONTEXT_SENTENCES; print(json.dumps(d))"
+if (-not $effective) {
+    throw "could not read the effective configuration; refusing to record a run whose thresholds would be blank"
+}
+$effective = ($effective -join "").Trim()
 # What the serving backend was actually launched with, read off the live process.
 #
 # MTP lives only in the command line -- there is no config value for it and the
@@ -316,11 +368,20 @@ print(json.dumps({
 #
 # Read it here, at the end, from the process that actually served the run. If the
 # caller wanted a draft and none is loaded, that is a throw rather than a note.
-$liveCmd = (Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction SilentlyContinue |
-    Select-Object -First 1).CommandLine
+#
+# "Could not be read" is its own answer, and it is a throw rather than a False.
+# The WMI query this used to make is refused in a confined session and the refusal
+# was silenced, so $liveCmd was $null, $draftLoaded was $false, and the assertion
+# below read that as "no draft" -- a check that cannot run reporting a pass.
+$liveCmd = Get-ProcessCommandLine -Name llama-server
+if (-not $liveCmd -and ($env:TRANSLATION_EXPECT_DRAFT -or $env:TRANSLATION_EXPECT_MMPROJ)) {
+    throw ("the serving llama-server's command line could not be read (WMI refused), so " +
+        "whether it loaded a draft or a projector cannot be verified; refusing to record " +
+        "this run as if the check had passed")
+}
 $draftLoaded = [bool]($liveCmd -and $liveCmd -match "model-draft")
-$mmprojLive = if ($liveCmd -match "--mmproj-device\s+(\S+)") { $Matches[1] } else { "unset" }
-Write-Host "### backend as launched: draft=$draftLoaded mmproj-device=$mmprojLive"
+$mmprojLive = if ($liveCmd -and $liveCmd -match "--mmproj-device\s+(\S+)") { $Matches[1] } else { "unset" }
+Write-Host "### backend as launched: draft=$draftLoaded mmproj-device=$mmprojLive$(if (-not $liveCmd) { ' (command line unreadable)' })"
 if ($env:TRANSLATION_EXPECT_DRAFT -eq "1" -and -not $draftLoaded) {
     throw "$Name wanted a draft model loaded and the serving llama-server has none"
 }
@@ -343,8 +404,14 @@ if ($env:TRANSLATION_EXPECT_MMPROJ -and $mmprojLive -ne $env:TRANSLATION_EXPECT_
     llama_version = $LlamaVersion
     mmproj_device = if ($env:TRANSLATION_MMPROJ_DEVICE) { $env:TRANSLATION_MMPROJ_DEVICE } else { "none" }
     # From the process, not from the arm name or an environment variable.
-    mtp_draft = $draftLoaded
-    mmproj_device_live = $mmprojLive
+    #
+    # null when the command line could not be read (WMI refused in a confined
+    # session). null is honest and false is not: "no draft was loaded" and "we
+    # could not find out" are different facts, and the meta is read later by
+    # someone deciding whether two runs are comparable.
+    mtp_draft = if ($liveCmd) { $draftLoaded } else { $null }
+    mmproj_device_live = if ($liveCmd) { $mmprojLive } else { $null }
+    process_state_readable = [bool]$liveCmd
     thresholds = ($effective -join "").Trim()
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending

@@ -13,6 +13,7 @@ from pathlib import Path
 from websockets.asyncio.server import serve
 
 from . import perf
+from . import config
 from .asr import AsrEngine
 from .caption_window import (
     ack_switch,
@@ -27,7 +28,7 @@ from .caption_window import (
     start_caption,
     update_caption,
 )
-from .config import WS_HOST, WS_PORT
+from .config import LOOPBACK_ENABLED, WS_HOST, WS_PORT
 from .loopback import run_loopback
 from .pipeline import Session
 
@@ -167,6 +168,13 @@ async def handle(ws, asr: AsrEngine | None) -> None:
     try:
         async for message in ws:
             if isinstance(message, bytes):
+                # The exclusion lives here because here the source is known. With
+                # loopback capturing, a socket frame is a second producer talking
+                # into the same splitter, and that interleaving is what fragmented
+                # every replay (REPORT 23). Text frames are still served -- the
+                # extension keeps this connection for config, arm, flush, styles.
+                if LOOPBACK_ENABLED:
+                    continue
                 for payload in session.push_pcm(message):
                     await send(payload)
                 continue
@@ -178,10 +186,25 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 caption_enabled = not bool(data.get("audioOnly"))
                 if not caption_enabled:
                     hide_caption()
-                if loopback_task is None:
+                # Loopback is the product's capture path and it is mutually
+                # exclusive with the socket's PCM -- both feeding this one
+                # Session is what fragmented every replay (REPORT 23). The
+                # extension keeps this connection for text: config, arm, flush,
+                # styles, hide.
+                if LOOPBACK_ENABLED and loopback_task is None:
                     loopback_task = asyncio.create_task(
                         run_loopback(session, send, loopback_stop)
                     )
+                # Tell the client who owns capture, so it can stop encoding and
+                # sending audio that would be dropped anyway. Sent here rather
+                # than at connect time because a client that has not been told
+                # yet may still be sending; both sides treat silence as "keep
+                # doing what you were doing".
+                await send({
+                    "type": "capture-mode",
+                    "audioSource": config.AUDIO_SOURCE,
+                    "captureEnabled": not LOOPBACK_ENABLED,
+                })
                 if "language" in data:
                     session.set_language(data.get("language") or "auto")
                 if any(key in data for key in ("apiEnabled", "apiUrl", "apiKey", "apiModel")):
@@ -282,11 +305,27 @@ def _report_effective_config() -> None:
         "asr_device": config.ASR_DEVICE,
         "asr_cpu_threads": config.ASR_CPU_THREADS,
         "audio_native": os.environ.get("TRANSLATION_AUDIO_NATIVE", "0"),
+        # Which translator answers, and how much of the conversation it is shown.
+        # Both are invisible from outside -- the protocol is identical whichever
+        # backend serves it -- and the context count is the variable under test,
+        # so a run that does not record it cannot be compared to another run.
+        "mt_backend": config.MT_BACKEND,
+        "mt_context_sentences": config.MT_CONTEXT_SENTENCES,
         "audio_context_sentences": config.AUDIO_CONTEXT_SENTENCES,
         "audio_repeat_penalty": config.AUDIO_REPEAT_PENALTY,
         "audio_chinese_share_min": config.AUDIO_CHINESE_SHARE_MIN,
         "gemma_min_silence_ms": config.GEMMA_MIN_SILENCE_MS,
         "gemma_max_utterance_ms": config.GEMMA_MAX_UTTERANCE_MS,
+        # The gate is a drop, and the merge window decides whether a short burst
+        # survives; both are now injectable, so a run that does not record them
+        # cannot be told apart from one that ran the other arm (REPORT 22).
+        # Which producer feeds the splitter. Exactly one does, and which one it is
+        # cannot be read off the transcript, so it goes in the record -- a run
+        # whose loopback was silently closed looks identical to a quiet clip.
+        "audio_source": config.AUDIO_SOURCE,
+        "loopback_enabled": config.LOOPBACK_ENABLED,
+        "vad_min_speech_ms": config.VAD_MIN_SPEECH_MS,
+        "vad_merge_window_ms": config.VAD_MERGE_WINDOW_MS,
         "settle_ms": caption_window.SETTLE_MS,
         "hold_abs_min_ms": caption_window.HOLD_ABS_MIN_MS,
         "hold_abs_max_ms": caption_window.HOLD_ABS_MAX_MS,

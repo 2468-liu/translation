@@ -5,7 +5,6 @@ model left enabled returns an empty answer rather than an error, so the tests
 assert on what actually comes back, not merely that a request was built.
 """
 
-import asyncio
 import base64
 import unittest
 

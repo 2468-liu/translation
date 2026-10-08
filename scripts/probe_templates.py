@@ -15,7 +15,6 @@ import base64
 import io
 import json
 import statistics
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -78,8 +77,6 @@ def ask(messages: list[dict], marker: str) -> tuple[float | None, float, str]:
 
 
 def main() -> int:
-    import numpy as np
-
     _, rate = sf.read(ROOT / "samples" / "blog_3min.wav", frames=1, dtype="float32")
     results: dict[str, list[tuple[float | None, float]]] = {"AST": [], "sys": []}
     samples: dict[str, str] = {}

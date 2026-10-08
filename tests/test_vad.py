@@ -10,6 +10,7 @@ from server.vad import (
     SOFT_CUT_SILENCE_MS,
     SOFT_CUT_SPEECH_MS,
     VAD_SPEECH_PAD_MS,
+    Tuning,
     UtteranceSplitter,
 )
 
@@ -162,6 +163,107 @@ class VadSoftCutTests(unittest.TestCase):
         flags = _kinds(events)
         assert any(kind == "end" for kind, _flag in flags)
         assert len([kind for kind, _flag in flags if kind == "start"]) >= 2
+
+
+class VadMergeShortUtteranceTests(unittest.TestCase):
+    """#6: a too-short utterance is held for a neighbour, not thrown away.
+
+    The gate used to be a drop: the closing branch called ``_drop()``
+    unconditionally, so every burst under ``min_speech_ms`` was discarded after
+    the splitter had already announced its close. On the movie clip this project
+    uses, raising that gate to 1.0s would have discarded 5.4s of speech that
+    carries real transcription text, so the intended behaviour is LiveTranslate's:
+    keep it and let the next speech resume it.
+    """
+
+    @staticmethod
+    def _tuning(**over):
+        # merge_window_ms is the point of these tests, so it is set explicitly
+        # rather than left to Tuning's default. It was left out at first, and
+        # when the shipped default moved to 0 the whole class silently ran with
+        # merging switched off while still asserting that merging happened.
+        base = dict(
+            min_silence_ms=400,
+            max_utterance_ms=12_000,
+            speech_pad_ms=VAD_SPEECH_PAD_MS,
+            early_end_ms=EARLY_END_SILENCE_MS,
+            soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+            soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+            partial_interval_ms=250,
+            name="test",
+            merge_window_ms=2000,
+        )
+        base.update(over)
+        return Tuning(**base)
+
+    def test_short_utterance_merges_into_the_next_one(self):
+        # 5 frames of speech = 160ms: under the gate, so it cannot stand alone.
+        # Then a 416ms pause closes it; another 30 frames of speech follow.
+        pattern = [True] * 5 + [False] * 13 + [True] * 30 + [False] * 13
+        splitter = UtteranceSplitter(FakeVad(pattern), tuning=self._tuning(min_speech_ms=1000))
+
+        events = splitter.push(_frames(pattern))
+        ends = [audio for kind, audio, _f in events if kind == "end"]
+
+        assert len(ends) == 1, f"expected one merged fragment, got {len(ends)}"
+        spoken = int(np.count_nonzero(ends[0]))
+        # Both bursts are in it: 5 + 30 frames, minus the trimmed trailing silence.
+        assert spoken >= 35 * FRAME - int(SAMPLE_RATE * VAD_SPEECH_PAD_MS / 1000) - 1
+
+    def test_a_held_fragment_is_announced_as_held(self):
+        """A held fragment emits `held`, so the merge can be counted.
+
+        Without the event, "kept for a neighbour" and "discarded" differ only by
+        the absence of an end event, which is not something a reader of a perf
+        log can count -- the same trap as reading `vad.end` line counts as an
+        event count (STATE.md, falsified hypotheses).
+        """
+        from server import perf
+
+        seen: list[tuple[str, dict]] = []
+        original = perf.emit
+        perf.emit = lambda source, event, **fields: seen.append((event, fields)) if source == "vad" else None
+        try:
+            pattern = [True] * 5 + [False] * 13 + [True] * 30 + [False] * 13
+            splitter = UtteranceSplitter(FakeVad(pattern), tuning=self._tuning(min_speech_ms=1000))
+            splitter.push(_frames(pattern))
+        finally:
+            perf.emit = original
+
+        held = [f for e, f in seen if e == "held"]
+        assert held, f"no held event was emitted; saw {[e for e, _ in seen]}"
+        assert held[0]["speech_ms"] == 160.0
+        assert held[0]["merge_window_ms"] == 2000
+
+    def test_held_fragment_closes_on_its_own_after_the_merge_window(self):
+        # 5 frames of speech (160ms) then a long silence: the neighbour never
+        # comes, so the merge window expires and the fragment must still be
+        # emitted rather than waiting forever.
+        lone = [True] * 5 + [False] * 45
+        events = UtteranceSplitter(FakeVad(lone), tuning=self._tuning(
+            min_speech_ms=1000, merge_window_ms=1000)).push(_frames(lone))
+        assert any(kind == "end" for kind, _a, _f in events), "a lone short burst must still be emitted"
+
+    def test_merge_window_zero_restores_the_old_drop(self):
+        # The second burst is long enough to stand alone (1600ms) so the only
+        # thing under test is what happened to the first one. With the window at
+        # zero the short one is discarded, which is the pre-#6 behaviour and the
+        # kill switch for the whole feature.
+        pattern = [True] * 5 + [False] * 13 + [True] * 50 + [False] * 13
+        splitter = UtteranceSplitter(FakeVad(pattern), tuning=self._tuning(
+            min_speech_ms=1000, merge_window_ms=0))
+        events = splitter.push(_frames(pattern))
+        ends = [audio for kind, audio, _f in events if kind == "end"]
+        assert len(ends) == 1, f"expected only the long burst to close, got {len(ends)}"
+        # The survivor is the long burst alone: 1600ms of speech, not 1760ms.
+        assert int(np.count_nonzero(ends[0])) == 50 * FRAME
+
+    def test_default_tuning_still_keeps_short_bursts_standalone(self):
+        # 160ms is under the shipped 250ms gate, so with the shipped settings it is
+        # still discarded -- #6 changes the policy, not this default.
+        pattern = [True] * 5 + [False] * 13
+        events = UtteranceSplitter(FakeVad(pattern)).push(_frames(pattern))
+        assert not any(kind == "end" for kind, _a, _f in events)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿"""Local realtime subtitle service configuration."""
+"""Local realtime subtitle service configuration."""
 
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ def _env_int(name: str, default: int) -> int:
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
-SAMPLES_DIR = ROOT / "samples"
 
 # WebSocket (extension <-> Python)
 WS_HOST = "127.0.0.1"
@@ -38,7 +37,6 @@ LLAMA_HOST = "127.0.0.1"
 LLAMA_PORT = 8080
 LLAMA_URL = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1/chat/completions"
 LLAMA_MODEL = "hy-mt2-1.8b"
-USE_NLLB = False
 
 # Audio-native model (gemma-audio branch): one model both hears and translates, so
 # whisper and hy-mt2 are no longer loaded.
@@ -91,16 +89,10 @@ AUDIO_CHINESE_SHARE_MIN = 0.30
 # Paths — filled after ModelScope download / conversion
 ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
 ASR_FALLBACK_DIR = MODELS_DIR / "faster-whisper-base"
-GGUF_DIR = MODELS_DIR / "qwen3.5-4b-mtp"
-GGUF_FALLBACK_DIR = MODELS_DIR / "qwen2.5-3b-gguf"
-NLLB_DIR = MODELS_DIR / "nllb-200-distilled-600M"
-MT_DIR = MODELS_DIR / "nllb-600m-ct2"
 SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
 
 # Audio
 SAMPLE_RATE = 16000
-CHUNK_MS = 100
-BYTES_PER_SAMPLE = 2  # int16
 
 # All local inference prefers GPU to reduce round-trip latency. CPU is a fallback
 # only when CUDA is unavailable, not the normal path.
@@ -109,12 +101,30 @@ ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
 ASR_BEAM_SIZE = 1
 PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
-MT_DEVICE = "cuda"
-MT_COMPUTE_TYPE = "int8"
 
 # VAD
 VAD_THRESHOLD = 0.5
-VAD_MIN_SPEECH_MS = 250
+# The gate below is a DROP, not a delay: an utterance shorter than this is
+# discarded at server/vad.py, never translated. It is injectable now because #6
+# is a single-variable comparison of 250 against 1000, and editing this file
+# between arms would make the two runs incomparable (the dirty-tree problem the
+# sweeps already hit).
+VAD_MIN_SPEECH_MS = _env_int("TRANSLATION_VAD_MIN_SPEECH_MS", 250)
+# How much silence may pass before a held short utterance stops waiting for a
+# neighbour and is closed on its own.
+#
+# The distinction matters on a movie with a loud score: music reads as speech,
+# so a "short utterance" can be a bar of score rather than a word. Merging
+# without a bound would hold the buffer open through the next movement and
+# produce one enormous fragment, which is a worse failure than the one being
+# fixed.
+#
+# DEFAULT 0, i.e. OFF, and that is deliberate: measuring this feature must not
+# change what ships. With the window at zero the closing branch keeps the
+# original unconditional drop, so a fresh process behaves exactly as it did
+# before #6 -- verified by the probe, which reports the same 27 kept / 8 dropped
+# on samples/e_3min.wav either way. Arm B sets TRANSLATION_VAD_MERGE_WINDOW_MS.
+VAD_MERGE_WINDOW_MS = _env_int("TRANSLATION_VAD_MERGE_WINDOW_MS", 0)
 VAD_MIN_SILENCE_MS = 400
 VAD_SPEECH_PAD_MS = 120
 
@@ -144,6 +154,78 @@ GEMMA_SOFT_CUT_SILENCE_MS = 700
 TRANSLATE_TEMPERATURE = 0.2
 TRANSLATE_MAX_TOKENS = 256
 CONTEXT_SENTENCES = 2
+
+# ---------------------------------------------------------------- audio capture
+# Where the audio comes from.
+#
+# "loopback" captures what the machine is playing, through WASAPI, in this
+# process. "socket" takes PCM from the extension's tab capture.
+#
+# Exactly one of them feeds the splitter, and that exclusivity is the fix rather
+# than a preference: both used to run at once, each pushing 100ms frames into the
+# same Session, so the VAD saw the clip and the machine's output interleaved. On
+# samples/e_3min.wav that turned 32 clean utterances into 48 fragments with a
+# 96ms median whose every closing read why=silence, and the recogniser returned
+# no text for most of them (REPORT 23).
+#
+# Loopback is the default because it has no dependency on Chrome, survives
+# fullscreen and DRM, and cannot disagree with itself about the sample rate.
+# TRANSLATION_AUDIO_SOURCE=socket restores the old behaviour, and that is what
+# the replay uses: injecting PCM directly keeps a measurement locked to one
+# variable instead of adding a speaker round trip.
+AUDIO_SOURCE = os.environ.get("TRANSLATION_AUDIO_SOURCE", "loopback").strip().lower()
+LOOPBACK_ENABLED = AUDIO_SOURCE != "socket"
+
+# Measured on this machine, a 440Hz tone played at amplitude 0.5 comes back from
+# the default speaker's loopback at a peak of about 0.024 -- 26 dB down -- and the
+# ratio barely moved when the system volume was changed, so it is a property of
+# the device path rather than of the slider.
+#
+# It is still not written down as a constant. Another machine, another driver or
+# an enhancement layer like Nahimic can attenuate by something else, and the VAD
+# threshold is absolute: too quiet an input reads as non-speech. So the loopback
+# measures its own signal and derives the gain at runtime, and these are the
+# bounds on that -- target to aim at, and the hard limits on what it may apply.
+LOOPBACK_TARGET_PEAK = float(os.environ.get("TRANSLATION_LOOPBACK_TARGET_PEAK", "0.20"))
+LOOPBACK_GAIN_MIN = float(os.environ.get("TRANSLATION_LOOPBACK_GAIN_MIN", "0.5"))
+LOOPBACK_GAIN_MAX = float(os.environ.get("TRANSLATION_LOOPBACK_GAIN_MAX", "40.0"))
+
+# Which text-to-text translator serves the whisper path.
+#
+# "hy-mt2" is the pinned default and the backend every latency number in
+# REPORT.md was measured on. "gemma4" swaps in the same Gemma 4 E2B weights the
+# audio-native branch uses, but as a text-only translator -- no --mmproj, so it
+# never sees audio and whisper still does the recognising. That distinction is
+# the whole point of the switch: the audio-native branch and this one share
+# weights and nothing else.
+MT_BACKEND = os.environ.get("TRANSLATION_MT_BACKEND", "hy-mt2").strip().lower()
+
+# The Gemma translator runs as its own llama-server on its own port, because the
+# audio-native branch answers the same /v1/chat/completions shape and the two
+# cannot both own 8080.
+#
+# Only the port lives here. The model file, the GPU layer count, the context
+# length and whether the MTP draft is enabled are read by scripts/start.ps1
+# straight from TRANSLATION_GEMMA_* when it builds the llama-server command line,
+# and it carries its own defaults there. They used to be duplicated in this file
+# as GEMMA_TRANSLATOR_* constants, which meant three places to change a number
+# and no way to tell from a log which one the running server had used -- the same
+# failure as the stale runtime.json pin, in a different file.
+GEMMA_TRANSLATOR_PORT = _env_int("TRANSLATION_GEMMA_PORT", 8082)
+GEMMA_TRANSLATOR_URL = f"http://{LLAMA_HOST}:{GEMMA_TRANSLATOR_PORT}/v1/chat/completions"
+
+# How much of the preceding conversation the translator is shown.
+#
+# Not copied from CONTEXT_SENTENCES, and that is deliberate: the question the
+# user asked is what injection costs and buys, and it cannot be answered with a
+# value that also changes when the other path's context changes. 0 is the
+# control arm.
+#
+# The whisper path passed no context at all until this was wired up --
+# translate.build_messages used to drop its context argument -- so "2" is a new
+# behaviour rather than the old default.
+MT_CONTEXT_SENTENCES = _env_int("TRANSLATION_MT_CONTEXT_SENTENCES", 2)
+
 # The audio-native path sends no context, and this is why.
 #
 # Measured both ways on the two fragments that fail in every replay and translate
@@ -165,37 +247,16 @@ PARTIAL_STABLE_REPEAT = 1  # translate the first partial; later growth follows a
 
 # llama.cpp GPU layers — probe script writes actual value into runtime.json
 LLAMA_NGL_DEFAULT = 99
-LLAMA_CTX = 1024
-LLAMA_THREADS = 4
-VRAM_SAFE_MB = 3600
 
 RUNTIME_JSON = ROOT / "runtime.json"
 
-LLAMA_SERVER_CANDIDATES = [
-    Path(r"C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0\llama-server.exe"),
-    Path(r"C:\Users\20693\.lmstudio\extensions\backends\llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.33.0\llama-server.exe"),
-]
-
-
-def find_llama_server() -> Path | None:
-    for path in LLAMA_SERVER_CANDIDATES:
-        if path.exists():
-            return path
-    return None
-
-
-def find_gguf() -> Path | None:
-    for folder, pattern in (
-        (GGUF_DIR, "*UD-Q4_K_XL*.gguf"),
-        (GGUF_DIR, "*UD-Q3_K_XL*.gguf"),
-        (GGUF_FALLBACK_DIR, "*q4_k_m*.gguf"),
-    ):
-        if not folder.exists():
-            continue
-        found = sorted(folder.glob(pattern))
-        if found:
-            return found[0]
-    return None
+# Which llama.cpp build to run is not decided here. It used to be, as a hardcoded
+# two-entry list naming 2.47.0 and 2.33.0, which went stale the moment a third
+# build was installed and could not see a machine other than this one.
+# scripts/resolve_llama.ps1 owns the decision now: it globs the LM Studio backends
+# directory for this platform, honours -Pin and TRANSLATION_LLAMA_VERSION, and
+# prints what it picked and what else is installed. A list of paths written down
+# in Python is the thing that was wrong, not the lookup.
 
 
 def resolve_llama_runtime(vram_mb: int | None = None) -> tuple[int, int]:

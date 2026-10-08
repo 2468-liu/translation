@@ -1,4 +1,4 @@
-﻿"""Per-connection audio session: VAD -> ASR -> streamed translation."""
+"""Per-connection audio session: VAD -> ASR -> streamed translation."""
 
 from __future__ import annotations
 
@@ -13,13 +13,9 @@ from .audio_mt import (
     chinese_share,
     looks_untranslated,
     stream_audio_translation as audio_stream,
-    chinese_share,
 )
 from .config import (
     AUDIO_CONTEXT_SENTENCES,
-    AUDIO_CHAT_TEMPLATE_KWARGS,
-    AUDIO_MAX_TOKENS,
-    AUDIO_MODEL_URL,
     CONTEXT_SENTENCES,
     PARTIAL_STABLE_REPEAT,
     SAMPLE_RATE,
@@ -147,6 +143,15 @@ class Session:
             self.language = None
 
     def push_pcm(self, payload: bytes) -> list[dict]:
+        """Feed audio to the splitter. Whoever owns capture calls this.
+
+        This is the loopback task's only way in, so it must not filter by source:
+        an earlier version refused socket PCM here to enforce "one producer", and
+        that refused the loopback's audio too -- the capture path and the thing
+        being excluded were the same entry point. The exclusion belongs at the
+        socket (ws_server ignores binary frames when LOOPBACK_ENABLED), which is
+        where the source is actually known.
+        """
         if not payload:
             return []
         samples = np.frombuffer(payload, dtype=np.int16).astype(np.float32) / 32768.0

@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from perf_compare import first_block, load, numbers  # noqa: E402
+from perf_compare import first_block, load  # noqa: E402
 from probe_silence import _resolve  # noqa: E402
 
 
