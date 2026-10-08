@@ -24,14 +24,29 @@ ASR_MODEL           faster-whisper-small
 PARTIAL_INTERVAL_MS 250
 AUDIO_NATIVE        0（音频直出关闭）
 投影层              CPU (--mmproj-device none)
-翻译后端            llama.cpp win-x86_64-nvidia-cuda12-avx2-2.47.0（pinned）
-                    已装 2.27.1 / 2.33.0 / 2.47.0 / 2.51.0 / 2.52.0 / 2.53.0
+翻译后端            启动取**本机已装最新**：win-x86_64-nvidia-cuda12-avx2-2.53.0（本条 2026-10-07 晚临时改）
+                    已装 2.33.0 / 2.47.0 / 2.51.0 / 2.52.0 / 2.53.0
+                    2.47.0 仍是 pin，也是 REPORT 里全部延迟数的前提；
+                    回到它：scripts\start.ps1 -UsePinned（改常量的理由见 REPORT 20.4）
+翻译模型            MT_BACKEND=hy-mt2（默认，8080）｜gemma4（8082，文本翻译，不带 --mmproj）
+                    gemma4 = 36 层上 32 层 + MTP 草稿 5/5 层，VRAM 2337 MiB，50 tok/s
+                    ngl 99 + 投影放 CPU：75.4 tok/s（更快，见 REPORT 25.3 脚注）
+音频采集            AUDIO_SOURCE=loopback（默认，WASAPI 系统回环，自测增益）
+                    =socket 时回退到扩展/回放的 PCM 注入
+                    **回放自己设这个**：`replay.ps1` 缺省 socket 并打印出来
+                    （431686e 之前没有任何脚本设过它，见「已证伪」）
+音频直出            Gemma4 音频路径：**对白被配乐压住的素材不可用**（REPORT 25）
+                    适用素材 = 干净旁白（blog 类）；MTP 在音频路径净负，应关
+上下文注入          MT_CONTEXT_SENTENCES 2（0 是对照臂）
+                    **本轮之前从未生效**：translate.build_messages 把 context 删掉了（见 REPORT 21.3）
 VAD                 THRESHOLD 0.5 / MIN_SPEECH 250 / MIN_SILENCE 400 / PAD 120
 切分                MAX_UTTERANCE 12000, SOFT_CUT 5000ms 语音 + 200ms 停顿
 显示层              SETTLE 450 / HOLD_MIN 800 / HOLD_MAX 4200 / READABLE 0.7
 ```
 
-启动日志第一行含 `git_rev`，可确认跑的是哪一版。
+跑的是哪一版：启动日志含 `git_rev`，**llama 版本与 Python 环境在 `logs\start.log`**。
+后者比前者要紧：`start.ps1` 的选择只写进这个文件，而 native host 把 stdout 丢进 DEVNULL——
+"起了哪一版"曾经只存在于那个被丢掉的控制台里。
 
 ---
 
@@ -57,6 +72,18 @@ VAD                 THRESHOLD 0.5 / MIN_SPEECH 250 / MIN_SILENCE 400 / PAD 120
 | **臂名/字段名说明了配置** | 12 格 "MTP 开" 全部是关的；关闭态的接受率字段根本不存在 | 名字写在结果表里，看着就是证据 |
 | **`hold_ms()` 可以被 SETTLE_MS 调小** | 它恒 ≥800ms，任何低于 800 的值不可能生效 | 两个都是"等待相关"的常量 |
 | **`clocks_event_reasons` 可当风扇代理** | 它是代理的代理，且本机 `fan.speed` 返回 `[N/A]` | 它确实记录了 GPU 进出活跃态 |
+| **`VAD_MIN_SPEECH_MS` 是"最短语音"（延迟成段）** | 它同时是**丢弃**门槛：`_drop()` 无条件执行，不足长的音频被扔掉。LiveTranslate 的同名参数是"并入下一段" | 两个项目参数同名，语义相反 |
+| **"抬门槛 = 合并短段"** | 抬到 1.0s 会额外丢 8 段 / 4.9s **真语音**（`e_3min_timing.json` 里那些段带 p=0.99 的真实文本）。合并要单独实现 | 两者都让"段变长"，看着是同一件事 |
+| **单次运行的 VAD 分布可直接引用** | 探针同一文件报出 32/35/38/39 段：`load_vad()` 返回全局实例，Silero 跨帧携带 LSTM 状态且段间不清，第 N 次测量接着上次的末状态。加 `engine.reset()` 后三次都是 32 | 同一份代码同一份音频，看着必然确定 |
+| **`conda activate` 在 PowerShell 脚本里能生效** | `cmd /c "call conda.bat activate pytorch"` 里的 cmd 是子进程，`CONDA_PREFIX` 不回传。于是回退到 **base** 环境（无 `websockets`），后端 `ModuleNotFoundError`，而扩展侧只看到 90 秒超时。上一轮"实测通过"是因为 shell 里恰好已有 conda 变量，把空值路径盖住了 | 命令确实执行了、也没报错，看着就是激活了 |
+| **`Get-NetTCPConnection` 可以判断端口在听** | 它基于 CIM/WMI，受限会话里**拒绝访问**；加了 `-ErrorAction SilentlyContinue` 后返回空值，被读成"没有监听"。实测 8080 正在服务而它为 0 条 | 它名字里就是"TCP 连接"，看着就是端口检查 |
+| **`Get-CimInstance` 失败会显式报错** | 在受限会话里它是终止错误（`$ErrorActionPreference="Stop"`），`replay.ps1` 因此死在第 37 行一行未跑；而在被 `SilentlyContinue` 包住的地方（草稿加载断言），它**静默变成"没有草稿"** | 同一条命令在两种 context 下表现不同 |
+| **`Get-NetTCPConnection` 的问题已经修完** | 只修了 `replay.ps1`。`smoke.ps1` 两处、`sweep_*.ps1` 九处仍在用它，本轮实测 `smoke.ps1` 因此在 8080 有服务时读成"没服务" | 结论已写进这张表，看起来就像已经处理过了 |
+| **`Get-Process` 的属性都能读** | `Sort-Object StartTime` 抛 `Access is denied`（受限会话无此权限），`replay.ps1` 因此在放音之前就中止。`Get-Process` 本身能用，**它的 `StartTime` 属性不能** | `Get-Process` 不走 WMI，所以"`Get-CimInstance` 被拒"推不出"`Get-Process` 也被拒" |
+| **模型目录里"第一个 gguf"就是要跑的那个** | `models\hy-mt2-1.8b` 有两个 gguf，`Select-Object -First 1` 选中 `1.25bit-v2`，llama-server 加载失败退出。`start.ps1` 用 `*Q4_K_M*` 过滤所以没事 | 目录里长期只有一个文件时，"取第一个"和"取对的那个"结果一样 |
+| **`USE_NLLB = False` 是一条可调的配置** | 它写死为 False，而它背后的 `server/mt.py` 与两个模型目录都不在。整条链**不可能运行**，只可能被误认成活路径 | 常量名叫开关，看着就像还有"开"的那一侧 |
+| **回放的音频源是 shell 里的环境变量** | **没有任何脚本设 `TRANSLATION_AUDIO_SOURCE`**。`PLAN.md` 把它写成操作者要敲的一行，于是回放口径（socket 注入）取决于运行时有没有人记得敲。实测漏敲时：运行干净、无报错、`vad.end=0`、零译文 | 环境变量本来就是给 shell 用的；写进文档就等于已经生效 |
+| **`_self_check()` 一直在跑** | 没人调用它（`__main__` 也没有），而且**它会失败**：两条期望早于 `speech_hold_factor`。即显示层状态机零覆盖 | 函数名叫 `_self_check`，读起来像启动时会执行 |
 
 ---
 
@@ -72,6 +99,21 @@ ASR 上 GPU 成本 +10W
 ttft p50 30~36ms
   前提：语种锁定 en。auto 下每次调用要带检测，成本不同
 
+上下文注入的质量收益（REPORT 21.4）
+  前提：hy-mt2 / 2.53.0 / ngl 60 ctx 1024 / e_3min 的 21 句成句原文 /
+        temperature 0 / 逐句喂入且上下文取自本臂自己的译文
+  ⚠️ 原文是**成句**时测的。真实管线喂进去的是 250ms 起就切出来的碎片，
+     那种输入下上下文能救多少**没测过**，不能把这里的收益外推过去
+
+hy-mt2 prefill 代价：ctx0 15.7ms / ctx2 31.1 / ctx6 46.4（中位，冷前缀）
+  前提：同上。decode 105→114ms 基本不动
+  ⚠️ 探针在同一批句子上跑时前缀被缓存，中位数会低估；冷前缀那两个数才是真的
+
+gemma4 文本翻译：prefill 103~160ms + decode 220~250ms，50 tok/s，VRAM 2337 MiB
+  前提：E2B Q4_K_XL / 36 层上 32 层 / ctx 2048 / MTP 草稿 n-max 3 / 2.53.0
+  ⚠️ 解码速率是 50 tok/s（20ms/token）；曾经记到的 46ms/token 是**冷启动首请求**，
+     权重还在分页，不能当稳态
+
 asr 占墙钟 16.6% / asr>250ms 15%（er_3min 那格）
   前提：语种锁定 en
 
@@ -86,6 +128,12 @@ partial 节奏 250/500/750/1000ms 的省电曲线
   代价：同一素材 asr p50 140~158ms → 281ms，asr>250ms 从 8~19% → 58%
   这意味着**上面几条锁定 en 的基线不可直接与 auto 的结果对比**。
   需要对照时：TRANSLATION_REPLAY_LANGUAGE=en
+
+回放的音频源 = socket PCM 注入
+  ⚠️ **431686e 之前这条前提没有任何脚本保证**，只写在 PLAN.md 里让人手动敲。
+      漏掉时回放不会报错，只会跑出一个零事件的结果（vad.end=0）。
+      引用 REPORT 24~27 的任何回放数字时，前提是**当时那个 shell 里确实设了**
+      TRANSLATION_AUDIO_SOURCE=socket —— 现在由 replay.ps1 保证并打印。
 
 whisper.cpp CPU 不可用（单次 400~1260ms）
   前提：ctx 220 / 6 线程 / Q8_0 / 1.4s 片段
@@ -128,6 +176,29 @@ C 的软切生效（5000ms 语音 + 200ms 停顿）
 | 3 | 时间轴加 `covered_span` 字段 | 回放前必做，否则 e_3min 前 31.5s 会被算成"未覆盖" |
 | 4 | partial 250 → **750 ms**（两格都录屏） | 风扇安静？字幕慢？**partial 阶段文本是否更完整？** |
 | 5 | 显示层 `settle_until` 单因素（`TRANSLATION_SETTLE_MS` 可注入） | 上屏首字 / 被挡 / 覆盖率 |
+
+**本轮新增（2026-10-07 晚，REPORT 21 有数）：上下文注入已接上并测过，质量提升是真的；
+但对照 LiveTranslate 之后，**切片下限**成为翻译质量的第一嫌疑，优先级高于 #4。**
+
+| # | 做什么 | 判断标准 |
+|---|---|---|
+| 6 | **切片下限：挂起并合并**（不是抬门槛丢弃）<br>`TRANSLATION_VAD_MIN_SPEECH_MS=1000` + `TRANSLATION_VAD_MERGE_WINDOW_MS=2000` | 离线已实测：保留语音 75.2→79.3s（e_3min）、113.7→115.9s（er_3min），保留 p50 不恶化（REPORT 22.3/22.6）<br>**真实回放被 #9 挡住，还不能做 A/B** |
+| 7 | **ASR 后过滤 + ≤8 字符短句合并**（无损，不动 VAD） | 碎片条目数 |
+| 8 | 上下文条数 2 → 6 是否有额外收益 | prefill 代价 +30.7ms，换到多少质量（REPORT 21.4 只有 2 与 6 两档） |
+| **9** | ~~真实管线的 VAD 微碎段~~ | **已结案**（REPORT 23）：**回环采集与 socket PCM 混进同一个 VAD**。`TRANSLATION_LOOPBACK=0` 下 48 段/96ms → **31 段/1824ms**（探针 32 段/1632ms） |
+| **11** | ~~回环在服务器进程内没送达 VAD~~ | **已结案**（REPORT 26）：守卫放错层——`push_pcm` 是回环唯一入口，却被我用来拒绝"所有音频"。修后 `vad.end 6 / enqueue 113`，实测译出"再见" |
+| **12** | ~~删掉死代码 `extension/pcm-worklet.js`（无任何引用）~~ | **已完成**（`431686e`）：确认无 `addModule` / `AudioWorkletNode` 引用后删除。顺带发现上一轮往这个没人加载的文件里写了 13 行 `captureEnabled` 门控 |
+| **13** | ~~`start.ps1` 里过期的 MTP 注释~~ | **已完成**：按版本重写（2.47 会 503；2.53 不会但净负 49.6 vs 59.2 tok/s） |
+| **14** | **片段长度 ↔ 首字延迟的取舍**（REPORT 27.3） | 12s 片段 e2e p50 970ms；2s 片段 104ms。软切上限是否该按"内容类型"调 |
+| **15** | 锁定 `en` 重跑四条素材 | 现有旧基线（asr 占墙钟 16.6%、首字 374~756ms）是 en + 无上下文 + 2.47，与本轮前提不同，不能相减 |
+| **16** | **`runtime.json` 与实际读取它的键对不上** | `start.ps1` 读 `llama_pinned_path`、`resolve_llama_runtime` 读 `memory_total_mib`，而文件里**两个都没有**——只有旧写入者留下的 `llama_server`，以及一个指向不存在模型的 `gguf`。显存数字来自旧探针。修法是重探卡，属测量不属清理 |
+
+**#6 的形态已被证据改过**：原计划"门槛 250ms → 1.0s"会**多丢 4.9s 真语音**（REPORT 22.2），
+所以改成"挂起并合并"，且合并有窗口上限、默认关闭（`VAD_MERGE_WINDOW_MS=0`）。
+**#7 是无损的，可以独立于 #6 先做。**
+
+**#6/#7 是同一族改动（都在"切分/送翻译之前"），要么一起做，要么先做 #6。**
+**#6 不要与 #4/#5 同时做**，否则分不清是切片下限还是 partial 节奏造成的差别。
 
 **#4 与 #5 不要和别的改动同时做**，否则分不清是哪个造成的差别。
 
@@ -272,6 +343,11 @@ main / HEAD / gemma-audio  同指（已快进）
 
 `gemma-audio` 保留。pytest 99 passed。`extension/` 与 Native Host 未变，主机无需重建。
 
+**2026-10-07 晚更新**：pytest **107 passed**（新增 `tests/test_translation_context.py` 8 条，
+钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）。`extension/` 与 Native Host 仍未变，
+主机无需重建——`start.ps1` 是文件调用，不在 exe 里。
+
+
 ## 实验日志（一行一条）
 
 | 日期 | 问题 | 结果 | 决定 |
@@ -286,3 +362,24 @@ main / HEAD / gemma-audio  同指（已快进）
 | 10-07 | 素材到底是不是多语种 | **222: ja18/en8/ko4/zh2/it1**<br>**会议: 11 语种** | 旧描述全错，已更正 |
 | 10-07 | 强制 en 生成的时间轴可信吗 | 会议 165 句零非英语字符 | 四份全部重建 |
 | 10-07 | 旧 e_3min 时间轴差在哪 | 不是语种，是切分：无 VAD | 新版 21 段干净 |
+| 10-07 | 插件"开始"按钮为什么起不来 | `start.ps1` 解析就失败（第 98 行 `} else {` 错位），脚本一行未跑；扩展侧只看到 90 秒超时 | 修花括号 + 加解析自检；临时改为最新 llama.cpp 2.53.0 |
+| 10-07 | 上下文注入影响有多大 | hy-mt2/hy-mt2+ctx 上质量确有提升（final pitch→推销、right check→右转、summit→登顶）；代价 ctx2 +15.4ms、ctx6 +30.7ms prefill | 接上上下文（此前被 `del context` 丢弃），默认 2 条 |
+| 10-07 | Gemma4 能不能当文本翻译 | E2B 36 层上 32 层 + MTP 草稿可行（VRAM 2337 MiB，50 tok/s），译文质量好于 hy-mt2，但每行慢 2.5~3 倍 | 可用，是否转默认待定（REPORT 21.5） |
+| 10-07 | LiveTranslate 怎么用 ASR | VAD 切分 + spawn 子进程 + 整段一次识别 + 短段并入下一句 + 10 轮上下文；**它也不降噪** | 可借鉴的是切片下限与短句合并，见队列 #6/#7 |
+| 10-07 | 把 VAD 门槛抬到 1.0s 会怎样 | 额外丢 8 段 / 4.9s **真语音**（那些段带 p=0.99 的真实文本）；LiveTranslate 的同名参数是"并入"不是"丢" | 改成挂起并合并；门槛默认仍 250 |
+| 10-07 | 挂起并合并值不值 | 无损：保留语音 +4.1s（e_3min）/ +2.1s（er_3min），保留 p50 不恶化 | 默认关闭，`VAD_MERGE_WINDOW_MS` 开启；待真实回放确认 |
+| 10-07 | 真实回放能不能验证 #6 | **不能**：同一份音频离线 32 段/中位 1632ms，真实回放 52 段/中位 64ms，ASR 33 次全 `chars=0` | 记为新队列 #9，优先级高于 #6 |
+| 10-07 | 脚本里的端口/进程探测可信吗 | 不可信：`Get-CimInstance` 与 `Get-NetTCPConnection` 都基于 WMI，受限会话拒绝访问；后者被 `SilentlyContinue` 包着被读成"没监听" | 新增 `scripts/probes.ps1`，改用 socket 与 `Get-Process` |
+| 10-07 | `conda activate` 在脚本里生效吗 | 不生效：`cmd /c call conda.bat` 的子进程不回传 `CONDA_PREFIX`，回退到 base 环境（无 websockets） | start.ps1 改为按路径解析解释器 + import 预检 |
+| 10-07 | #9 回放的 VAD 为什么比探针碎 25 倍 | **回环采集默认开**，`loopback.py:57` 把系统扬声器音频推进**同一个 session**，与 socket PCM 交错喂 VAD。回放不播声音 → 一半是静音 | 加 `TRANSLATION_LOOPBACK`（默认 1 不变）；`=0` 下 48段/96ms → **31段/1824ms**，与探针一致 |
+| 10-07 | 回环对队列延迟的影响 | `pipeline.asr qwait_ms` 中位数 **113ms → 6.4ms**（关回环）。回环灌的静音让 VAD 产出假 partial 填满队列 | 历史 qwait 读数需在 `LOOPBACK=0` 下重测 |
+| 10-08 | 能不能整体改走 WASAPI 回环 | 可以：`soundcard` 已装、设备匹配对、直连录放三次 peak 都 0.5137；但**进程内**两次结果相反（有电平不出段 / 连电平都 0） | 架构已切，**端到端未通过**，见 REPORT 24 |
+| 10-08 | 回环衰减是 −26dB 吗 | **不是**。单音测得的 0.024 被直连语音测试推翻（0.8752 → 0.5137，约 4.6dB） | 不写死增益常数，改运行时自测（收敛到目标 0.20） |
+| 10-08 | 扩展前端在做音频采集吗 | **不做**。`pcm-worklet.js` 无任何引用，`offscreen.js` 只有 WS + 控制消息 | 记为待删死代码（队列 #12） |
+| 10-08 | 2.53 的音频路径 MTP 可用吗 | **可用**：5 个音频请求全 200，`draft=0/30,1/15,2/18,2/30,3/12`。**16.2 的 503 是 2.47 的行为** | 但净负（49.6 vs 59.2 tok/s），音频路径仍应关 |
+| 10-08 | 音频直出为什么在 e_3min 上崩坏 | 不是 MTP/层数/投影/时长/增益/提示词/采样率——**是素材**：对白被响配乐压住时，whisper 听对、Gemma4 音频听成"大鸟" | 边界记入 REPORT 25，配乐素材走 whisper+文本 |
+| 10-08 | 回环为什么没送达 VAD | 守卫放错层：`push_pcm` 是回环唯一入口却拒绝了全部音频 | 修后 `vad.end 6 / enqueue 113`，#11 结案 |
+| 10-08 | 四条素材的实时指标 | asr p50 286–316ms（与素材无关）、ttft p50 30–35ms、qwait p50 40–84ms（#9 修复后） | 基线记入 REPORT 27；旧基线前提不同不可相减 |
+| 10-08 | 代码里有多少无效 import / 死代码 | pyflakes 5 条（含 `pipeline.py` 重复导入 `chinese_share`）；全仓计数后 `server/` 清空：`server/utils.py`（无人 import）、`server/mt.py`（写死 False + 模型不在）、`config.py` 17 个常量、硬编码的 llama 版本候选表 | `431686e`。`GEMMA_TRANSLATOR_*` 是**第三份** `TRANSLATION_GEMMA_*`，而 `start.ps1` 读的是环境变量那份 |
+| 10-08 | 显示层有没有契约测试 | `_self_check()` **没人调用**，而且**会失败**（两条期望早于 `speech_hold_factor`）。`classify_caption`/`step_caption`/`hold_ms`/`pace_scale` 零覆盖 | 搬成 `tests/test_caption_state_machine.py`（12 条，全过）。线 B 动 hold/settle 之前先有护栏 |
+| 10-08 | 冒烟测试为什么失败 | **四个真 bug，都在我的清理之外**：① `smoke.ps1` 取目录里第一个 gguf → 选中加载不了的 1.25bit；② 两处用 `Get-NetTCPConnection`（受限会话读成"没服务"）；③ `replay.ps1` 用 `Sort-Object StartTime` → `Access is denied`，放音前就中止；④ **`replay.ps1` 从不设 `TRANSLATION_AUDIO_SOURCE`**，漏敲时运行干净但 `vad.end=0`、零译文 | 全部修掉，冒烟通过（86s，24 次 ASR / 13 条译文 / 29 次 paint）。**第 ④ 条影响的是所有历史回放的前提** |
