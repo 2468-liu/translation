@@ -78,3 +78,60 @@ function Get-ProcessPath {
     if (-not $proc) { return $null }
     try { return $proc.Path } catch { return $null }
 }
+
+function Get-HyMt2Gguf {
+    <#
+    .SYNOPSIS
+        The one Hy-MT2 Q4_K_M weight file, or $null. Throws if the choice is ambiguous.
+    .DESCRIPTION
+        models\hy-mt2-1.8b currently holds two files matching *Q4_K_M*:
+        Hy-MT2-1.8B-Q4_K_M.gguf, which every number in REPORT.md was measured on, and
+        Hy-MT2-1.8B-StreamRevise-v4-Q4_K_M.gguf, added 10-08 and never tested.
+
+        Every caller used to write `Get-ChildItem *Q4_K_M*.gguf | Select-Object -First 1`,
+        which is a coin flip between them. smoke.ps1 had already been bitten by the same
+        shape -- the directory once held Hy-MT2-1.8B-1.25bit-v2.gguf, which does not even
+        load ("tensor 'blk.0.attn_k_norm.weight' has offset ... expected"), so the wrong
+        pick surfaced three steps later as "the translation backend is not on 8080". That
+        note recorded the conclusion and the guard went into smoke.ps1 alone, leaving
+        start.ps1 and replay.ps1 to make the same choice unguarded.
+
+        An ambiguous set of weights is the same failure class as a mismatched one, so
+        this returns nothing rather than picking, and says which files collided. The
+        caller names the file it wanted; this does not guess which one was right,
+        because only the run history knows that.
+    #>
+    param(
+        [string] $Dir = "",
+        [switch] $BaseName
+    )
+    if (-not $Dir) { $Dir = Join-Path (Split-Path -Parent $PSScriptRoot) "models\hy-mt2-1.8b" }
+
+    # An explicit choice beats the pattern, so the guard has a way through. Without
+    # one, putting a second weight in the directory wedges every script that starts a
+    # backend, and the way people respond to a guard like that is to delete the guard.
+    # An exact file name, not another glob: a glob would reintroduce the coin flip one
+    # level up, where nothing can catch it.
+    if ($env:TRANSLATION_HY_GGUF) {
+        $named = Join-Path $Dir $env:TRANSLATION_HY_GGUF
+        if (-not (Test-Path $named)) {
+            throw "TRANSLATION_HY_GGUF=$env:TRANSLATION_HY_GGUF 不在 $Dir 里。"
+        }
+        $item = Get-Item $named
+        if ($BaseName) { return $item.BaseName }
+        return $item
+    }
+
+    $found = @(Get-ChildItem (Join-Path $Dir "*Q4_K_M*.gguf") -ErrorAction SilentlyContinue)
+    if ($found.Count -gt 1) {
+        throw @"
+models\hy-mt2-1.8b 里匹配 *Q4_K_M* 的权重有 $($found.Count) 个：$($found.Name -join ' / ')
+  请显式指定用哪一个：设 TRANSLATION_HY_GGUF=<完整文件名>，或只留一个在目录里。
+  历史上所有数字都是 Hy-MT2-1.8B-Q4_K_M.gguf 测的；StreamRevise-v4 未测过，
+  不能靠文件名猜，也不能靠目录顺序。
+"@
+    }
+    if ($found.Count -eq 0) { return $null }
+    if ($BaseName) { return $found[0].BaseName }
+    return $found[0]
+}

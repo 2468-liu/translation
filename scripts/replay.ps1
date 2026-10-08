@@ -102,14 +102,16 @@ $LlamaVersion = $backend.version
 # --no-translate escape either: skipping translation makes this a different script,
 # and a run that is half a replay should not be reportable as a replay.
 if (-not $AudioNative) {
-    # Named by pattern, not by directory order. models\hy-mt2-1.8b holds two
-    # GGUFs and the first one alphabetically is the 1.25-bit build that does not
-    # load, so this label named the wrong expected model. It only ever appears in
-    # the mismatch message, but a guard that reports the wrong expectation is
-    # worse than one that reports none.
+    # Named by pattern, and the pattern is checked for ambiguity rather than
+    # resolved by taking the first hit. This used to be
+    # `*Q4_K_M*.gguf | Select-Object -First 1`, and the directory holds two matches
+    # now, so the expectation could name a model that was never loaded. It only ever
+    # appears in the mismatch message, but a guard that reports the wrong expectation
+    # is worse than one that reports none -- and this guard is the only thing that
+    # notices when the served weights are not the ones every number was measured on.
+    # Get-HyMt2Gguf throws on more than one match rather than picking.
     $expectedModel = if (Test-Path "models\hy-mt2-1.8b") {
-        @(Get-ChildItem "models\hy-mt2-1.8b\*Q4_K_M*.gguf" -ErrorAction SilentlyContinue) |
-            Select-Object -First 1 | ForEach-Object { $_.BaseName }
+        Get-HyMt2Gguf -BaseName
     } else { "" }
 
     $served = $null

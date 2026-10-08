@@ -31,6 +31,12 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
+# Get-HyMt2Gguf 住在这里：它遇到多个匹配的权重会 throw，而一个歧义的后端
+# 不能被静默选一个。start.ps1 原来写的是
+# `Get-ChildItem *Q4_K_M*.gguf | Select-Object -First 1`，而目录里现在有两个匹配
+# （原版和 10-08 新放进来的 StreamRevise-v4），所以起哪个权重是一次抛硬币。
+. (Join-Path $PSScriptRoot "probes.ps1")
+
 # 落到哪一版，事后要能从日志回答。Write-Host 在 native host 下进 DEVNULL，所以
 # 结论同时写进 logs\start.log；这是排障时唯一还留着的记录。
 $LogDir = Join-Path $Root "logs"
@@ -250,6 +256,19 @@ $MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLo
 $MtPort = if ($MtBackend -eq "gemma4") { 8082 } else { 8080 }
 Write-Note "mt       $MtBackend  port $MtPort"
 
+# Resolve the weights here, before any branch that might not need them.
+#
+# The lookup below used to sit in the hy-mt2 branch only, which meant the "llama-server
+# already on 8080" path never saw it -- and that path is the one a restart takes, which
+# is exactly when a stale server is serving a model that is no longer the one on disk.
+# Ambiguity is a property of the directory, not of who is going to read the file, so it
+# is checked here and the result is reused below.
+$HyGguf = $null
+if ($MtBackend -ne "gemma4") {
+    $HyGguf = Get-HyMt2Gguf
+    Write-Note "weights  $(if ($HyGguf) { $HyGguf.Name } else { 'MISSING (hy-mt2 Q4_K_M)' })"
+}
+
 # -DryRun 停在进程启动之前：扩展点"开始"会拉起什么，这里能问出来而不必真的拉起来。
 # 之前没有这个入口，唯一能问的途径是把后端真起一遍再读日志。
 if ($DryRun) {
@@ -424,7 +443,8 @@ if (Test-Port $MtPort) {
             -RedirectStandardError (Join-Path $LogDir "llama.err") -WindowStyle Hidden
     }
 } else {
-    $gguf = Get-ChildItem "$Root\models\hy-mt2-1.8b\*Q4_K_M*.gguf" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Already resolved and ambiguity already refused, above.
+    $gguf = $HyGguf
     if (-not $gguf) {
         Write-Note "Hy-MT2 GGUF missing. Download: $Python scripts\download_models.py"
     } elseif (-not (Test-Path $Llama)) {
