@@ -504,6 +504,17 @@ class _Caption:
                 since_send=perf.wall_ms(self._trace_sent),
                 since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
                 chars=len(display_body),
+                # Rendered line count, and therefore whether this paint moved the
+                # window. The height is 30 + lines*line_h + 8, and a change makes
+                # the window grow and shift up by the same amount so its bottom edge
+                # stays put -- about one line height, which is plainly visible.
+                #
+                # The sig below cannot see this: it hashes the wrapped text, so a
+                # reflow reads as new content rather than as the same sentence being
+                # laid out again. That is what left "how often does it flicker"
+                # unanswerable from the log -- the one thing that moves on screen was
+                # the one thing the content hash was blind to.
+                lines=lines,
                 held=1 if self._held_paint else 0,
                 # A hash of what was actually shown, so a recorder can tell
                 # whether this fragment's translation reached the screen at all.
