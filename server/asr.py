@@ -8,7 +8,7 @@ import threading
 
 import numpy as np
 
-from . import config
+from . import config, perf
 from .config import (
     ASR_BEAM_SIZE,
     ASR_COMPUTE_TYPE,
@@ -166,6 +166,26 @@ def _wav_bytes(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+
+# A canonical wav header is 44 bytes. _wav_bytes writes a fixed-layout one, and the
+# audio_ms figure for the truncation event is derived from the payload length, so the
+# constant has to be named rather than written as a 44 in the middle of an expression.
+WAV_HEADER_BYTES = 44
+
+
+def usage_tokens(body: dict) -> int:
+    """completion_tokens, or -1 when the server left usage out.
+
+    -1 rather than 0 because a missing count and a count of zero are different
+    findings: one means the server is not reporting, the other means it generated
+    nothing. Collapsing them would make the truncation counter quietly wrong.
+    """
+    try:
+        return int(body["usage"]["completion_tokens"])
+    except (KeyError, TypeError, ValueError):
+        return -1
+
+
 class Qwen3AsrEngine:
     """Qwen3-ASR over HTTP, served by a second llama-server.
 
@@ -195,6 +215,7 @@ class Qwen3AsrEngine:
         payload = {
             "model": "qwen3-asr",
             "temperature": 0,
+            "max_tokens": config.QWEN3_ASR_MAX_TOKENS,
             "messages": [{"role": "user", "content": [
                 {"type": "input_audio", "input_audio": {
                     "data": base64.b64encode(wav).decode("ascii"),
@@ -217,7 +238,41 @@ class Qwen3AsrEngine:
             with httpx.Client(timeout=httpx.Timeout(120.0)) as client:
                 reply = client.post(f"{QWEN3_ASR_URL}/v1/chat/completions", json=payload)
                 reply.raise_for_status()
-                raw = reply.json()["choices"][0]["message"]["content"]
+                body = reply.json()
+        choice = body["choices"][0]
+        raw = choice["message"]["content"]
+
+        # A cap turns an unbounded failure into a bounded one, and the bound is the
+        # whole point.
+        #
+        # Qwen3-ASR occasionally never emits an end token and generates until the
+        # server's context is full. Measured on samples/lecture_mix.wav: 5 of 149
+        # calls, 30 to 33 seconds each, eval 3912 to 3951 tokens against a normal 7 to
+        # 46, with 184 prompt tokens, and 184 + 3912 = 4096 exactly -- it ran to the
+        # server's -c and stopped because it ran out of room rather than because it
+        # finished. The text went to the screen: 74 seconds with nothing after
+        # "你真的，你真的，你真的". A truncation on any of them, a cap does not fix the
+        # repetition; it removes the 30 seconds of silence that came with it.
+        #
+        # Nothing upstream should have to notice this. A truncated response is
+        # dropped, not trimmed to a prefix: half a clause on screen is worse than no
+        # clause, because the caption has already swallowed it by the time anyone
+        # reads it, and a repeated fragment reads as the recogniser failing rather
+        # than as nothing having been said.
+        #
+        # finish_reason is the only signal for this. The server reports "length" when
+        # it stops at max_tokens and "stop" when the model finishes, and the char count
+        # is not a substitute -- a long utterance can legitimately transcribe to more
+        # than the cap, and dropping those would throw away real speech.
+        if choice.get("finish_reason") == "length":
+            truncated = usage_tokens(body)
+            perf.emit("asr", "truncated", chars=len(raw), tokens=truncated,
+                      audio_ms=int(len(wav) * 1000 / (SAMPLE_RATE * 2)) - WAV_HEADER_BYTES,
+                      cap=config.QWEN3_ASR_MAX_TOKENS)
+            print(f"ASR truncated at {truncated} tokens (cap "
+                  f"{config.QWEN3_ASR_MAX_TOKENS}); dropped")
+            return "", language, 0.0
+
         text, detected, confidence = parse_qwen3_asr(raw)
         # The model detects per call, so an explicit language is not forced: passing
         # one would need a different prompt, and the multilingual path is not what

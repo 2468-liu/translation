@@ -308,6 +308,14 @@ def _report_effective_config() -> None:
         "partial_interval_ms": config.PARTIAL_INTERVAL_MS,
         "asr_device": config.ASR_DEVICE,
         "asr_cpu_threads": config.ASR_CPU_THREADS,
+        # The engine, and the cap. Without these, config.effective recorded
+        # partial_interval_ms and mt_backend but not which recogniser answered, so a
+        # qwen3 arm and a whisper arm both logged asr_device=cuda and could only be
+        # told apart by the arm name -- the same substitution that made twelve "MTP on"
+        # runs read as MTP off. It also makes perf_compare's block splitting reliable,
+        # since that is what delimits a run.
+        "asr_backend": config.ASR_BACKEND,
+        "asr_max_tokens": config.QWEN3_ASR_MAX_TOKENS if config.ASR_BACKEND == "qwen3" else 0,
         "audio_native": os.environ.get("TRANSLATION_AUDIO_NATIVE", "0"),
         # Which translator answers, and how much of the conversation it is shown.
         # Both are invisible from outside -- the protocol is identical whichever

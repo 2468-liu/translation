@@ -125,6 +125,23 @@ ASR_BACKEND = os.environ.get("TRANSLATION_ASR_BACKEND", "whisper").strip().lower
 QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
 QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
 QWEN3_ASR_URL = os.environ.get("TRANSLATION_QWEN3_ASR_URL", "http://127.0.0.1:8099")
+
+# Generation cap for Qwen3-ASR, in tokens.
+#
+# This is a bound on a failure, not a tuning knob. On samples/lecture_mix.wav 5 of 149
+# calls never emitted an end token and generated until llama.cpp ran out of context:
+# eval 3912 to 3951 tokens against a normal 7 to 46, 30 to 33 seconds per call, and
+# 184 prompt tokens with 184 + 3912 = 4096 exactly, which is that server's -c. The
+# text reached the screen and 74 seconds passed with nothing after "你真的，你真的".
+#
+# Measured normal output on that material peaks at 65 tokens for a 14s clip, and 33 to
+# 39 on the ones the pipeline actually sends, so 128 leaves roughly three times the
+# headroom the longest legitimate transcription needed. It is a round number above
+# that margin rather than a fitted value, because the trigger is not understood and a
+# tight cap would silently drop real speech if the trigger turns out to be common.
+#
+# Responses that hit the cap are dropped whole, not trimmed: see Qwen3AsrEngine.
+QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
 PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
 
 # VAD
