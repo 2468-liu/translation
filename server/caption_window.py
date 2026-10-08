@@ -214,6 +214,13 @@ class _Caption:
         self._line_since = 0.0
         self._prev_chars = 0
         self._held_paint = False
+        # When text first became drawable since the last grow/swap, or 0.0 if nothing
+        # has arrived. Read-only, and it exists so a dwell can be attributed: a gap
+        # with text sitting in _pending is the hold delaying something that was ready,
+        # and a gap with nothing in _pending is the material having no speech in it.
+        # Those are different problems and the fix is opposite for each -- the first
+        # is the hold being too long, the second is nothing to fix.
+        self._pending_since = 0.0
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_color = "#ffffff"
@@ -461,16 +468,7 @@ class _Caption:
                 self.root.geometry(f"{self.width}x{self.height}")
         self._draw(display_body, self.font_line, wrap)
         now = time.monotonic()
-        if self._line_since and self._trace_action == "swap":
-            # How long the sentence that was just replaced stayed up. Streaming
-            # repaints do not count: the clock starts when a sentence appears.
-            perf.emit(
-                "caption",
-                "dwell",
-                gap=round((now - self._line_since) * 1000.0, 1),
-                lost=self._prev_chars,
-                shown=len(self.line),
-            )
+        self._report_dwell(now)
         if self._trace_action in ("grow", "swap"):
             self._line_since = now
         if self._trace_sent:
@@ -634,6 +632,54 @@ class _Caption:
             self.root.deiconify()
         self._paint()
 
+    def _note_pending(self, pending: str) -> None:
+        """Stamp when text first became drawable in the current gap.
+
+        Read-only bookkeeping, factored out because the same assignment happens on two
+        paths (a packet arriving and the hold expiring) and the test needs to reach it
+        without a Tk loop. Only the first text of a gap is stamped: a later partial must
+        not push the time forward, or the waiting share would shrink every time one
+        lands.
+        """
+        if pending and not self._pending_since:
+            self._pending_since = time.monotonic()
+
+    def _report_dwell(self, now: float) -> None:
+        """Emit how long the previous sentence stayed up, and what filled the gap.
+
+        Streaming repaints do not count; the clock starts when a sentence appears.
+
+        `why` is the point of this. A dwell is either the hold still sitting on text
+        that was already ready ("held") or the stream having nothing to say ("empty"),
+        and those call for opposite responses -- one is the hold being too long, the
+        other is the material and must not be tuned against at all. On
+        samples/lecture_mix.wav gap alone does not tell them apart: p50 1622ms against a
+        3.25s reference gap, 68 of 68 gaps over a second, and 18 to 22 second stretches
+        of film-only audio that cannot paint anything.
+
+        waiting is the share of the gap during which text was ready and undrawn, which is
+        the part a shorter hold would actually recover. idle is the rest.
+        """
+        if not (self._line_since and self._trace_action == "swap"):
+            self._pending_since = 0.0
+            return
+        waited = (now - self._pending_since) if self._pending_since else 0.0
+        gap = now - self._line_since
+        waited = max(0.0, waited)
+        perf.emit(
+            "caption",
+            "dwell",
+            gap=round(gap * 1000.0, 1),
+            lost=self._prev_chars,
+            shown=len(self.line),
+            why="held" if self._pending_since else "empty",
+            waiting=round(waited * 1000.0, 1),
+            idle=round(max(0.0, gap - waited) * 1000.0, 1),
+        )
+        # Cleared here so the next gap cannot inherit this one's arrival time, which
+        # would report a wait that began before its own clock started.
+        self._pending_since = 0.0
+
     def hide(self) -> None:
         self.visible = False
         self.closed = True
@@ -651,6 +697,7 @@ class _Caption:
         self._close_wait("", "hide")
         self._line_since = 0.0
         self._prev_chars = 0
+        self._pending_since = 0.0
         self._held_paint = False
         self._wait_segment = self._segment_seq
         self.have_translation = False
@@ -696,6 +743,7 @@ class _Caption:
         self._next_utterance_at = 0.0
         self._line_since = 0.0
         self._prev_chars = 0
+        self._pending_since = 0.0
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
             self._hold_job = None
@@ -810,6 +858,7 @@ class _Caption:
                 )
             self._open_wait(pending)
         self._pending = pending
+        self._note_pending(pending)
         self._growth_stopped_at = anchor
         self._settle_until = settle
         self._close_wait(pending, action)
@@ -896,6 +945,7 @@ class _Caption:
             self._next_utterance_at,
         )
         self._pending = pending
+        self._note_pending(pending)
         self._growth_stopped_at = anchor
         self._settle_until = settle
         self._close_wait(pending, action)
