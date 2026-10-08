@@ -146,6 +146,13 @@
     color: #6c645b;
     font-size: 12px;
   }
+  /* A failure has to survive. The status line used to be reset to 未开始 by the
+     refresh that ran in the same finally block, so every error was erased a few
+     milliseconds after it appeared -- indistinguishable from a dead button. */
+  #status.error {
+    color: #9a2f22;
+    font-weight: 600;
+  }
 </style>
 <main>
   <div class="media-card">

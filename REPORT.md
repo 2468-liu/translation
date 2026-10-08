@@ -3657,3 +3657,163 @@ Permission denied，`stderr` 里那行 warning 会直接说明。
    （有测试钉着），但它和 service worker 生命周期叠在一起的后果没人验证过。
    如果你遇到过"看着看着字幕没了"，就是这条。
 ```
+
+## 37. 「开始无反应 + 显存 0」：四个原因，两个在扩展里，两个在安装产物里（2026-10-08 下午）
+
+用户实测：按下开始**无反应**，后台**显存占用为 0**。显存 0 是关键信息——它比
+"启动了但不对"早失败：**连 llama-server 都没起来**，所以失败点在 spawn 之前或
+spawn 本身。
+
+顺带纠正自己一个错误的排查方向：先去查了 JS 语法（我改过 `background.js`，
+service worker 语法错误会导致 `onMessage` 无监听者、`sendMessage` 永不 resolve，
+症状同样完全吻合）。**三个脚本语法都 OK，这条排除。**
+
+### 37.1 原因一：错误显示几毫秒就被抹掉——这就是「无反应」
+
+```js
+} catch (error) {
+    status.textContent = String(error.message || error);   ← 错误写进状态行
+} finally {
+    await refresh();                                        ← refresh 覆盖成"未开始"
+}
+```
+
+`refresh()` 无条件执行，把状态行重置成「未开始」或「正在采集」。**所以无论后端为什
+么失败，用户看到的永远是「未开始」**——与一个坏掉的按钮无法区分。
+
+**这就是两轮排查都拿不到任何错误信息的原因。**修法：`refresh(keepMessage)` 接收
+要保留的消息，`finally` 里传 `failure`；并用 `step` 标出失败发生在哪一步
+（`启动后端` / `启动字幕窗` / `终止`——三个不同的故障、三种不同的修法）。
+
+顺带修了一个真 bug：**终止分支只 `await` 不检查**，`{ok:false}` 的回复被丢弃，
+弹窗照样说自己停掉了。现在检查。
+
+### 37.2 原因二：没有任何办法区分「宿主不可达」和「后端起不来」
+
+`ensure` 的超时是 120 秒。宿主 exe 根本起不来时，用户等两分钟拿到一句
+「本地后端启动失败」，而这与「后端起了但模型加载失败」是完全不同的故障。
+
+加了一个廉价探测：`ping-backend` → `nativeRequest("status", 8000)`。
+`status` 由宿主直接回答、不启动任何东西，所以**宿主不可达会在 8 秒内报出来**，
+而不是 120 秒后。
+
+### 37.3 原因三（安装产物）：宿主清单带 UTF-8 BOM
+
+```
+装好的清单前 3 字节   EF BB BF 7B
+严格 utf-8 解析 JSON   JSONDecodeError: Unexpected UTF-8 BOM
+utf-8-sig 解析        OK
+```
+
+成因：`install_native_host.ps1` 用 `Set-Content -Encoding UTF8`，而 **PowerShell 5.1
+的 UTF8 就是带 BOM 的**，而这个项目就跑在 PS 5.1 上。
+
+**Chrome 自己的解析器是否容忍 BOM，这个仓库读不出来。**而一个解析不了的宿主清单
+产生的错误是弹窗**无法显示**的：`connectNative` 直接失败，开始按钮什么都不做。
+
+修法：`[System.IO.File]::WriteAllText(..., UTF8Encoding($false))`，并且安装脚本
+**读回前 3 字节自查**，带 BOM 就拒绝注册。
+
+顺带确认了一件本来可能致命的事：**扩展 ID 是对的**。`manifest.json` 的 `key` 算出
+`mgnbcjdhnfiiooeldkpbndgmffgapdll`，与清单 `allowed_origins` 一致。若不一致，
+`connectNative` 同样必然拒绝。
+
+### 37.4 原因四（安装产物）：onefile 的 bootloader 解包失败
+
+onefile 版的 exe 在跑任何 Python 之前，要先把自身解包到 `%TEMP%\_MEI<pid>`。
+**解包不了就打印 `PYI-<pid>:ERROR Could not create temporary directory!`、退出 1**，
+Chrome 看到端口死掉、无从连接：**没有后端、没有信息、一个坏掉的按钮。**
+
+本机实测：
+
+```
+TEMP 不设（Windows 默认）    PYI-xxx:ERROR Could not create temporary directory!  exit 1
+TEMP = AppData\Local        同上                                                    exit 1
+TEMP = 仓库内               正常启动并应答                                          exit 0
+```
+
+**改成 `--onedir`。**没有解包步骤，也就没有这个失败模式，也省掉每次启动的解包开销。
+
+### 37.5 换 onedir 立刻踩出第七个缺陷：数父目录的根定位
+
+```
+找不到启动脚本: C:\...\translation\scripts\scripts\start.ps1
+```
+
+```python
+if getattr(sys, "frozen", False):
+    return Path(sys.executable).resolve().parents[2]
+```
+
+onefile 时 exe 在 `scripts/native-host/`，`parents[2]` 正好是仓库根；**onedir 多一层，
+`parents[2]` 就变成 `scripts/`。**算术对它被写出来时的布局是对的，对另一个布局是错的，
+而冻结构建里的错值**源码里看不出任何问题**。
+
+改成**向上找标记文件 `scripts/start.ps1`**，与打包方式无关；旧算法保留为兜底。
+
+### 37.6 顺带修掉我自己新写的构建脚本的两个缺陷
+
+```
+一、不检查 PyInstaller 退出码
+   PyInstaller 拒绝写入非空的 onedir 输出目录并返回非零，而**上一次构建的 exe
+   还在原处**，所以「exe 存在」这个检查通过了，脚本报了 Built —— 实际发出去的
+   仍是旧代码。这与本节要修的陈旧 exe 是同一种病：文件在，于是存在性检查通过，
+   跑的不是被编辑的那个。现在检查 $LASTEXITCODE，非零就 throw。
+
+二、旧的 onefile exe 留在原处
+   install_native_host.ps1 曾经指向它，注册表也可能还指着它。留着它就是让陈旧构建
+   继续服务的办法。现在构建后删除。
+```
+
+### 37.7 还有一条我自己测试的毛病，值得记下来
+
+我给打包参数写断言时用了否定文本匹配：
+
+```python
+self.assertNotIn("--onefile", build_script)      # 失败
+self.assertNotIn("Set-Content -Encoding UTF8", install_script)   # 失败
+self.assertNotIn("parents[2]", native_host_py)   # 失败
+```
+
+**三条都失败，因为这三个文件里都有解释为什么不能这么做的注释**，
+而注释里恰好写着被禁的那几个词。
+
+> **在一个会记录自己错误的文件上做否定文本断言，永远会失败。**
+> 修法：断言前先剥掉注释行（`code_only`），只对可执行行断言。
+
+`test_root_discovery` 因此改成断言「搜索在兜底之前」而不是「兜底不存在」——
+那才是真正要保证的性质。
+
+### 37.8 修完之后的实测（Chrome 的条件：不覆写 TEMP）
+
+```
+--- 第 1 次开始 ---
+ensure      {"ok": true, "ready": true, "owned": true}   (8s)
+ports       {8080: 'up', 8765: 'up'}
+进程        {'llama-server': True, 'python.exe': 4}
+--- 第 1 次终止 ---
+shutdown    {"ok": true, "stopped": true}   (1s)
+ports       {8080: 'down', 8765: 'down'}
+进程        {'llama-server': False, 'python.exe': 2}
+--- 第 2 次开始 ---
+ensure      {"ok": true, "ready": true, "owned": true}   (8s)
+--- 第 2 次终止 ---
+shutdown    {"ok": true, "stopped": true}   (1s)
+stderr      (空)
+```
+
+**四次操作全对，两轮循环都通，跑在 Windows 默认临时目录下。**
+
+### 37.9 仍然要你验——但这次失败会自己说话
+
+我无法从受限 shell 复现你的桌面环境（Chrome 能否加载 onedir 宿主、BOM 修复在
+Chrome 侧是否真的必要）。**但现在失败不会再被吞掉了**：
+
+```
+按开始，如果失败，弹窗会留下一行红字，且写明卡在哪一步：
+  启动后端失败：…              ← 宿主不可达 / 后端起不来（8 秒内报，不会等 120 秒）
+  启动字幕窗失败：…            ← 后端起来了，字幕窗或 offscreen 的问题
+  终止失败：…                  ← 停不掉，会带上 taskkill 的返回码
+```
+
+**请把那行红字原样告诉我。**这一行的信息量比前两轮所有排查加起来都大。

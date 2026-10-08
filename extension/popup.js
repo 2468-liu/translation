@@ -62,7 +62,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   status.textContent = target;
 });
 
-async function refresh() {
+async function refresh(keepMessage) {
   const stored = await chrome.storage.session.get(["running", "language"]);
   const theme = await chrome.storage.local.get({
     captionTextOnly: false,
@@ -100,9 +100,11 @@ async function refresh() {
   toggle.classList.toggle("stop", running);
   mediaState.textContent = running ? "●" : "○";
   mediaState.style.color = running ? "#806900" : "#aaa39b";
-  status.textContent = running
+  status.textContent = keepMessage || (running
     ? "正在采集。字幕由 Windows 原生置顶窗口显示，不改网页内容或全屏状态。"
-    : "未开始";
+    : "未开始");
+  if (keepMessage) status.classList.add("error");
+  else status.classList.remove("error");
 }
 
 textOnly.addEventListener("change", () => {
@@ -145,11 +147,17 @@ cadenceSlow.addEventListener("click", () => sendCadence(CADENCE_MS.slow));
 
 toggle.addEventListener("click", async () => {
   toggle.disabled = true;
+  let step = "开始";
+  let failure = "";
   try {
     const running = toggle.classList.contains("stop");
     if (running) {
+      step = "终止";
       status.textContent = "正在终止后端并释放模型…";
-      await chrome.runtime.sendMessage({ type: "stop" });
+      const reply = await chrome.runtime.sendMessage({ type: "stop" });
+      if (!reply || !reply.ok) {
+        throw new Error((reply && reply.error) || "终止失败");
+      }
     } else {
       status.textContent = "正在启动本地服务和模型，并显示原生置顶字幕…";
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -159,6 +167,10 @@ toggle.addEventListener("click", async () => {
         throw new Error("外部接口要填地址和模型名");
       }
       chrome.storage.local.set(api);
+      step = "启动后端";
+      const ready = await chrome.runtime.sendMessage({ type: "ping-backend" });
+      if (ready && ready.ok === false) throw new Error(ready.error);
+      step = "启动字幕窗";
       const response = await chrome.runtime.sendMessage({
         type: "start",
         tabId: tab.id,
@@ -174,10 +186,16 @@ toggle.addEventListener("click", async () => {
       }
     }
   } catch (error) {
-    status.textContent = String(error.message || error);
+    // Kept, not overwritten. refresh() used to run unconditionally in the finally
+    // block and reset the status line to 未开始, so every failure was erased a few
+    // milliseconds after it appeared -- which is indistinguishable from the button
+    // doing nothing. The step label matters for the same reason: "启动后端" and
+    // "启动字幕窗" are different faults with different fixes.
+    failure = `${step}失败：${String((error && error.message) || error)}`;
+    console.error("[字幕]", failure, error);
   } finally {
     toggle.disabled = false;
-    await refresh();
+    await refresh(failure);
   }
 });
 

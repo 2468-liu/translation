@@ -16,9 +16,27 @@ HOST_NAME = "translation_backend"
 
 
 def project_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parents[2]
-    return Path(__file__).resolve().parents[1]
+    """The repository root, found by looking for the marker rather than by counting.
+
+    Counting parents is what broke. The exe sat directly in scripts/native-host/
+    for the onefile build and moved to scripts/native-host/translation-native-host/
+    for onedir, so parents[2] was the repository root in one layout and scripts/
+    in the other. A frozen build that resolved one level too high then looked for
+    scripts/scripts/start.ps1 and answered "找不到启动脚本" -- no backend, no
+    trace in the popup, and nothing in the source to show why: the arithmetic is
+    correct for the layout it was written against and wrong for the other one.
+
+    Searching for the file the host actually needs makes the answer independent
+    of how the build is packaged.
+    """
+    marker = Path("scripts") / "start.ps1"
+    origin = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else Path(__file__).resolve()
+    for candidate in (origin, *origin.parents):
+        if (candidate / marker).exists():
+            return candidate
+    # No marker anywhere above us. The old arithmetic still gets the common
+    # layouts right, so use it rather than returning the executable's own folder.
+    return origin.parents[2] if getattr(sys, "frozen", False) else origin.parents[1]
 
 
 ROOT = project_root()

@@ -29,6 +29,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "capture-error") {
     captureError = message.error || "";
   }
+  // Reachability probe. status is answered by the host without starting
+  // anything, so the popup can tell "the native host cannot be reached at all"
+  // apart from "the backend would not start" before committing to the slow path.
+  // Those are different faults with different fixes, and the popup used to learn
+  // about them only from a generic failure that refresh() then erased.
+  if (message.type === "ping-backend") {
+    nativeRequest("status", 8000).then(
+      (reply) => sendResponse({ ok: true, reply }),
+      (error) => sendResponse({ ok: false, error: String((error && error.message) || error) })
+    );
+    return true;
+  }
   return false;
 });
 

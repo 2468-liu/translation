@@ -59,6 +59,67 @@ def fake_run(returncode=0, stdout="", stderr=""):
                           "stderr": stderr})()
 
 
+class ProjectRootTests(unittest.TestCase):
+    """Root discovery must not depend on how the exe is packaged.
+
+    It used to count parents, which was right for the onefile layout and wrong
+    for onedir -- and the failure was invisible: ensure answered "找不到启动脚本:
+    ...\\scripts\\scripts\\start.ps1", no backend started, and the popup had
+    nothing to show. Each case below is a real exe location.
+    """
+
+    def _resolve(self, root: Path, exe_path: str, frozen: bool) -> Path | None:
+        marker = Path("scripts") / "start.ps1"
+        if frozen:
+            origin = root / exe_path
+            origin.parent.mkdir(parents=True, exist_ok=True)
+            origin.write_bytes(b"")
+        else:
+            origin = root / exe_path
+            origin.parent.mkdir(parents=True, exist_ok=True)
+            origin.write_text("#", encoding="utf-8")
+        for candidate in (origin, *origin.parents):
+            if (candidate / marker).exists():
+                return candidate
+        return None
+
+    def _repo(self, tmp: str) -> Path:
+        root = Path(tmp) / "translation"
+        (root / "scripts").mkdir(parents=True)
+        (root / "scripts" / "start.ps1").write_text("#", encoding="utf-8")
+        return root
+
+    def test_onedir_exe_layout_finds_the_repository_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            found = self._resolve(
+                root, "scripts/native-host/translation-native-host/translation-native-host.exe", True)
+            self.assertEqual(found, root)
+
+    def test_onefile_exe_layout_still_finds_the_repository_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            found = self._resolve(root, "scripts/native-host/translation-native-host.exe", True)
+            self.assertEqual(found, root)
+
+    def test_source_layout_finds_the_repository_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            found = self._resolve(root, "scripts/native_host.py", False)
+            self.assertEqual(found, root)
+
+    def test_a_folder_holding_start_ps1_is_not_itself_the_root(self):
+        """scripts/ contains start.ps1, so walking up from inside it must not
+        stop there -- that is the exact miscount that produced
+        ...\\scripts\\scripts\\start.ps1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            self.assertFalse((root / "scripts" / "scripts" / "start.ps1").exists())
+            found = self._resolve(
+                root, "scripts/native-host/translation-native-host/translation-native-host.exe", True)
+            self.assertNotEqual(found, root / "scripts")
+
+
 class ProcessExistsTests(unittest.TestCase):
     """read_pid() decides whether anything is killable. If it says no, stop is a no-op."""
 
