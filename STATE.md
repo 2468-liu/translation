@@ -408,6 +408,20 @@ meeting_6min   REPORT 27 = 83/140    本轮 A = 91/140 与 89/140   ❌ 不复�
 
 ## 队列
 
+**2026-10-08 夜间（22:45–00:40）结案的三件事，顺序不要弄反：**
+
+| # | 做什么 | 判断标准 / 结论 |
+|---|---|---|
+| **48-a** | `e2e_first_tr_to_paint` 硬编码了 `blog_3min_timing.json`，而四个臂都跑 lecture_mix | **已确认为仪器缺陷。** 四臂 n 全是 16 = blog_3min 的行数（lecture_mix 17 段）。用本次素材重算 p50 = 52/47/55/47ms ⇒ **B 从来没慢过**。⚠ **manifest 的 `wav` 也记错了素材**，谁写的**未定位**；已撤回那个「看起来修了指标」的 perf_compare 改动 |
+| **48-b** | 阅读地板 `N` 的判定规则**先写后看**（REPORT 46） | **失败条件触发 ⇒ 不建。** B 驻留 ≥12字档 p25 2281ms vs A 2227ms；规则算出的 N=2200ms 被 500 上限截断，而实测最小驻留 800ms ⇒ **地板会是空操作**。`HOLD_ABS_MIN_MS=600` 同类 |
+| **48-c** | B 在出货 build 上的基线（`mix-B750-253` / `mix-A750-253`，同一代码 `6d1b838`，lecture_mix） | **B 不再输，但也没赢。** asr p50 180 vs 822（4.6×）；audio_end p50 548 vs 690；e2e p50 47 vs 52；dwell/hold 完全一致。**落后的只有 coverage 91% vs 96%**，尾也更重（e2e p99 2433 vs 2033）。状态 `INDETERMINATE` |
+
+**仍然不要做的（没变）：** 不建阅读地板（48-b 的失败条件）、不调 `hold`（结构上够不着）、
+不动 `partial_interval_ms`（#19 已证）、不动 `_is_char_edit` 的 0.72（第二个变量）、
+**不引用 `e2e_first_tr_to_paint` 直到 manifest 的 `wav` 修好**。
+
+## 队列
+
 | # | 做什么 | 判断标准 |
 |---|---|---|
 | 1 | 合并 `gemma-audio` → `main` | **已完成**（`6f84d9d → 56ce447`，tag `pre-merge-2026-10-07`） |

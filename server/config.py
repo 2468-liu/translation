@@ -221,17 +221,30 @@ CHAINS = {
     },
     "qwen3-hy": {
         "label": "Qwen3-ASR 识别 + 混元翻译",
-        "status": "implemented, measured, not adopted",
+        # "not adopted" was a decision made on an e2e_first_tr_to_paint reading that
+        # turned out to be scored against the wrong sample's timeline -- the metric was
+        # 434ms against A's 55ms, which is how "B loses 8x" got written down and repeated
+        # a dozen times. Recomputed on lecture_mix's own timeline the four arms read
+        # p50 47/47/55/52ms, so B was never slower. The status is INDETERMINATE now rather
+        # than "not adopted", and it is not "adopted" either: one run per arm, n=17-25,
+        # synthetic material, coverage still behind and the tail heavier. REPORT 47/48.
+        "status": "implemented, measured, indeterminate -- not adopted and not rejected",
         "asr_backend": "qwen3",
         # The port Qwen3AsrEngine posts to. It is named here rather than in the engine
         # because three places have to agree -- the engine's default URL, the host's kill
         # scope and the server start -- and two agreeing is not enough.
         "qwen3_port": 8099,
-        "measured": "asr p50 140ms against 823ms, 5.9x, 9% of calls over 250ms; but e2e went "
-                    "the other way on both samples (382->925ms on blog_3min, 55->434ms on "
-                    "lecture_mix) because 2.9x more revisions left the display doing the work",
+        "measured": "on lecture_mix at partial 750, llama 2.53.0, same code for both arms. "
+                    "Engine: asr p50 180ms against 822ms (4.6x), 15.8% of wall clock against "
+                    "56.8%. audio_end_to_paint p50 548ms against 690ms, over 1000ms 7/24 "
+                    "against 8/25. e2e_first_tr_to_paint p50 47ms against 52ms once scored "
+                    "on the run's own sample. Against it: coverage 21/23 against 23/24, and "
+                    "e2e p99 2433ms against 2031ms. dwell_gap and hold_wait identical "
+                    "(1580 vs 1620, 986 vs 986)",
         "caveat": "5 of 149 calls repeated until the context filled, 30-33s each; capped at "
-                  "128 tokens and dropped whole, trigger still unknown",
+                  "128 tokens and dropped whole, trigger still unknown. Single run per arm, "
+                  "synthetic material, and the coverage gap is the one user-facing number B "
+                  "loses -- so the comparison does not decide adoption either way",
     },
     "gemma-e2e": {
         "label": "音频直出（一个模型同时听和译）",

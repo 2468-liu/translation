@@ -38,3 +38,10 @@ logs/
 
 # Cut fragments the cost probes make, one per length and model combination.
 logs/asr_cost/
+
+# Ad-hoc probes. Not committed by convention: each one is written to answer one
+# question on one set of logs and then stops being true. scripts/probe_line_dwell.py
+# and scripts/probe_gemma_claims.py are the current pair -- both found real problems,
+# and both are kept out of the record so nobody reads them as instruments.
+scripts/probe_*.py
+probe_*.py
