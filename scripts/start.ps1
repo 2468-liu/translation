@@ -12,12 +12,16 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\start.ps1
-    powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -UsePinned
+    powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -LlamaVersion 2.47.0
 #>
 [CmdletBinding()]
 param(
-    # 回到 REPORT.md 里测过的那一版（runtime.json 的 llama_pinned_path，缺省 2.47.0）。
-    [switch] $UsePinned,
+    # 指定 llama.cpp 版本。不指定就用本机已装最新（shipping 的行为）。
+    # 常用值在 server/config.py 的 MEASUREMENT_LLAMA_VERSION，那是 REPORT 里所有
+    # 延迟数所在的版本。不再用 -UsePinned：那个开关只等于"指定成测量版本"，
+    # 而它和 resolve_llama.ps1 的 -AutoLatest 是两个方向相反的默认值，
+    # 详见 resolve_llama.ps1 的文件头。
+    [string] $LlamaVersion = "",
     # 直接指定 llama-server.exe，优先级最高。
     [string] $LlamaPath = "",
     # 直接指定 Python 解释器，优先于 TRANSLATION_PYTHON 与 conda 环境。
@@ -174,79 +178,41 @@ if ($depExit -ne 0) {
 Write-Note "python   $PythonSource  $Python"
 
 # ------------------------------------------------------------ llama.cpp 版本
-# 平台的三个字段都重要：同号的 Vulkan / CPU 构建不是同一个程序，只按版本号挑会在
-# 什么都没变的情况下换掉跑的东西。
+#
+# 这段原来有自己的 Resolve-LlamaServer，和 scripts\resolve_llama.ps1 是两份解析，
+# 而且方向相反：那份默认最新（要 -UsePinned 才回 2.47.0），这份默认 2.47.0
+# （要 -AutoLatest 才回最新）。replay.ps1 调的是 resolve_llama.ps1，所以
+# **测量一直落在 2.47.0 上，靠的不是谁钉了它，而是两条路恰好用了不同的解析器**。
+# 任何一边改动都会让此前所有数字不可比，而日志里看不出发生过什么。
+#
+# 现在只有一份解析器：resolve_llama.ps1。不指定就是已装最新（shipping），
+# 指定就是那一版，且**没装就报错，不退回最新**。
 $LlamaPlatform = "win-x86_64-nvidia-cuda12-avx2"
-$BackendsRoot = Join-Path $env:USERPROFILE ".lmstudio\extensions\backends"
 
-function Resolve-LlamaServer {
-    # 1. 显式路径：参数 > 环境变量。
-    foreach ($explicit in @($LlamaPath, $env:TRANSLATION_LLAMA_PATH)) {
-        if ($explicit) {
-            if (-not (Test-Path $explicit)) { throw "指定的 llama-server.exe 不存在：$explicit" }
-            return [pscustomobject]@{ path = $explicit; version = "explicit"; how = "explicit" }
-        }
-    }
+$resolveArgs = @{}
+if ($LlamaVersion) { $resolveArgs["Version"] = $LlamaVersion }
 
-    # 2. 固定版：runtime.json 里 resolve_llama.ps1 -Pin 写下的那一版。
-    if ($UsePinned -or $env:TRANSLATION_LLAMA_VERSION) {
-        $pinned = $null
-        if (Test-Path (Join-Path $Root "runtime.json")) {
-            try {
-                $runtime = Get-Content (Join-Path $Root "runtime.json") -Raw | ConvertFrom-Json
-                if ($runtime.llama_pinned_path) { $pinned = $runtime.llama_pinned_path }
-            } catch {
-                Write-Note "runtime.json 读不出来（$($_.Exception.Message)）；按固定版缺省继续"
-            }
-        }
-        $want = if ($env:TRANSLATION_LLAMA_VERSION) { $env:TRANSLATION_LLAMA_VERSION } else { "2.47.0" }
-        if (-not $pinned) {
-            $pinned = Join-Path $BackendsRoot "llama.cpp-$LlamaPlatform-$want\llama-server.exe"
-        }
-        if (-not (Test-Path $pinned)) { throw "固定版 llama-server.exe 不存在：$pinned" }
-        # 版本号从路径里剥平台前缀，而不是原样打印目录名——日志里那一行是要被读的，
-        # 而 "llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.47.0" 混在版本字段里就是噪声。
-        $version = Split-Path -Leaf (Split-Path -Parent $pinned)
-        $version = $version -replace "^llama\.cpp-$LlamaPlatform-", ""
-        return [pscustomobject]@{ path = $pinned; version = $version; how = "pinned" }
+# -LlamaPath 是这条脚本自己的、绕过一整套解析的逃生口：它给的是一个 exe 的绝对
+# 路径，不是版本号，而版本号要靠目录名才认得出来。测别的构建时用它。
+if ($LlamaPath) {
+    if (-not (Test-Path $LlamaPath)) { throw "指定的 llama-server.exe 不存在：$LlamaPath" }
+    $leaf = Split-Path -Leaf (Split-Path -Parent $LlamaPath)
+    $backend = [pscustomobject]@{
+        path = $LlamaPath
+        version = ($leaf -replace "^llama\.cpp-$LlamaPlatform-", "")
+        how = "-LlamaPath（绕过版本解析）"
+        installed = ""
     }
-
-    # 3. 本机已装的最新一版。
-    #
-    # 排序用的是 [Version]，不是字符串：2.52.0 必须赢过 2.9.0，字符串比较会反过来。
-    # 从目录名取版本，所以事实来自文件系统本身，不来自这里的常量。
-    if (Test-Path $BackendsRoot) {
-        $installed = @(Get-ChildItem $BackendsRoot -Directory -Filter "llama.cpp-$LlamaPlatform-*" | ForEach-Object {
-                $exe = Join-Path $_.FullName "llama-server.exe"
-                if (-not (Test-Path $exe)) { return }
-                $version = $_.Name -replace "^llama\.cpp-$LlamaPlatform-", ""
-                $key = try { [Version]$version } catch { [Version]"0.0.0" }
-                [pscustomobject]@{ path = $exe; version = $version; key = $key; how = "newest installed" }
-            } | Sort-Object key)
-        if ($installed.Count -gt 0) {
-            $chosen = $installed[-1]
-            return [pscustomobject]@{
-                path      = $chosen.path
-                version   = $chosen.version
-                how       = $chosen.how
-                installed = ($installed | ForEach-Object { $_.version }) -join ", "
-            }
-        }
-    }
-
-    # 4. 一个都没找到：退回已知路径，让下面的存在性检查给出可读的错。
-    return [pscustomobject]@{
-        path    = Join-Path $BackendsRoot "llama.cpp-$LlamaPlatform-2.47.0\llama-server.exe"
-        version = "2.47.0"
-        how     = "fallback, none installed"
-    }
+} else {
+    $backend = & (Join-Path $PSScriptRoot "resolve_llama.ps1") @resolveArgs | Select-Object -Last 1
+    if (-not $backend) { throw "resolve_llama.ps1 没有给出结果" }
 }
-
-$backend = Resolve-LlamaServer
 $Llama = $backend.path
 # 这一段是给人看的，不是给机器看的：llama-common.dll 等依赖在 exe 同目录，复制单文件跑不起来。
-Write-Note "llama    $LlamaPlatform-$($backend.version) ($($backend.how))"
-if ($backend.installed) { Write-Note "llama    已装：$($backend.installed)（改回固定版：-UsePinned）" }
+Write-Note "llama    $LlamaPlatform-$($backend.version) ($($backend.selected))"
+if ($backend.installed) {
+    Write-Note "llama    已装：$($backend.installed)（钉一版：runtime.json 的 llama_version，或 -LlamaVersion）"
+}
 
 # Which translator the Python side will talk to, decided the same way Python
 # decides it (server/config.py MT_BACKEND). Read here rather than asked of Python
@@ -566,8 +532,8 @@ if (Test-Port $MtPort) {
             # The original comment here said "hy-mt2 stays on 2.47.0, which is what every
             # number in REPORT.md was measured on, so the two run different builds on
             # purpose." That described an intent the code did not implement: hy-mt2 is
-            # started with $Llama, which is the newest installed build unless -UsePinned
-            # is passed, so hy-mt2 was running 2.53.0 too. REPORT 44 keeps the error --
+            # started with $Llama, which is the newest installed build unless a version is
+            # named, so hy-mt2 was running 2.53.0 too. REPORT 44 keeps the error --
             # the start.log line that said "newest installed" was right there.
             $llama53 = Get-ChildItem "$env:USERPROFILE\.lmstudio\extensions\backends\llama.cpp-$LlamaPlatform-2.53.0\llama-server.exe" -ErrorAction SilentlyContinue |
                 Select-Object -First 1

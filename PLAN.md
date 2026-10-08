@@ -119,10 +119,13 @@ ttft、asr 占比、首字延迟全部如此。**`auto` 下这些数需要重新
 
 ```
 生效     scripts\start.ps1 → 本机最新 llama.cpp（现 2.53.0）+ conda pytorch 环境
-可逆     加 -UsePinned 回到 2.47.0；选了什么写在 logs\start.log
+可逆     scripts\start.ps1 -LlamaVersion 2.47.0；或 runtime.json 写 llama_version（长期钉）
+         选了什么写在 logs\start.log；没装的那版会报错，不退回最新
 试运行   -DryRun 只打印"会选哪一版 + 端口是否空闲"，不启动任何进程
 没跟上   server\config.py 的候选表、scripts\replay.ps1 仍按 2.47.0
          → 回放与产品启动现在不是同一版，别把回放数直接当产品数引用
+         （2026-10-08 补：replay.ps1 现在自己钉 MEASUREMENT_LLAMA_VERSION 并核对 8080
+          上正在服务的那一版，不一致就拒绝跑。上面这条"仍按 2.47.0"已不成立。）
 ```
 
 理由与实测见 `REPORT.md` 第 20 节。**改启动脚本后跑一次不带参数的那条命令验证**，

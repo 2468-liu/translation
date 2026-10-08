@@ -4486,3 +4486,106 @@ UTF8Encoding($false))`，顺带发现 **`Out-File -Encoding utf8NoBom` 在 PS 5.
 - **没验**：gemma-e2e 的 `chain_running` 写入**只做了静态验证**。`-DryRun` 在写入块之前就退出，所以 dry run 走不到那里；我没有真起一次 Gemma4 去证明它写出来是 `gemma-e2e` 而不是 null。赋值无条件在分支之前这一点是读出来的，不是跑出来的。
 - **没验**：popup 在浏览器里的实际显示。`node --check` 干净，测试钉了字符串，但「读到 `up:True` 且 `stored.running` 为 false 时状态行说『本地后端仍在运行（不是本次会话启动的）』」这句话我没有在真 Chrome 里看过。**这需要重载扩展。**
 
+
+## 45. 一份解析器，两种默认值：为什么「测试都在 2.47」是碰巧的
+
+上一节更正了「hy-mt2 仍在 2.47.0」这个错。查下去发现它不是一句话的事，
+而是**两个解析器方向相反**：
+
+```
+scripts\start.ps1  Resolve-LlamaServer     缺省 = 本机已装最新   （要 -UsePinned 才回 2.47.0）
+scripts\resolve_llama.ps1                  缺省 = 硬编码 2.47.0   （要 -AutoLatest 才回最新）
+scripts\replay.ps1  调的是第二个
+```
+
+**所以 REPORT 里每个数确实在 2.47.0 上——但不是因为有什么在钉它，
+而是因为测量路径和运行路径恰好用了两个不同的实现。**
+
+这件事的危险不在今天，在下一次：
+
+- 任何一边改一行，所有后续运行就落到别的 build 上，而每条记录仍会**诚实地**写下
+  自己那版。两条记录各自都是对的，它们之间不可比，而看不出。
+- **LM Studio 装一个新 build 就够了，仓库里一个字节都不改。**
+- 我上一节写「出货默认跑 2.53.0」时，把这个当成了某个人的一次选择。
+  它是一个 diff 的副作用。
+
+### 合成一份，行为定成两种状态
+
+```
+不指定                        → 本机已装最新（出货：体感优先，部分模型要新 build 才加载）
+scripts\resolve_llama.ps1 -Version X  → 精确那一版
+$env:TRANSLATION_LLAMA_VERSION       → 同上，给子进程
+runtime.json 的 llama_version         → 本机长期钉一版（缺省没这个键 = 最新）
+start.ps1 -LlamaVersion X             → 透传给上面那一个
+```
+
+变量落在 `server/config.py`，和其余默认值放在一起：
+
+```
+LLAMA_VERSION             = ""（缺省最新）
+MEASUREMENT_LLAMA_VERSION = "2.47.0"
+```
+
+三个开关（`-UsePinned` / `-AutoLatest` / `-Pin`）删掉了。它们是同一个值的三种拼法，
+而其中两种**对「没传」这件事的答案相反**。一个开关没法表达「默认最新但可以钉」
+而不同时表达「默认钉但可以浮」——然后就长成了两份解析器。
+
+### 三条守卫，其中一条一开始是坏的
+
+**一、指名的那一版没装 → 报错，不退回最新。**
+`resolve_llama.ps1` 原来有一句 `pin missing, fell back to newest`。
+那是这个文件存在的目的的反面，出现在这个文件里。
+
+**二、`replay.ps1` 自己钉 `MEASUREMENT_LLAMA_VERSION`，不读机器的设置。**
+理由：一次测量要可比的是**上一次测量**，不是这台机器现在装了什么。
+从机器的设置钉，等于把同一个漂移上移一层——装了新 build，机器设置跟上，
+两次臂之间的差别就变成两个 llama 版本的差别，而日志里没有东西会说明。
+
+**三、`replay.ps1` 核对 8080 上**正在服务的**那一版。**
+前两条都不够：`$Llama` 只在 audio-native 分支用得上（那时 replay 自己起服务），
+而**每个 whisper 臂跑的都是调用方起在 8080 上的那个**。所以解析出来的版本
+对大多数臂证明不了任何事，而 meta 里写下的是解析结果——于是「llama_version 2.47.0」
+会出现在一个实际用了别的 build 的运行上，而 meta 正是后来被人读来判断两次运行
+可比不可比的那一块。
+
+**第三条一开始是坏的，而且是只有真跑才能发现的那种坏。**
+正则写成 `[A-Za-z0-9\-]+?`，而平台段是 `win-x86_**64**-nvidia-cuda12-avx2`——
+**有下划线**。真进程的命令行匹配不上，守卫读不出 build，于是**每一次运行都拒绝**。
+
+一个永远拒绝的守卫和一个不存在的守卫，**可见的失败方式完全一样：不产出测量**。
+区别只在有人真跑一次回放时才显形，而那是发现一个拼写错误最慢的地方。
+现在这条正则从 `replay.ps1` 里抠出来在测试里跑真实形状的路径，变异检验确认它有牙。
+
+### 关于负向断言，先剥注释
+
+`test_shipping_does_not_read_the_measurement_pin` 第一版直接
+`assertNotIn("MEASUREMENT_LLAMA_VERSION", start_ps1)`，红了——因为 `start.ps1` 的
+`-LlamaVersion` 参数注释里**正在解释**这个常量的用途。这和「一个记录自己错误的
+文件，负向文本断言永远失败」是同一条，今天第三次遇到（另两次在
+`test_refresh_keeps_the_failure` 和 `test_start_ps1_records_the_chain`）。
+
+**判据：任何 `assertNotIn` 打在会被解释的源文件上，先剥注释行再断言。**
+测试文件里放一个剥注释的辅助函数，比每次记得手动绕开可靠。
+
+### 验过的 / 没验的
+
+**验过**
+- 四态实跑：不指定 → 2.53.0 (newest installed)；`-Version 2.47.0` → 2.47.0 (argument)；
+  环境变量 2.52.0 → 2.52.0 (environment)；`runtime.json` 写 2.47.0 → 2.47.0 (runtime.json)。
+- 指名没装的那版：退出码 1，报 `llama.cpp win-...-9.9.9 is not installed. Installed: 2.33.0, ...`，
+  **stdout 里没有 "newest installed"**。
+- `start.ps1 -DryRun` 三种：不指定 → 2.53.0；`-LlamaVersion 2.47.0` → 2.47.0；
+  `-LlamaVersion 9.9.9` → 退出码 1，没起任何进程。
+- **真起了一个 2.47.0 的服务**（`-LlamaVersion 2.47.0`，日志 `llama win-...-2.47.0 (argument)`），
+  8080 在服务 StreamRevise-v4，守卫从**这个真进程**的命令行读出 2.47.0：期望 2.47.0 放行，
+  期望 2.53.0 拒绝。
+- 变异检验 5 处，全红：退回最新 / replay 不核对 / start.ps1 再加一份解析 /
+  测量版本退回硬编码 / 正则去掉下划线。
+- 258 tests pass。
+
+**没验**
+- `replay.ps1` **整条跑一次**没有做——那是一次几分钟的真实回放，而这里的改动只涉及
+  解析和守卫。守卫的两个分支在真进程上验过，但「replay 跑到底并在 meta 里写下
+  `llama_version=2.47.0`」这件事没看。
+- 链路上 `qwen3-hy` 那一支仍然按绝对路径取 2.53.0（多模态投影只有它有）。这一条**没有**
+  纳入那个变量：它是能力约束不是偏好，而且它和 hy-mt2 用不同 build 是有意的。

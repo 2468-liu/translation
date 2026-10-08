@@ -162,6 +162,34 @@ QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
 # still used 57.1% of wall clock on lecture_mix.
 PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 750)
 
+# --------------------------------------------------------------- llama.cpp 版本
+#
+# One variable, two states: unset means "the newest build installed on this machine",
+# and set means exactly that version. The decision to keep it a value rather than a
+# command-line flag is that it had already become three flags in two files that
+# disagreed -- start.ps1 defaulted to newest behind -UsePinned, resolve_llama.ps1
+# defaulted to a hardcoded 2.47.0 behind -AutoLatest, and replay.ps1 called the second
+# one. So measurements landed on 2.47.0 not because anything pinned them but because
+# the measuring path and the running path resolved the same question differently, and
+# the next edit to either would have made every earlier number incomparable.
+#
+# Resolved by scripts/resolve_llama.ps1, which is the only reader: an explicit -Version,
+# then this variable, then runtime.json's llama_version, then newest installed. A named
+# version that is not installed is an error, never a fallback -- see MEASUREMENT_LLAMA_VERSION.
+LLAMA_VERSION = os.environ.get("TRANSLATION_LLAMA_VERSION", "").strip()
+
+# The build every number in REPORT.md was measured on. replay.ps1 pins this rather than
+# reading LLAMA_VERSION, because a measurement has to be comparable to the last
+# measurement, not to whatever the machine currently has installed. Pinning from the
+# machine's own setting would reintroduce exactly the drift the pin exists to stop, one
+# level up: a new build gets installed, the machine's setting follows it, and the
+# difference between two arms becomes the difference between two llama versions with
+# nothing in the logs to say so.
+#
+# Shipping still floats (LLAMA_VERSION unset), so this constant is used by the
+# measuring path only. See AGENT.md section 5, rule nine.
+MEASUREMENT_LLAMA_VERSION = "2.47.0"
+
 # The chains, and the default, live here rather than in runtime.json.
 #
 # runtime.json is machine-local and gitignored -- it holds absolute paths to this

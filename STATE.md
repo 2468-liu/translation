@@ -35,11 +35,18 @@ HOLD_ABS_MIN_MS     800   （caption_window.py:69。参考表最底 1000 × 最�
 翻译后端            启动取**本机已装最新**：win-x86_64-nvidia-cuda12-avx2-2.53.0（本条 2026-10-07 晚临时改）
                     已装 2.33.0 / 2.47.0 / 2.51.0 / 2.52.0 / 2.53.0
                     **版本政策（2026-10-08 定，AGENT.md §5 第九条）：默认走最新，
-                    测量走绑定。**测量用 scripts\start.ps1 -UsePinned → 2.47.0
+                    测量走绑定。**变量在 server/config.py：
+                      LLAMA_VERSION             不指定 = 已装最新（出货行为）
+                      MEASUREMENT_LLAMA_VERSION 2.47.0，replay.ps1 自己钉
+                    唯一解析器 scripts\resolve_llama.ps1（-Version / 环境变量 /
+                    runtime.json 的 llama_version → 否则最新），没装的那版**报错不退回**。
                     ⚠ REPORT 里全部延迟数是 2.47.0 上的，出货默认跑 2.53.0 ⇒
                       **默认组合从未在它出货的 build 上被测过**，引用旧数要带 build 号。
                       我此前说过「hy-mt2 仍在 2.47.0」，是错的，见 REPORT 44。
                       start.ps1:563 的注释也描述了一个代码没实现的意图，已改。
+                      原来的两份解析器（start.ps1 默认最新 / resolve_llama.ps1 默认
+                      2.47.0）方向相反，replay 调了后者 —— 测量落在 2.47.0 是碰巧，
+                      不是被强制。已合成一份，见 REPORT 45。
 翻译模型            MT_BACKEND=hy-mt2（默认，8080）｜gemma4（8082，文本翻译，不带 --mmproj）
                     gemma4 = 36 层上 32 层 + MTP 草稿 5/5 层，VRAM 2337 MiB，50 tok/s
                     ngl 99 + 投影放 CPU：75.4 tok/s（更快，见 REPORT 25.3 脚注）

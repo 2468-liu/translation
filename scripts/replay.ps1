@@ -81,9 +81,28 @@ if ($gpuHolders) {
 # changes between arms makes two runs incomparable for the same reason a
 # config.py edit used to, and the whisper arms are served by whatever is already
 # on 8080, which is exactly the thing that goes unrecorded.
-$backend = & .\scripts\resolve_llama.ps1 | Select-Object -Last 1
+#
+# Recording the version was not enough, and that is what this run pins for. Before,
+# the resolver defaulted to a hardcoded 2.47.0 while start.ps1 had its own copy
+# defaulting to newest installed -- so the measurements were comparable by accident,
+# because the measuring path and the running path answered the question two different
+# ways. Nothing enforced it. Today LM Studio installing a build would have moved every
+# later run off the version the earlier numbers came from, with the meta block
+# honestly recording the new version and the two runs still being incomparable.
+#
+# So this pins, and takes the pinned number from server/config.py rather than
+# hardcoding it a second time here. -LlamaVersion still wins for a one-off A/B on a
+# different build; that arm is then comparable to itself and not to REPORT.md, which
+# is what the meta block's version field is for.
+$LlamaVersionWanted = $env:TRANSLATION_MEASUREMENT_LLAMA_VERSION
+if (-not $LlamaVersionWanted) {
+    $LlamaVersionWanted = (& $Python -c "from server.config import MEASUREMENT_LLAMA_VERSION; print(MEASUREMENT_LLAMA_VERSION)" 2>&1 | Out-String).Trim()
+}
+$resolveArgs = @{ Version = $LlamaVersionWanted }
+$backend = & .\scripts\resolve_llama.ps1 @resolveArgs | Select-Object -Last 1
 $Llama = $backend.path
 $LlamaVersion = $backend.version
+Write-Host "measurement llama.cpp: $LlamaVersion (asked for $LlamaVersionWanted, via $($backend.selected))"
 
 # The whisper route takes its translation model from whatever is on 8080, and this
 # script deliberately leaves that server alone so it stays warm between runs. It
@@ -135,7 +154,51 @@ if (-not $AudioNative) {
   能响应 != 是对的模型 —— 这是同一类错误的另一种形态。
 "@
     }
-    Write-Host "translation backend: $served on 8080 (expected hy-mt2)"
+
+    # The build actually serving, not the one this script resolved. Resolving proves
+    # nothing here: replay deliberately leaves the 8080 server alone so it stays warm
+    # across runs, so every whisper arm is served by whatever the caller started, and
+    # $LlamaVersion is only what would be started if the audio-native path needed one.
+    # Recording the resolved version in the meta while serving another one is how
+    # "llama_version 2.47.0" ends up in a run that actually used something else --
+    # the meta block is read later by someone deciding whether two runs are comparable,
+    # and it has to be right for them.
+    #
+    # Read from the process's own command line, and the model's directory carries the
+    # build name, so this is an observation. When the command line cannot be read
+    # (WMI refused) that is reported rather than treated as agreement: "could not find
+    # out" and "it is the right one" are different facts.
+    $liveLlama = $null
+    $liveCmd = Get-ProcessCommandLine -Name llama-server
+    if ($liveCmd) {
+        # The platform segment contains an underscore -- win-x86_64-nvidia-cuda12-avx2 --
+        # so the class has to include it. It read as [A-Za-z0-9\-] first, and that failed
+        # to match the real process, which made the guard refuse every run on this
+        # machine regardless of the build. A guard that always says no is not a guard;
+        # it is a wall, and it fails the same way as a missing one: no measurement.
+        $hit = [regex]::Match($liveCmd, 'llama\.cpp-[A-Za-z0-9_\-]+?-(\d+\.\d+\.\d+)')
+        if ($hit.Success) { $liveLlama = $hit.Groups[1].Value }
+    }
+    if (-not $liveLlama) {
+        throw @"
+读不出 8080 上那个 llama-server 是哪一版，回放拒绝继续。
+  期望 $LlamaVersion；进程命令行读不出来（WMI 被拒），所以无法确认它是不是那一版。
+  「读不出」不等于「是那一版」——这正是本条守卫要拦的那件事：REPORT 里每个延迟数都是
+  $LlamaVersion 上的，而如果这一版不同，两次运行就不可比，而日志里看不出。
+  读得出命令行时，它应当形如 ...\llama.cpp-win-x86_64-nvidia-cuda12-avx2-<版本>\llama-server.exe
+"@
+    }
+    if ($liveLlama -ne $LlamaVersion) {
+        throw @"
+8080 上的 llama-server 是 $liveLlama，但测量钉的是 $LlamaVersion。
+  两个运行会不可比，而每一条记录都会各自诚实地写下自己那版，于是看不出来。
+  换回测量版本再跑：
+      scripts\start.ps1 -LlamaVersion $LlamaVersion
+  或者显式声明你要跑另一版（这一次运行就只与自己可比，REPORT 的数与它无关）：
+      `$env:TRANSLATION_MEASUREMENT_LLAMA_VERSION = "$liveLlama"
+"@
+    }
+    Write-Host "translation backend: $served on 8080, served by llama.cpp $liveLlama (measurement build)"
 }
 
 if ($AudioNative -and $KeepBackend) {
