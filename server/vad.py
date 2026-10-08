@@ -349,6 +349,7 @@ class UtteranceSplitter:
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
                         early_partial=1 if self.early_partial else 0,
+                        delivered=1,
                     )
                     events.append(("end", self._take(), self.early_partial))
                 elif (
@@ -382,6 +383,7 @@ class UtteranceSplitter:
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
                         early_partial=1,
+                        delivered=1,
                     )
                     events.append(("end", self._take(), True))
                     continue
@@ -415,6 +417,22 @@ class UtteranceSplitter:
                         why = "silence"
                     else:
                         why = "soft_cut"
+                    # delivered= says whether an end event follows this line.
+                    #
+                    # It is not redundant with the min_speech_ms test, because this
+                    # emit sits ABOVE it -- that placement is deliberate, so the
+                    # closing reason is recorded while it is still true. The cost is
+                    # that a line reading `vad.end` does not mean a segment: a
+                    # fragment below the gate is logged and then dropped, and with a
+                    # merge window it is logged and then HELD, which is not a closing
+                    # at all. On e_3min's #6 arm that was 13 of 37 lines.
+                    #
+                    # Without this flag the count has to be recovered as
+                    # `vad.end - vad.held`, and that arithmetic is only valid on an
+                    # arm with a merge window -- vad.held is not emitted at all
+                    # otherwise, so subtracting it on the default arm would use a
+                    # field that does not exist. A number in the log beats a formula
+                    # someone has to remember the precondition of.
                     perf.emit(
                         "vad",
                         "end",
@@ -422,6 +440,7 @@ class UtteranceSplitter:
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
                         early_partial=1 if self.early_partial else 0,
+                        delivered=1 if self.speech_ms >= t.min_speech_ms else 0,
                     )
                     self._note_silence_run(self.silence_ms, inside=1)
                     if self.speech_ms >= t.min_speech_ms:
@@ -482,6 +501,7 @@ class UtteranceSplitter:
                 speech_ms=round(self.speech_ms, 1),
                 silence_ms=round(self.silence_ms, 1),
                 early_partial=1 if self.early_partial else 0,
+                delivered=1,
             )
             self._note_silence_run(self.silence_ms, inside=1)
             return [("end", self._trim(self._copy()), self.early_partial)]

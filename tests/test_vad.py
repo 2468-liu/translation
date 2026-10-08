@@ -266,5 +266,84 @@ class VadMergeShortUtteranceTests(unittest.TestCase):
         assert not any(kind == "end" for kind, _a, _f in events)
 
 
+class VadDeliveredFlagTests(unittest.TestCase):
+    """A `vad.end` line says whether an end event followed it.
+
+    The closing emit sits above the min_speech_ms test, on purpose, so the reason
+    is recorded while it is still true. The cost is that a line reading `vad.end`
+    does not mean a segment: below the gate the fragment is logged and dropped,
+    and with a merge window it is logged and then held, which is not a closing at
+    all. On e_3min's #6 arm 13 of 37 lines were that second kind, and REPORT 22's
+    merge column was computed over all 37.
+
+    The count was being recovered as `vad.end - vad.held`, which is only valid on
+    an arm with a merge window -- vad.held is not emitted otherwise, so on the
+    default arm that subtraction uses a field that does not exist. These tests pin
+    the flag on both arms so the number is in the log rather than in a formula
+    somebody has to remember the precondition of.
+    """
+
+    @staticmethod
+    def _ends(pattern, **tuning_over):
+        from server import perf
+
+        ends: list[tuple[str, dict]] = []
+        original = perf.emit
+        perf.emit = (
+            lambda source, event, **fields: ends.append((event, fields))
+            if source == "vad" and event == "end"
+            else None
+        )
+        try:
+            UtteranceSplitter(FakeVad(pattern), tuning=Tuning(**tuning_over)).push(_frames(pattern))
+        finally:
+            perf.emit = original
+        return ends
+
+    @staticmethod
+    def _tuning(**over):
+        base = dict(
+            min_silence_ms=400,
+            max_utterance_ms=12_000,
+            speech_pad_ms=VAD_SPEECH_PAD_MS,
+            early_end_ms=EARLY_END_SILENCE_MS,
+            soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+            soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+            partial_interval_ms=250,
+            name="test",
+        )
+        base.update(over)
+        return base
+
+    def test_a_held_fragment_logs_an_end_that_says_it_was_not_delivered(self):
+        ends = self._ends(
+            [True] * 5 + [False] * 13 + [True] * 30 + [False] * 13,
+            **self._tuning(min_speech_ms=1000, merge_window_ms=2000),
+        )
+        assert ends, "the short burst should still be logged, that is the point"
+        assert [e["delivered"] for _w, e in ends] == [0, 1], (
+            f"first line is the held burst and must read delivered=0; got {ends}"
+        )
+
+    def test_a_dropped_fragment_also_reads_delivered_zero(self):
+        ends = self._ends(
+            [True] * 5 + [False] * 13 + [True] * 50 + [False] * 13,
+            **self._tuning(min_speech_ms=1000, merge_window_ms=0),
+        )
+        assert [e["delivered"] for _w, e in ends] == [0, 1], (
+            "with merging off the short burst is dropped, which is also delivered=0"
+        )
+
+    def test_the_flag_exists_on_the_default_arm_with_no_merge_window(self):
+        # The subtraction `vad.end - vad.held` is only computable where held is
+        # emitted at all. This is the arm where it is not, so the flag is the only
+        # thing a reader has -- hence it must be present here too.
+        ends = self._ends([True] * 30 + [False] * 13, **self._tuning(min_speech_ms=250))
+        assert ends and all("delivered" in e for _w, e in ends), (
+            f"every vad.end line needs the field; got {ends}"
+        )
+        assert all(e["delivered"] == 1 for _w, e in ends)
+
+
 if __name__ == "__main__":
     unittest.main()

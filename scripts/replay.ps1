@@ -396,6 +396,31 @@ if ($env:TRANSLATION_EXPECT_MMPROJ -and $mmprojLive -ne $env:TRANSLATION_EXPECT_
     throw "$Name wanted mmproj-device $($env:TRANSLATION_EXPECT_MMPROJ) and the serving llama-server has $mmprojLive"
 }
 
+# One nvidia-smi call, four fields, parsed into a hashtable for the meta. Chosen
+# because it needs no install and no privileges, and because the CPU side has no
+# equivalent here: MSAcpi_ThermalZoneTemperature does not exist on this machine.
+#
+# "idle" is included rather than temperature alone, because temperature alone
+# cannot distinguish "cool because idle" from "cool because throttling" -- and a
+# throttling reading is the one that would invalidate comparing two arms.
+$GpuProbe = $null
+try {
+    $gpuLine = (& nvidia-smi --query-gpu=temperature.gpu,power.draw,clocks_throttle_reasons.active,utilization.gpu --format=csv,noheader,nounits 2>$null | Select-Object -First 1)
+    if ($gpuLine) {
+        $g = @($gpuLine -split ',' | ForEach-Object { $_.Trim() })
+        if ($g.Count -ge 4) {
+            $GpuProbe = @{
+                temperature_c = [double]$g[0]
+                power_w       = [double]$g[1]
+                throttle_raw  = $g[2]
+                utilization_pct = [double]$g[3]
+            }
+        }
+    }
+} catch {
+    $GpuProbe = $null
+}
+
 @{
     name = $Name
     code = $stamp
@@ -413,6 +438,19 @@ if ($env:TRANSLATION_EXPECT_MMPROJ -and $mmprojLive -ne $env:TRANSLATION_EXPECT_
     mmproj_device_live = if ($liveCmd) { $mmprojLive } else { $null }
     process_state_readable = [bool]$liveCmd
     thresholds = ($effective -join "").Trim()
+    # GPU state, sampled after the run, so it is the resting state rather than the
+    # load -- which is what makes it comparable between arms.
+    #
+    # Temperature is here because it is the one thermal number this machine gives
+    # up. The ACPI route does not exist on it: MSAcpi_ThermalZoneTemperature returns
+    # nothing, the same absence as the zero thermal zones found earlier, and Windows
+    # has no reliable user-space CPU temperature path without a third-party tool.
+    # GPU temperature costs one nvidia-smi call and no install.
+    #
+    # null when nvidia-smi is absent or refuses, for the reason mtp_draft above
+    # uses: "we could not read it" and "it was zero" are different facts.
+    gpu = if ($null -ne $GpuProbe) { $GpuProbe } else { $null }
+    gpu_readable = [bool]($null -ne $GpuProbe)
 } | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
 @{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
 

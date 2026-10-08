@@ -2649,8 +2649,71 @@ B  climbing up until when it wasn't       对
 
 ### 29.7 剩下的
 
+编号以 STATE 队列为准（本节原先写 #6b/#17，与 STATE 的 #17/#18 冲突，已对齐）：
+
 ```
-#6b  埋点：`vad.end` 加 delivered=0/1，或把 emit 挪进分支。修完 #6 的数才能从日志读
-#6c  体感：看 logs/v6/translations_AB.md（两臂 23 条译文并排），判 K4
-#17  追 speech_ms > buffer 的根因（A 臂也有，与 #6 无关）
+#17  埋点：`vad.end` 加 delivered=0/1。**已完成**（见 29.8）→ 待重算 REPORT 22 的表
+#18  追 speech_ms > buffer 的根因（A 臂也有，与 #6 无关）
+#6c  体感：已核（29.5.1），采纳合并臂
 ```
+
+### 29.8 埋点已修：`vad.end delivered=0/1`
+
+**编号先对齐**：本节原先写 "#6b = 埋点、#17 = speech_ms"，而 STATE 队列里是
+"#17 = 埋点、#18 = speech_ms"。**翻 STATE 时没同步 REPORT。**
+这份报告通篇在讲"名字不能当证据"，编号也是一种名字——引用前先对齐。
+
+修法选 `delivered=0/1` 而不是"把 emit 挪进分支"，因为挪走会丢掉
+"被丢弃的"这个信息，而 `vad_stats.py` 与 REPORT 的门槛分析正在用它。
+
+**为什么不能靠 `vad.end − vad.held` 那个减法**：它依赖一个隐含前提——
+"非合并臂的 `held` 恒为 0"。而 `vad.held` 只在 `merge_window_ms > 0` 时才发，
+**默认臂根本不产生这个字段**。下一个人照抄这个减法，会拿一个不存在的字段去减。
+**数应该在日志里，不该是一句要记得前提的公式。**
+
+真实音频上三条独立的路给出同一个数：
+
+```
+                 vad.end 总   delivered=1   delivered=0
+A today(250/0)      32            27            5
+B #6(1000/2000)     37            24           13
+
+交叉验证
+  事件配对（probe_merge_delivery）   A 27 / B 24
+  vad.end − vad.held                 A 32−0 / B 37−13
+  delivered=1 计数                    A 27 / B 24        ← 三者一致
+```
+
+新增 3 条测试（`tests/test_vad.py::VadDeliveredFlagTests`），覆盖三种情形：
+挂起时读 0、丢弃时读 0、**默认臂（无 merge window）也必须带这个字段**。
+
+### 29.9 #6 的机制是三段，不是两段
+
+原先把机制写成两段，少了一段。第二段是这次 A/B 新出来的，
+**和第一段是两套机制，不要合并**：
+
+```
+① 少中间态 → 队列压力降 → 首字更早
+   partial 263 → 86，e2e 首译上屏 188ms → 52ms
+   这是**延迟**的机制
+
+② 片段合并 → 识别上下文更完整 → 识别本身更准
+   A  I'm sorry, Sesh. / I'm just playing a bit of a suck.     两句碎片
+   B  I'm sorry, Sash. I'm just playing a bit of a suck.        并成一句，人名对了
+   A  climbing up into what it wasn't      识别错
+   B  climbing up until when it wasn't     对
+   这是**准确度**的机制
+
+③ 原来的假设（被证伪）
+   "更长片段 → 更好的翻译"
+   实测片段变多变短。所以 ② 不是 ① 的副产品，也不是原假设的兑现：
+   它是**识别阶段**的收益，而原假设讲的是**翻译阶段**。
+```
+
+**② 把 REPORT 21.6 那条推断闭环了**：碎片输入不只是让翻译差，
+**它先让识别差**。同一段音频在更长的有效窗口里被解码得更准，
+所以合并的收益在 ASR 就已经发生了，不必等到翻译。
+
+两段机制可以分别被否证，这是把它们分开记的实际理由：
+若将来 partial 数回升（延迟变差）而识别仍准，① 死了 ② 活着，
+反之亦然。合成一句话就没法这么查。
