@@ -1,0 +1,134 @@
+{
+  "file": "lecture_mix.wav",
+  "seconds": 180.0,
+  "bed": "e_3min.wav",
+  "narrator": "clip222_90s.wav",
+  "narrator_db_over_bed": 6.0,
+  "measured": {
+    "bed_rms_dbfs": -14.0,
+    "peak_before_limit_dbfs": 1.5,
+    "limiter_gain": 0.7492,
+    "output_rms_dbfs": -17.5,
+    "film": {
+      "spans": 17,
+      "speech_seconds": 66.35,
+      "len_s": {
+        "p50": 2.52,
+        "max": 16.8
+      },
+      "gap_s": {
+        "p50": 0.66,
+        "max": 24.98
+      }
+    },
+    "narrator_spans_over_film": 10,
+    "narrator_spans_no_film_underneath": 8,
+    "narrator_spans_touching_film_speech": 2,
+    "film_only_stretches_s": [
+      8.0,
+      18.0,
+      22.0,
+      20.0,
+      22.0,
+      4.0
+    ]
+  },
+  "fragments": [
+    {
+      "index": 0,
+      "narrator_span": [
+        0.0,
+        16.0
+      ],
+      "mix_span": [
+        8.0,
+        24.0
+      ],
+      "rms_dbfs": -15.2,
+      "segments": 4,
+      "speech_seconds": 8.48
+    },
+    {
+      "index": 1,
+      "narrator_span": [
+        16.0,
+        32.0
+      ],
+      "mix_span": [
+        42.0,
+        58.0
+      ],
+      "rms_dbfs": -13.2,
+      "segments": 5,
+      "speech_seconds": 9.5
+    },
+    {
+      "index": 2,
+      "narrator_span": [
+        32.0,
+        48.0
+      ],
+      "mix_span": [
+        80.0,
+        96.0
+      ],
+      "rms_dbfs": -13.3,
+      "segments": 7,
+      "speech_seconds": 17.0
+    },
+    {
+      "index": 3,
+      "narrator_span": [
+        48.0,
+        66.0
+      ],
+      "mix_span": [
+        116.0,
+        134.0
+      ],
+      "rms_dbfs": -12.6,
+      "segments": 9,
+      "speech_seconds": 25.36
+    },
+    {
+      "index": 4,
+      "narrator_span": [
+        66.0,
+        86.0
+      ],
+      "mix_span": [
+        156.0,
+        176.0
+      ],
+      "rms_dbfs": -13.6,
+      "segments": 7,
+      "speech_seconds": 20.42
+    }
+  ],
+  "film_only_stretches": [
+    [
+      0.0,
+      8.0
+    ],
+    [
+      24.0,
+      42.0
+    ],
+    [
+      58.0,
+      80.0
+    ],
+    [
+      96.0,
+      116.0
+    ],
+    [
+      134.0,
+      156.0
+    ],
+    [
+      176.0,
+      180.0
+    ]
+  ]
+}

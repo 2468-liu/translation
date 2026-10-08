@@ -30,7 +30,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Inside one replay the client sends audio every 100ms, so there is never a
 # long silence; two replays are always separated by a 17s restart pause.
-GAP_S = 10.0
 # A replay is ~185s and emits thousands of lines. Anything shorter is a restart
 # artefact or a leftover, never a run worth measuring.
 MIN_EVENTS = 200
@@ -88,26 +87,42 @@ def load(path: Path) -> list[tuple[float, str, dict[str, str]]]:
     return rows
 
 
-def first_block(rows, gap: float = GAP_S, min_events: int = MIN_EVENTS):
-    """Trim to the first contiguous burst that is big enough to be a replay.
+def blocks(rows, min_events: int = MIN_EVENTS):
+    """Yield each replay in the log, delimited by config.effective rather than by gaps.
 
-    Short blocks are not replays. A restart leaves an ASR warm-up, and a stray
-    pytest run leaves a handful of lines, either of which would otherwise be
-    picked as "the run" and produce confident nonsense.
+    The first version of this split on the time between adjacent events, at a 10s
+    threshold, and it silently threw away most of any run with a quiet stretch. On
+    samples/lecture_mix.wav it kept 1103 of 2638 rows: the film's own dialogue means
+    a narration gap is 18-22s long, so the first one ended the block and every number
+    after it was computed over the first 42% of the run while the report said
+    "window 86.0s" against 207s of audio. Nothing in the output said it was truncated.
+
+    A gap in events is not a boundary between runs -- quiet audio produces none, and
+    that is ordinary. What actually marks the start of a replay is the server
+    announcing its effective configuration, so that is the delimiter. The time
+    threshold is kept only as a reject: a block with too few events is a warm-up or a
+    stray test, and picking one would produce confident nonsense.
     """
     if not rows:
-        return rows
-    start = 0
-    while start < len(rows):
-        end = start
-        last = rows[start][0]
-        while end < len(rows) and rows[end][0] - last <= gap:
-            last = rows[end][0]
-            end += 1
-        if end - start >= min_events:
-            return rows[start:end]
-        start = end
-    return rows[:0]
+        return []
+    cuts = [0] + [i for i, row in enumerate(rows) if row[1] == "config.effective"]
+    out: list[list] = []
+    for a, b in zip(cuts, cuts[1:] + [len(rows)]):
+        chunk = rows[a:b]
+        if len(chunk) >= min_events:
+            out.append(chunk)
+    return out
+
+
+def first_block(rows, min_events: int = MIN_EVENTS):
+    """The last replay in the log, so an appended log reports the run just finished.
+
+    Longest wins rather than first: perf.turbo-er.log carries several replays and the
+    one a report means is the one the caller just ran. Where there is only one, this is
+    the whole thing and the choice does not matter.
+    """
+    found = blocks(rows, min_events)
+    return max(found, key=len) if found else rows[:0]
 
 
 def numbers(rows, tag: str, field: str) -> list[float]:
