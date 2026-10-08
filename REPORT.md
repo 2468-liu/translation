@@ -3969,3 +3969,105 @@ reconstructed; the numbers above are from those files and the window RMS on the
 finished mix varies from 0.0282 to 0.1456, as it should.
 
 170 passed.
+
+#20: the pre-roll lands, and it costs latency that was not in the criteria
+
+server/vad.py grew a leading pre-roll, clamped to the silence that actually preceded
+each utterance, and the criteria written in PLAN before any of it ran.
+
+The shape changed before the run, not after
+
+simulate_preroll.py showed a fixed value cannot serve both materials: 800ms takes
+the sparse material from 33% to 87% complete delivery, while pushing 38 to 59
+percent of the dense material's segment starts inside the previous segment. So the
+pre-roll became min(cap, gap) with the gap measured in detector frames. The user
+named the danger -- the length is a free parameter and it is the experiment's main
+variable -- and named the coupling that makes it three changes rather than one.
+
+The third state has one legal attribution, and it held
+
+The pre-roll frames reach the audio buffer only, never speech_ms and never
+silence_ms. Both exclusions were load-bearing and both are now measured rather than
+argued:
+
+  not into silence_ms   the close condition is silence_ms >= 400, or
+                        speech_ms >= 5000 and silence_ms >= 200. Counted there, the
+                        second term is satisfied the moment a segment opens and long
+                        utterances get cut at exactly 5.000s with no pause.
+  not into speech_ms    counted there, one frame of music plus 800ms of pre-roll
+                        reads as 832ms of speech and the 250ms gate stops meaning
+                        anything.
+
+Criterion 5 came out identical on all four dense materials and on both live replay
+arms:
+
+  e_3min        {silence: 31, max_length: 2, soft_cut: 4, flush: 1}   both arms
+  er_3min       {silence: 29, soft_cut: 7, max_length: 1}            both arms
+  meeting_6min  {silence: 44, soft_cut: 25, flush: 1}                both arms
+  clip222_90s   {silence: 12, soft_cut: 9}                          both arms
+  e_3min live   {soft_cut: 6, silence: 43}                          both arms
+
+Results against the pre-registered criteria
+
+  main   sparse complete delivery   5/15 (33%) -> 13/15 (87%)   target >= 12/15   pass
+  side 1 partial / lost entirely    9 / 1  ->  1 / 1                              pass
+  side 2 e_3min coverage            41/49 both arms, 84%                         pass
+  side 3 e_3min span p50            2528ms -> 2448ms, -3.2%   limit 20%           pass
+  side 4 speech_ms > buffer         unchanged by construction                     n/a
+  side 5 why=soft_cut               identical everywhere                         pass
+  side 6 onset lag                  +0.19s -> -0.58s            target <= +0.05s   pass
+  side 7 pre-roll eats prior words  0% on four materials x four caps              pass
+
+Nothing failed. The default stays at 0 -- the feature is off and nothing is flipped.
+
+The clamp does bind, and on real material
+
+  live e_3min, preroll cap 800ms:  49 vad.preroll events
+    preroll_ms p50 480  p90 800  max 800
+    clamped     32 of 49 (65%)
+    gap_ms      p50 480  max 1760
+
+That 65% is the number the offline checks predicted. On the sparse material the clamp
+never binds, which is why it needed the dense ones to be exercised at all.
+
+A cost the criteria did not name
+
+  e2e_first_tr_to_paint   428ms (A) -> 949ms (B)
+
+The pre-roll hands every recogniser call more audio, and the recogniser was already
+using 96% of wall clock, so more audio per call is more time. n=16 per arm, one
+number, not yet judged -- it is listed rather than called a result, and it is the
+thing to watch if this is ever turned on.
+
+## Three bugs of mine, all caught by the same shape of mistake
+
+The gap counter measured the wrong quantity twice. First it only incremented while an
+utterance was open, so it counted the pause *inside* the previous sentence rather
+than the gap between sentences -- visible because raising the cap from 800ms to
+1200ms changed nothing, byte for byte. Then the reset only happened when a new
+utterance opened, so a long sentence's internal pauses accumulated across it. The
+clamp never bound once in four dense materials and 41 to 89 percent of starts landed
+inside the previous segment.
+
+Both times the tell was the same: a parameter that did nothing when it should have
+done something. That is what a wrong-quantity bug looks like from the outside.
+
+Then the criterion-7 metric was wrong twice, and each version looked reasonable:
+
+  span overlap        reported 34-89%. Wrong: a span ends min_silence_ms after its
+                      last speech frame and the gap is measured from that frame, so a
+                      correctly clamped pre-roll overlaps the trailing silence by
+                      construction. Overlapping silence costs nothing.
+  prior-speech overlap reported 55-95%. Wrong: a segment's delivered audio is its
+                      pre-roll followed by its trimmed speech, so it begins preroll
+                      *before* the detected start. Using the detected start put the
+                      previous segment's speech boundary up to 800ms too late.
+                      Corrected, it is 0% everywhere.
+
+And the harness could not see the feature at all at first: scoring on g[0] reported
+"partially delivered" for every clause while the delivered audio had in fact grown
+from 0.60s to 1.30s. The pre-roll length was then inferred as delivered-minus-span,
+which reads -0.26s with the feature off because _trim cuts the trailing silence. It
+has to be read off the splitter, not reconstructed.
+
+170 passed. The default remains off.

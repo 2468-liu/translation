@@ -13,6 +13,7 @@ from .config import (
     VAD_MERGE_WINDOW_MS,
     VAD_MIN_SILENCE_MS,
     VAD_MIN_SPEECH_MS,
+    VAD_PREROLL_MAX_MS,
     VAD_THRESHOLD,
     PARTIAL_INTERVAL_MS,
     GEMMA_MAX_UTTERANCE_MS,
@@ -149,6 +150,7 @@ class Tuning:
         name: str = "",
         min_speech_ms: int = VAD_MIN_SPEECH_MS,
         merge_window_ms: int = VAD_MERGE_WINDOW_MS,
+        preroll_max_ms: int = VAD_PREROLL_MAX_MS,
     ):
         self.min_silence_ms = min_silence_ms
         self.max_utterance_ms = max_utterance_ms
@@ -157,6 +159,10 @@ class Tuning:
         self.soft_cut_speech_ms = soft_cut_speech_ms
         self.soft_cut_silence_ms = soft_cut_silence_ms
         self.partial_interval_ms = partial_interval_ms
+        # Leading pre-roll cap, in ms. 0 disables it. See _take_preroll for why the
+        # gap it is clamped to is measured in detector frames and not by energy, and
+        # why the frames it contributes reach neither speech_ms nor silence_ms.
+        self.preroll_max_ms = preroll_max_ms
         # Below this much speech an utterance is too short to stand alone. What
         # happens to it next is merge_window_ms's business, not this value's.
         self.min_speech_ms = min_speech_ms
@@ -249,6 +255,20 @@ class UtteranceSplitter:
         self.in_speech = False
         self.speech_ms = 0
         self.silence_ms = 0
+        # Rolling raw frames for the leading pre-roll, and the run of consecutive
+        # non-speech frames -- the gap the pre-roll is clamped to. The run is
+        # counted on every non-speech frame and reset when speech starts, so it
+        # always describes the stretch immediately before the current utterance
+        # start, including across a held fragment, which is the resumed path where a
+        # gap and an utterance boundary can otherwise fall out of step. Frame length
+        # comes from FRAME rather than from self.frame_ms, which is not assigned yet
+        # at this point.
+        frame_ms = FRAME / SAMPLE_RATE * 1000
+        self._prebuffer: list[np.ndarray] = []
+        self._prebuffer_max = max(1, int((self.tuning.preroll_max_ms + frame_ms) / frame_ms))
+        self.silence_run_frames = 0
+        self._silence_run_before = 0
+        self.preroll_ms = 0.0
         self.since_partial_ms = 0
         self.early_partial = False
         self.frame_ms = FRAME * 1000 / SAMPLE_RATE
@@ -312,6 +332,24 @@ class UtteranceSplitter:
             frame = self.pending[:FRAME]
             self.pending = self.pending[FRAME:]
             speech = self.engine.prob(frame) >= VAD_THRESHOLD
+            # Rolling pre-buffer for the leading pre-roll. Kept before the branch
+            # so it holds the frames that preceded this decision, which is the
+            # only place they exist: once a frame is classified it is either
+            # appended to the utterance or zeroed, and neither keeps the raw
+            # samples.
+            self._prebuffer.append(frame)
+            if len(self._prebuffer) > self._prebuffer_max:
+                del self._prebuffer[0]
+            if not speech:
+                # Counted here rather than in the non-speech branch below, because
+                # that branch only runs while an utterance is open. The gap a
+                # pre-roll is clamped to is the silence *between* utterances, which
+                # is exactly the stretch this branch never sees -- so counting there
+                # measured the pause inside the previous utterance instead, and the
+                # clamp then keyed off a quantity unrelated to the gap. With that
+                # wrong, raising the cap from 800ms to 1200ms changed nothing at all,
+                # byte for byte, which is what gave it away.
+                self.silence_run_frames += 1
             if speech:
                 if not self.in_speech:
                     self.in_speech = True
@@ -319,13 +357,36 @@ class UtteranceSplitter:
                     self.silence_ms = 0
                     self.since_partial_ms = 0
                     self.early_partial = False
-                    self.utterance = []
+                    self._silence_run_before = self.silence_run_frames
+                    preroll = self._take_preroll()
+                    self.utterance = list(preroll)
+                    self.preroll_ms = len(preroll) * self.frame_ms
+                    if self.preroll_ms:
+                        perf.emit(
+                            "vad",
+                            "preroll",
+                            preroll_ms=round(self.preroll_ms, 1),
+                            gap_ms=round(self._silence_run_before * self.frame_ms, 1),
+                            cap_ms=self.tuning.preroll_max_ms,
+                            clamped=1 if self._silence_run_before * self.frame_ms
+                            < self.tuning.preroll_max_ms else 0,
+                        )
                     self._unreported_silence = 0.0
                     self._held_silence_ms = 0.0
                     self._holding = False
                     self._close_outside_silence()
                     events.append(("start", None, False))
                 resumed = self.silence_ms > 0
+                # Reset on every speech frame, not only when a new utterance opens.
+                # What a pre-roll needs is the silence immediately before the
+                # utterance's *first* speech frame. Resetting only at utterance
+                # start let the counter accumulate across a long utterance's
+                # internal pauses, so the "gap" it reported included the previous
+                # sentence's silences and was therefore never shorter than the cap:
+                # the clamp never bound once in four dense materials, and 41 to 89
+                # percent of segment starts landed inside the preceding segment.
+                # The value is only consumed at utterance start, above.
+                self.silence_run_frames = 0
                 if resumed:
                     # The pause ended without closing the utterance. Report it now,
                     # before the counter is zeroed, or it is lost.
@@ -507,6 +568,38 @@ class UtteranceSplitter:
             return [("end", self._trim(self._copy()), self.early_partial)]
         self._drop()
         return []
+
+    def _take_preroll(self) -> list[np.ndarray]:
+        """Leading frames to prepend, at raw gain, and no longer than the gap.
+
+        Three decisions, each forced by something measurable.
+
+        Gain 1.0, not NON_SPEECH_GAIN. A pre-roll frame is by definition one the
+        detector called non-speech, and NON_SPEECH_GAIN is 0.0, so sharing its rule
+        would fill the pre-roll with silence and lose exactly the words the pre-roll
+        exists to recover.
+
+        Neither speech_ms nor silence_ms is touched. speech_ms so that max_utterance
+        and min_speech still measure speech rather than padding -- counting it there
+        would let one frame of music plus 800ms of pre-roll read as 832ms of speech
+        and pass the 250ms gate, which is the gate's whole job. silence_ms because
+        the close condition is silence_ms >= 400, or speech_ms >= 5000 and
+        silence_ms >= 200: a pre-roll counted there satisfies the second term the
+        moment the segment opens, so long utterances get cut at exactly 5.000s with
+        no pause at all and why=soft_cut climbs.
+
+        The gap is measured in detector non-speech frames, not by energy, because
+        the frames being recovered are the ones the detector was late on. An energy
+        measure would see the music bed under every clause, report a gap near zero,
+        and clamp the pre-roll away before it did anything.
+        """
+        cap = self.tuning.preroll_max_ms
+        if cap <= 0:
+            return []
+        want = min(int(cap / self.frame_ms), self._silence_run_before)
+        if want <= 0:
+            return []
+        return self._prebuffer[-want:]
 
     def _copy(self) -> np.ndarray:
         if not self.utterance:

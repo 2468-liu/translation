@@ -113,6 +113,18 @@ PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 250)
 
 # VAD
 VAD_THRESHOLD = 0.5
+# Leading pre-roll cap. 0 disables it, which is the production value until #20 is
+# judged.
+#
+# The utterance used to begin exactly at the frame the detector first called speech,
+# so every millisecond of detector latency was a millisecond of lost words -- on a
+# 1s clause under a music bed that measured +0.19s at the median and +0.72s at worst
+# (REPORT 38). A pre-roll extends the start backwards, clamped to the silence that
+# actually preceded this utterance, so dense material gains nothing and sparse
+# material recovers its opening words. The frames it contributes reach neither
+# speech_ms nor silence_ms; see server/vad.py _take_preroll for why both exclusions
+# are load-bearing.
+VAD_PREROLL_MAX_MS = _env_int("TRANSLATION_VAD_PREROLL_MAX_MS", 0)
 # The gate below is a DROP, not a delay: an utterance shorter than this is
 # discarded at server/vad.py, never translated. It is injectable now because #6
 # is a single-variable comparison of 250 against 1000, and editing this file

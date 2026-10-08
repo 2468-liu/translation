@@ -35,7 +35,8 @@ def load(path: Path) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
-def spans(pcm: np.ndarray, gate_ms: int, merge_ms: int) -> list[tuple[float, float, bool, float]]:
+def spans(pcm: np.ndarray, gate_ms: int, merge_ms: int,
+          preroll_ms: int = 0) -> list[tuple[float, float, bool, float]]:
     # One VAD frame per push, then flush. probe_vad_gate.py records why: an earlier
     # version here pushed ~1.28s batches and the arms then disagreed on utterance
     # counts for reasons that had nothing to do with the gate.
@@ -51,11 +52,12 @@ def spans(pcm: np.ndarray, gate_ms: int, merge_ms: int) -> list[tuple[float, flo
         name="probe",
         min_speech_ms=gate_ms,
         merge_window_ms=merge_ms,
+        preroll_max_ms=preroll_ms,
     )
     splitter = vad_mod.UtteranceSplitter(engine=vad_mod._VAD, tuning=tuning)
 
     frame = vad_mod.FRAME
-    events: list[tuple[float, float, bool, float]] = []
+    events: list[tuple[float, float, bool, float, float]] = []
     opened: float | None = None
     cursor = 0.0
 
@@ -65,7 +67,12 @@ def spans(pcm: np.ndarray, gate_ms: int, merge_ms: int) -> list[tuple[float, flo
             return
         if kind == "end":
             begin = opened if opened is not None else at
-            events.append((begin, at, True, len(audio) / SAMPLE_RATE))
+            # preroll_ms is read here rather than inferred from the audio length.
+            # Inferring it as delivered-minus-span gives -0.26s with the pre-roll off,
+            # because _trim cuts the trailing zeroed silence and the delivered audio is
+            # shorter than the span for reasons that have nothing to do with the front.
+            events.append((begin, at, True, len(audio) / SAMPLE_RATE,
+                           splitter.preroll_ms / 1000.0))
             opened = None
         else:
             # A partial does not close the utterance, so it must not consume the
@@ -73,7 +80,7 @@ def spans(pcm: np.ndarray, gate_ms: int, merge_ms: int) -> list[tuple[float, flo
             # every later end by one utterance and reported 0 of 15 clauses
             # delivered, which was an artefact of the bookkeeping.
             events.append((opened if opened is not None else at, at, False,
-                           len(audio) / SAMPLE_RATE))
+                           len(audio) / SAMPLE_RATE, splitter.preroll_ms / 1000.0))
 
     for i in range(0, len(pcm) - frame + 1, frame):
         for kind, audio, _ in splitter.push(pcm[i:i + frame]):
@@ -93,6 +100,9 @@ def main() -> None:
     ap.add_argument("--plan", default="samples/sparse_music_plan.json")
     ap.add_argument("--gate-ms", type=int, default=250)
     ap.add_argument("--merge-ms", type=int, default=0)
+    ap.add_argument("--preroll-ms", type=int, default=0,
+                    help="leading pre-roll cap, applied by the real splitter "
+                         "rather than simulated")
     ap.add_argument("--threshold", type=float, default=None,
                     help="override the splitter's speech probability threshold "
                          "for this run only; patches the module global, which is "
@@ -131,40 +141,53 @@ def report(args, only_summary: bool) -> None:
     plan = json.loads((ROOT / args.plan).read_text(encoding="utf-8"))
     clauses = plan["clauses"]
 
-    got = spans(pcm, args.gate_ms, args.merge_ms)
+    got = spans(pcm, args.gate_ms, args.merge_ms, args.preroll_ms)
     closed = [g for g in got if g[2]]
     tag = f"VAD_THRESHOLD={vad_mod.VAD_THRESHOLD}"
+    if args.preroll_ms:
+        tag += f"  preroll_cap={args.preroll_ms}ms"
     print(f"  gate {args.gate_ms}ms  merge {args.merge_ms}ms  {tag}")
     print(f"    埋入语句 {len(clauses)} 句（{sum(c['dur'] for c in clauses):.1f}s）"
           f"   检出并关闭 {len(closed)} 段")
 
+    # The effective pre-roll is read off the splitter, not inferred: a real
+    # pre-roll adds audio in front of the detected span and leaves the span's own
+    # start where it was, so scoring on g[0] cannot see it. An earlier version here
+    # reported "partially delivered" for every clause while the delivered audio had
+    # grown from 0.60s to 1.30s, and then inferred the length as delivered-minus-span,
+    # which reads -0.26s with the feature off because _trim cuts the trailing
+    # silence. Read it, do not reconstruct it.
+    effective = [(g[0], g[1], g[3], g[4], g[3]) for g in closed]
     heard, partial, missed = [], [], []
     onset_lag = []
     for c in clauses:
         a, b = c["start"], c["end"]
-        full = [g for g in closed if g[0] <= a + 1e-6 and g[1] >= b - 1e-6]
-        some = [g for g in closed if g[0] < b and g[1] > a]
-        # A fragment detected but never closed is a partial that the gate held back.
-        open_only = [g for g in got if not g[2] and g[0] < b and g[1] > a]
-        if full:
-            heard.append((c, "完整", full[0]))
-        elif some:
-            partial.append((c, "只覆盖一部分", some[0]))
-        elif open_only:
-            partial.append((c, "只出了 partial（未过门）", open_only[0]))
+        # start of the audio actually delivered for a candidate segment
+        candidates = [e for e in effective if e[1] > a and e[0] - e[3] < b]
+        covering = [e for e in candidates if e[0] - e[3] <= a + 1e-6 and e[1] >= b - 1e-6]
+        overlapping = [e for e in candidates if e[0] < b and e[1] > a]
+        if covering:
+            heard.append((c, "完整", covering[0]))
+        elif overlapping:
+            partial.append((c, "只覆盖一部分", overlapping[0]))
         else:
             missed.append(c)
-        # How late the utterance began. This is the number the threshold moves:
-        # a clause under music starts late because its opening frames were called
-        # non-speech, and the words in them are simply not in the utterance.
-        begins = [g[0] for g in (full or some or open_only)]
+        begins = [e[0] - e[3] for e in (covering or overlapping)]
         if begins:
             onset_lag.append(min(begins) - a)
+
+    pr_values = sorted(e[3] for e in effective if e[3] > 0)
+    if pr_values:
+        print(f"    实测预卷 n={len(pr_values)}  p50 {pr_values[len(pr_values) // 2] * 1000:.0f}ms"
+              f"  p90 {pr_values[min(len(pr_values) - 1, int(len(pr_values) * 0.9))] * 1000:.0f}ms"
+              f"  被夹成0的段 {len(effective) - len(pr_values)}/{len(effective)}")
+    else:
+        print("    实测预卷：全部为 0（开关关闭，或 gap 全为 0）")
 
     lost = sum(c["dur"] for c in missed)
     part = sum(c["dur"] for _c, _w, _g in partial)
     total = sum(c["dur"] for c in clauses)
-    delivered = sum(g[3] for c, _w, g in heard + partial)
+    delivered = sum(g[4] for c, _w, g in heard + partial)
     print(f"    完整 {len(heard)}/{len(clauses)}   部分 {len(partial)}   完全没到 {len(missed)}")
     print(f"    起始延迟 中位 {sorted(onset_lag)[len(onset_lag) // 2]:+.2f}s "
           f"最大 {max(onset_lag):+.2f}s" if onset_lag else "    起始延迟 无")
