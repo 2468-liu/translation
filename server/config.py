@@ -87,8 +87,17 @@ AUDIO_REPEAT_PENALTY = 1.05
 AUDIO_CHINESE_SHARE_MIN = 0.30
 
 # Paths — filled after ModelScope download / conversion
-ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
-ASR_FALLBACK_DIR = MODELS_DIR / "faster-whisper-base"
+#
+# large-v3-turbo, not small. Chosen for the noisy-material case (film dialogue
+# under music) where small misses speech. Measured on this machine, same
+# backend, 205.8s of film audio:
+#   small   +649 MiB loaded,  +731 MiB after a transcribe
+#   turbo  +2107 MiB loaded, +2243 MiB after a transcribe
+# With hy-mt2 resident (1290 MiB) the turbo peak lands at 3533 of 4096 MiB, so
+# the fit depends on llama-server holding its -ngl 60 / -c 1024 allocation. If
+# the ASR ever OOMs, drop llama's -ngl before dropping back to small.
+ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-large-v3-turbo"
+ASR_FALLBACK_DIR = MODELS_DIR / "faster-whisper-small"
 SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
 
 # Audio

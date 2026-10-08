@@ -344,16 +344,23 @@ if ($trCount -eq 0) {
 # Record the run only once it has completed, and mark its logs as pending so the
 # NEXT invocation knows which name to archive them under.
 #
-# The thresholds go in too. The stamp alone was not enough: four runs in one
+# thresholds go in too. The stamp alone was not enough: four runs in one
 # sweep all read "+dirty" because the sweep was rewriting config.py between
 # them, so no two of them could be shown to be the same code, and nothing in the
 # meta said which partial interval any of them had run at.
+#
+# asr_model is in that dict for the same reason, and it is the one field whose
+# absence is hardest to notice. thresholds covers the tunables, but the ASR model
+# is a path, not a threshold: nothing in the run summary mentions it, so an arm
+# named "turbo-er" was the only claim that turbo had run. That is the same shape
+# as the twelve "MTP on" arms that all ran with MTP off -- a name standing in for
+# a fact. Read asr_model, not the arm name.
 # One line on purpose. This was a multi-line here-string piped into `python -c`,
 # and PowerShell mangled it into an unterminated dict -- the run then recorded
 # `thresholds: ""` while reporting nothing wrong, so the meta said the
 # configuration was unrecorded and the reader had no way to know why. A dict
 # built by assignment has no braces for the outer language to lose.
-$effective = & $Python -c "import json; from server import config; d = {}; d['partial_interval_ms'] = config.PARTIAL_INTERVAL_MS; d['gemma_min_silence_ms'] = config.GEMMA_MIN_SILENCE_MS; d['gemma_max_utterance_ms'] = config.GEMMA_MAX_UTTERANCE_MS; d['audio_context_sentences'] = config.AUDIO_CONTEXT_SENTENCES; d['audio_repeat_penalty'] = config.AUDIO_REPEAT_PENALTY; d['audio_chinese_share_min'] = config.AUDIO_CHINESE_SHARE_MIN; d['vad_min_speech_ms'] = config.VAD_MIN_SPEECH_MS; d['vad_merge_window_ms'] = config.VAD_MERGE_WINDOW_MS; d['mt_backend'] = config.MT_BACKEND; d['mt_context_sentences'] = config.MT_CONTEXT_SENTENCES; print(json.dumps(d))"
+$effective = & $Python -c "import json; from server import config; d = {}; d['partial_interval_ms'] = config.PARTIAL_INTERVAL_MS; d['gemma_min_silence_ms'] = config.GEMMA_MIN_SILENCE_MS; d['gemma_max_utterance_ms'] = config.GEMMA_MAX_UTTERANCE_MS; d['audio_context_sentences'] = config.AUDIO_CONTEXT_SENTENCES; d['audio_repeat_penalty'] = config.AUDIO_REPEAT_PENALTY; d['audio_chinese_share_min'] = config.AUDIO_CHINESE_SHARE_MIN; d['vad_min_speech_ms'] = config.VAD_MIN_SPEECH_MS; d['vad_merge_window_ms'] = config.VAD_MERGE_WINDOW_MS; d['mt_backend'] = config.MT_BACKEND; d['mt_context_sentences'] = config.MT_CONTEXT_SENTENCES; d['asr_model'] = config.ASR_MODEL_DIR.name; d['asr_fallback'] = config.ASR_FALLBACK_DIR.name; print(json.dumps(d))"
 if (-not $effective) {
     throw "could not read the effective configuration; refusing to record a run whose thresholds would be blank"
 }

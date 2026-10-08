@@ -96,7 +96,7 @@ function clampFont(px) {
   return Math.max(16, Math.min(40, Math.round(size)));
 }
 
-async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel }) {
+async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel, partialIntervalMs }) {
   captureError = "";
   await ensureBackend(audioOnly);
   // Chrome keeps a tab captured until its tracks end. Release the previous
@@ -119,6 +119,7 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     textOnly: saved.captionTextOnly !== false,
     fontPx,
     color: saved.captionColor,
+    partialIntervalMs,
   });
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "offscreen 启动失败");

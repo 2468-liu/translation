@@ -1,4 +1,7 @@
-"""Download ASR and translation weights from ModelScope into ./models.
+"""Download ASR and translation weights into ./models.
+
+The ASR weights come from HuggingFace (Systran's CTranslate2 conversions);
+Hy-MT2 still comes from ModelScope, which is where its GGUF is published.
 
 Three downloaders used to live here and were unreachable from main(): Qwen2.5-3B
 GGUF and the Qwen3.5-4B MTP draft, both superseded by Hy-MT2, and NLLB-600M,
@@ -17,7 +20,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "models"
-ASR_DIR = MODELS / "faster-whisper-small"
+# large-v3-turbo is the ASR now (server/config.py ASR_MODEL_DIR); small is the
+# fallback there. The Hub id is Systran's CT2 conversion -- it is the same repo
+# faster-whisper reads from when given the bare name, so the two paths agree.
+ASR_DIR = MODELS / "faster-whisper-large-v3-turbo"
+ASR_FALLBACK_DIR = MODELS / "faster-whisper-small"
 HYMT_DIR = MODELS / "hy-mt2-1.8b"
 HYMT_FILE = "Hy-MT2-1.8B-Q4_K_M.gguf"
 SILERO_PATH = MODELS / "silero_vad.onnx"
@@ -28,16 +35,39 @@ SILERO_URLS = [
 ]
 
 
-def download_asr() -> None:
-    from modelscope.hub.snapshot_download import snapshot_download
+def _hub_snapshot(repo_id: str, target: Path, marker: Path, min_bytes: int) -> bool:
+    """Fetch repo_id from HuggingFace into target. True if target is usable after."""
+    from huggingface_hub import snapshot_download
 
-    marker = ASR_DIR / "model.bin"
-    if marker.exists() and marker.stat().st_size > 1_000_000:
-        print(f"ASR already present: {marker}")
-        return
-    print("downloading pengzhendong/faster-whisper-small")
-    snapshot_download("pengzhendong/faster-whisper-small", local_dir=str(ASR_DIR))
-    print(f"ASR ready: {marker}")
+    if marker.exists() and marker.stat().st_size > min_bytes:
+        print(f"already present: {marker}")
+        return True
+    target.mkdir(parents=True, exist_ok=True)
+    print(f"downloading {repo_id} -> {target.name}")
+    snapshot_download(repo_id, local_dir=str(target))
+    if not marker.exists() or marker.stat().st_size <= min_bytes:
+        print(f"incomplete: {marker} missing or too small")
+        return False
+    return True
+
+
+def download_asr() -> None:
+    # turbo first, small second. small is small enough (0.45 GB) that leaving it
+    # out would make the fallback in server/config.py unreachable on a fresh
+    # clone, and turbo alone does not fit a 4GB card without hy-mt2's -ngl cut.
+    if not _hub_snapshot(
+        "Systran/faster-whisper-large-v3-turbo",
+        ASR_DIR,
+        ASR_DIR / "model.bin",
+        1_000_000_000,
+    ):
+        print("turbo unavailable, the server falls back to small")
+    _hub_snapshot(
+        "Systran/faster-whisper-small",
+        ASR_FALLBACK_DIR,
+        ASR_FALLBACK_DIR / "model.bin",
+        1_000_000,
+    )
 
 
 def download_hymt() -> None:

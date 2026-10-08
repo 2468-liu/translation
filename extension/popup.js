@@ -12,6 +12,28 @@ const apiUrl = document.getElementById("apiUrl");
 const apiKey = document.getElementById("apiKey");
 const apiModel = document.getElementById("apiModel");
 const mediaState = document.getElementById("mediaState");
+const cadenceFast = document.getElementById("cadenceFast");
+const cadenceSlow = document.getElementById("cadenceSlow");
+const cadenceHint = document.getElementById("cadenceHint");
+const CADENCE_MS = { fast: 250, slow: 750 };
+
+function paintCadence(ms) {
+  const isSlow = Number(ms) >= CADENCE_MS.slow;
+  cadenceFast.setAttribute("aria-pressed", String(!isSlow));
+  cadenceSlow.setAttribute("aria-pressed", String(isSlow));
+  cadenceHint.textContent = isSlow
+    ? "正在用 750 毫秒：改口更少，但首句也更晚出现。"
+    : "正在用 250 毫秒：跟得紧，改口也更频繁。";
+}
+
+async function sendCadence(ms) {
+  paintCadence(ms);
+  await chrome.storage.local.set({ partialIntervalMs: Number(ms) });
+  // Sent as its own config frame so the switch works while running, not only at
+  // start. While stopped this is a no-op -- there is no socket to carry it, and
+  // the stored value rides along on the next start.
+  chrome.runtime.sendMessage({ type: "cadence", partialIntervalMs: Number(ms) }).catch(() => {});
+}
 
 function apiPayload() {
   return {
@@ -51,7 +73,9 @@ async function refresh() {
     apiUrl: "",
     apiKey: "",
     apiModel: "",
+    partialIntervalMs: CADENCE_MS.fast,
   });
+  paintCadence(theme.partialIntervalMs);
   textOnly.checked = Boolean(theme.captionTextOnly);
   audioOnly.checked = Boolean(theme.audioOnly);
   const px = Math.max(16, Math.min(40, Number(theme.captionFontPx) || 20));
@@ -116,6 +140,8 @@ apiEnabled.addEventListener("change", saveApi);
 for (const field of [apiUrl, apiKey, apiModel]) {
   field.addEventListener("change", saveApi);
 }
+cadenceFast.addEventListener("click", () => sendCadence(CADENCE_MS.fast));
+cadenceSlow.addEventListener("click", () => sendCadence(CADENCE_MS.slow));
 
 toggle.addEventListener("click", async () => {
   toggle.disabled = true;
@@ -138,6 +164,9 @@ toggle.addEventListener("click", async () => {
         tabId: tab.id,
         language: language.value,
         audioOnly: audioOnly.checked,
+        partialIntervalMs: Number(cadenceFast.getAttribute("aria-pressed") === "true"
+          ? CADENCE_MS.fast
+          : CADENCE_MS.slow),
         ...api,
       });
       if (!response || !response.ok) {

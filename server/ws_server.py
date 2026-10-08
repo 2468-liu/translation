@@ -209,6 +209,12 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                     session.set_language(data.get("language") or "auto")
                 if any(key in data for key in ("apiEnabled", "apiUrl", "apiKey", "apiModel")):
                     session.set_api(data)
+                # The caption window's 250/750 switch reaches _switch_partial_interval
+                # over UDP. The extension's switch has to arrive here too, or the field
+                # is accepted by the config frame and then dropped -- the extension owns
+                # the controls now, so the WebSocket is the only path a user takes.
+                if data.get("partial_interval_ms"):
+                    _switch_partial_interval(int(data["partial_interval_ms"]))
                 _apply_caption_controls(data)
                 if "textOnly" in data:
                     caption_text_only = bool(data.get("textOnly"))

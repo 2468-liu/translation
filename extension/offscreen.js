@@ -60,6 +60,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  // The cadence switch, pressed while running. configPayload would also work but
+  // would drag the api/style fields along with defaults, so this sends just the
+  // one field the user changed.
+  if (message.type === "cadence") {
+    const ms = Number(message.partialIntervalMs);
+    if (ms > 0) sendJson({ type: "config", partial_interval_ms: ms });
+    sendResponse({ ok: true });
+    return false;
+  }
   return false;
 });
 
@@ -76,6 +85,11 @@ function configPayload(message) {
   if (typeof message.textOnly === "boolean") payload.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") payload.fontPx = clampFont(message.fontPx);
   if (typeof message.color === "string") payload.color = message.color;
+  // The cadence switch. Carried on the same config frame as the rest so a start
+  // already opens on the chosen value; ws_server applies it like any other.
+  if (Number(message.partialIntervalMs) > 0) {
+    payload.partial_interval_ms = Number(message.partialIntervalMs);
+  }
   return payload;
 }
 

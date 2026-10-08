@@ -119,6 +119,27 @@
     background: linear-gradient(90deg, #ffffff, #f4d35e, #ef8354, #d1495b, #7b2cbf, #0077b6, #2a9d8f, #1f2937);
     cursor: pointer;
   }
+  .cadence {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .cadence button {
+    padding: 8px;
+    background: #e7e0d6;
+    color: #4a443b;
+    border: 1px solid #d6cfc5;
+  }
+  .cadence button[aria-pressed="true"] {
+    background: #806900;
+    color: #fff;
+    border-color: #806900;
+  }
+  .hint {
+    margin: 6px 0 0;
+    color: #777067;
+    font-size: 12px;
+  }
   #status {
     min-height: 1.2em;
     margin-top: 10px;
@@ -143,6 +164,12 @@
     <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
     <label for="fontColor">字幕颜色</label>
     <input id="fontColor" type="color" value="#ffffff" title="选择字幕颜色" />
+    <label for="cadenceFast">改口节奏</label>
+    <div class="cadence">
+      <button id="cadenceFast" type="button" data-ms="250" aria-pressed="true">250 毫秒（跟得紧）</button>
+      <button id="cadenceSlow" type="button" data-ms="750" aria-pressed="false">750 毫秒（少改口）</button>
+    </div>
+    <p class="hint" id="cadenceHint">识别中途每隔多久回一次字幕。750 改口更少，但首句也更晚出现。</p>
   </div>
   <div class="section">
     <p class="section-title">翻译设置</p>

@@ -3338,3 +3338,180 @@ general.architecture = hunyuan-dense    hunyuan-dense.block_count = 32
 扫出来的 25 个命中全是量化权重里恰好拼出的随机字节（各 1 次）。
 对照组（能扫出 `blk.0.attn_k.weight`）证明方法本身有效，所以这是"信号被噪声淹没"，
 必须真解析 gguf。
+
+## 35. 用户实测四项：三项落地，第四项（turbo）与风扇目标反向（2026-10-08 下午）
+
+用户实际使用的三条反馈：
+
+```
+电影      风扇不狂转
+播客      风扇狂转            ← 体感目标二在这条上失败
+插件      终止后端后再按开始，启不动   ← 真 bug，本节查到根因
+```
+
+### 35.1 「插件停了起不来」的根因：装着的宿主 exe 是 10-01 的旧代码
+
+```
+scripts\native-host\translation-native-host.exe   2026/10/01 10:03:30
+scripts\native_host.py                           2026/10/01 13:52:25   ← 晚 4 小时
+.gitignore:6 → scripts/native-host/                            ← 本地产物，从不入库
+```
+
+`git log` 显示 exe 之后有两次改动 `native_host.py`，**一次都没进 exe**：
+
+```
+6651665  10-01 10:04  Fix native host startup path and registration
+65591a1  10-06 16:24  Snapshot before caption-hold tuning   ← 关键
+```
+
+`65591a1` 加的正是这个函数：
+
+```python
++def wait_for_existing_backend() -> dict | None:
++    """Wait for a backend already opening either port instead of duplicating it."""
++    ...
++    existing = wait_for_existing_backend()
++    if existing is not None:
++        return existing
+```
+
+**机制**：`stop_backend()` 的 `taskkill /T /F` 是异步的，llama-server(8080) 与
+server(8765) 死得不同步。旧版 `start_backend` 只看 `backend_ready()`（要求**两个
+端口同时**应答），窗口期里它会认为"没在跑"于是 spawn 一份新的；新的 llama-server
+绑不上 8080 就退出，而 `backend_ready()` 又因**旧进程还在应答**而返回 ok——
+于是"看起来启动了、其实翻译发不出去"。新版先等旧后端就绪，不重复 spawn。
+
+`tests/test_native_host.py` 里 `wait_for_existing_backend` 的两个测试一直通过，
+**测试测的是源码，跑的是 exe**。源码有测试不等于部署物有。
+
+**⚠️ 这条本身是一条方法论结论**：`scripts/native-host/` 被 gitignore，
+所以"重建 exe"这件事没有任何东西会提醒你做。**改了 `native_host.py` 必须重建 exe。**
+
+### 35.2 决定①「抽掉额外加的滤波器」：没有可抽的东西
+
+全仓（`server/` + `scripts/` + `tools/` + `extension/`）搜
+`highpass|lowpass|butterworth|sosfilt|firwin|lfilter|scipy.signal|bandpass|notch|apply_filter|denoise|webrtcvad|audioop.|ratecv`
+= **零命中**，`requirements.txt` 里也没有 scipy / noisereduce / webrtcvad。
+
+**不是"抽掉"，是从来没有。**最像记忆里那个东西的是 `vad.py` 的
+`NON_SPEECH_GAIN = 0.0`（压掉非语音帧），但它不是滤波器，且属 VAD——决定②说不动 VAD。
+
+### 35.3 决定③：后端**要**改，扩展侧只是加控件
+
+先更正我中途的一句话：**`partial_interval_ms` 的热切原先只在 UDP 路径上**
+（`_listen_caption_state`，字幕窗那个开关）。扩展走的 WebSocket `config` 分支
+只读 `audioOnly` / `language` / api 字段，**这个字段被接受然后丢掉**——不报错，
+控件就是没反应。扩展现在拥有控件，WebSocket 是用户唯一会走的路，所以：
+
+```python
+# server/ws_server.py，config 分支
+if data.get("partial_interval_ms"):
+    _switch_partial_interval(int(data["partial_interval_ms"]))
+```
+
+字幕窗的黑框 UI 未动。扩展里加的是两个按钮（`extension/popup.html` 的 `.cadence`），
+值存 `chrome.storage.local`，所以**下次开始也带着**，不是只在运行中有效。
+
+### 35.4 决定④ turbo：能跑、给全句，但**把风扇问题变严重了**
+
+`Hy-MT2` + turbo 在 4096 MiB 卡上装得下：
+
+```
+nvidia-smi  3619 / 4096 MiB   75~77°C   91.10 W   util 93%
+```
+
+`er_3min` 回放（205.8s）：
+
+```
+asr_ms                     n=215  p50=821  p90=921  p99=1074  max=1296
+asr share of wall clock    96.0%  (179.8s / 187.2s)
+asr >250ms                 215/215 (100%)
+pipeline.drop              366
+ttft_ms                    n=197  p50=41.1
+e2e_first_tr_to_paint      n=16   p50=495   p90=1918   >1000ms 6/16 (38%)
+sentences with a final translation   16/16
+coverage (prefix match)    41/49 (84%)
+```
+
+**好的一面**：16/16 全部拿到最终译文，prefix 覆盖 84%，识别质量明显到位。
+
+**坏的一面，而且正是用户在意的那面**：
+
+```
+asr share of wall clock 96.0%   ← ASR 把整台机器占满了
+asr >250ms 100%                  ← 每一次 partial 都超过节奏
+91W / 75~77°C                    ← 对比同一台机器空载 10.6W
+```
+
+**turbo 单次 ASR 约 821ms，而 partial 节奏是 250ms。**它结构上跟不过来——
+队列 qlen p90=3、丢 366 次就是这个后果。
+
+### 35.5 ⚠️ 但我**不能**说 turbo 比 small 差多少：small 那边没有可用基线
+
+唯一同素材的 small 数据 `logs/v1-er_3min.*` **不可用**：
+
+```
+窗口只有 20.9s   asr n=34   最终句 32/42   coverage 10%
+而且启动时 GPU 上有别人的进程：
+  18104  ...\studio\extensions\backends\llama.cpp\...\llama-server.exe
+```
+
+**一条被别人占着显存的 20.9s 片段不是基线。**所以 REPORT 里现在只有 turbo 自己的
+数字，**没有 turbo↔small 的差值**。要那个差值得在干净的卡上重跑 small。
+
+### 35.6 一个必须说清的前提：用户报的是播客，我测的是电影
+
+```
+用户说风扇狂转的素材：播客（密集人声）
+我测的素材：          er_3min（电影，有音乐）
+```
+
+**这是两个不同的负载。**播客的 ASR 调用率更高（`meeting_6min` 测到 171 paint/分），
+所以 turbo 在播客上只会更糟，不会更好。
+
+**结论直接写**：④ 换 turbo **加剧**了体感目标二（风扇），而不是缓解它。
+**turbo 与 250ms 节奏不兼容**——它需要更慢的 partial 节奏才可能划算，
+而那正是 #4（250→750）。**turbo + 750 才是自洽的组合**，不是 turbo 单独。
+
+### 35.7 pysbd 分句：这个设计**不是好东西**，理由是它与体感目标反向
+
+用户问"分句是不是好东西"。逐条对照事实：
+
+**支持的理由是真的**：`pipeline.py` 里**没有任何切句**（`split|sentence|clause|punct`
+只命中注释与常量名），一段 ASR 就是一段译文，所以翻译单元常常是半句；
+hy-mt2 是在句子级语料上训的，喂半句就出不了好译文。
+
+**但反对的理由更硬，而且只有一条就够**：
+
+```
+分句要求先知道"这句话结束了"才能翻。
+⇒ 翻译必须等句末。而句末要等停顿或等 VAD 收尾。
+⇒ 直接打在「慢半句」上——这是三个体感目标里最硬的那个。
+```
+
+**它在质量上赢，在延迟上输，而延迟正是这个项目的目标函数。**
+
+**唯一对齐的用法是放在 final 路径，不放 partial 路径**：
+
+```
+partial  保持现状（照旧逐段翻，为了活）
+final    VAD 收尾后把整段用 pysbd 切开，逐句翻
+```
+
+这样质量提升不付延迟代价——final 本来就是批量的。**但它治不了撤回**，
+因为撤回发生在 partial 阶段的反复改口上。所以：
+
+```
+pysbd 放 final  = 质量杠杆，不花钱，可做，但不是 #20 的解
+pysbd 放 partial = 延迟代价，直接违背体感目标，不做
+```
+
+而且 `pysbd` **不在 `requirements.txt` 里**，要新增依赖——它现在只是"未装"，
+不是"装了不好"。**先别装。**
+
+### 35.8 顺手补的一个真缺口：meta 里没有 ASR 模型名
+
+`turbo-er` 这个臂名是我起的，**但 meta 里没有任何字段能证明 turbo 真的跑了**——
+`thresholds` 只覆盖可调项，ASR 模型是个路径不是阈值。这与"12 个 MTP 开全部是关的"
+是同一个形状：**名字代替事实**。已把 `asr_model` / `asr_fallback` 加进 meta 的
+`thresholds` 字典（`replay.ps1:356`），以后读 `asr_model`，不读臂名。
