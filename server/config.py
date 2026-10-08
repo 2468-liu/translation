@@ -207,15 +207,32 @@ CHAINS = {
     },
     "gemma-e2e": {
         "label": "音频直出（一个模型同时听和译）",
-        "status": "not implemented",
+        "status": "implemented, measured, rejected on music-backed material",
         "asr_backend": None,
         "qwen3_port": 0,
-        "measured": "not measured",
-        "caveat": "unlocked by GPU compute, not by more of this card: 4GB is the binding "
-                  "constraint",
+        "measured": "works on clean narration: blog_3min, 12.48s clip, four sentences "
+                    "all correct. Degrades on music: er_3min mostly right, e_3min broken "
+                    "-- \"I reckon we should call it a day.\" heard by whisper and "
+                    "misheard by the Gemma4 audio encoder as 大鸟",
+        "caveat": "rejected on this material, not on the card. REPORT 25.3 ruled out MTP, "
+                  "layer split, projector placement, three prompts, five sample rates, "
+                  "five clip durations and five gains by single-variable comparison; the "
+                  "boundary is the model's audio understanding on speech under music "
+                  "(crest 18.5dB blog / 13.4dB er / 12.9dB e_3min), not configuration",
     },
 }
-IMPLEMENTED_CHAINS = tuple(n for n, s in CHAINS.items() if s["status"] != "not implemented")
+# Whether start.ps1 can start it, which is not the same question as whether it is any
+# good. gemma-e2e can be started and was measured; it lost on material with music under
+# the dialogue. It is excluded here only because start.ps1 has no branch for it, and the
+# reason it is excluded is a missing branch rather than a missing implementation --
+# the pipeline path exists (server/pipeline.py _run_audio_native) and start.ps1 has a
+# 132-line gemma4 branch that this switch does not reach.
+STARTABLE_CHAINS = tuple(n for n, s in CHAINS.items() if s["status"] != "not implemented")
+# Tested at least once, which is every entry here. Kept separate from STARTABLE_CHAINS
+# because a chain that was measured and rejected must not read as one that was never
+# tried: that is the claim I made about gemma-e2e in the first version of this table, and
+# the user had it in front of them.
+MEASURED_CHAINS = tuple(CHAINS)
 QWEN3_ASR_PORT = CHAINS["qwen3-hy"]["qwen3_port"]
 
 # VAD

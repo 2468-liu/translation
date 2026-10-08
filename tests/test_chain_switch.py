@@ -144,16 +144,39 @@ class ChainTableTests(unittest.TestCase):
             for field in ("label", "status", "asr_backend", "qwen3_port", "measured"):
                 self.assertIn(field, spec, f"{name} is missing {field}")
 
-    def test_the_unimplemented_chain_is_excluded_from_implemented(self):
-        """Which is the single fact that decides whether the dropdown offers it."""
-        self.assertNotIn("gemma-e2e", config.IMPLEMENTED_CHAINS)
-        self.assertEqual(config.CHAINS["gemma-e2e"]["status"], "not implemented")
-        self.assertEqual(set(config.IMPLEMENTED_CHAINS),
-                         {"whisper-hy", "qwen3-hy"})
+    def test_gemma_e2e_is_measured_not_unimplemented(self):
+        """Implemented, measured, and rejected -- three different facts from the two the
+        first version of this table said.
 
-    def test_the_unimplemented_chain_has_no_backend_rather_than_a_wrong_one(self):
-        """None, not "whisper". Mapping it onto a working engine would make an
-        unimplemented chain indistinguishable from an implemented one."""
+        The evidence that was not checked before writing "not implemented": pipeline.py
+        has _run_audio_native, ws_server branches on AUDIO_NATIVE=1, start.ps1 has a
+        132-line gemma4 branch, two arms ran with audio_native=true on llama 2.47.0
+        (pw-audio-a-r1 and -r2, 42 and 44 completions under audio.ttft/audio.total), and
+        REPORT sections 15, 21 and 25 are about this path. It works on clean narration and
+        loses on speech under music. "Not implemented" sent the next reader looking for
+        code that was already written.
+        """
+        spec = config.CHAINS["gemma-e2e"]
+        self.assertNotIn("not implemented", spec["status"])
+        self.assertIn("measured", spec["status"])
+        self.assertIn("blog_3min", spec["measured"])
+        self.assertIn("e_3min", spec["measured"])
+        # Rejected on the material, not on the card -- that distinction decides whether
+        # better hardware is worth anything here.
+        self.assertIn("not on the card", spec["caveat"])
+
+    def test_measured_and_startable_are_different_questions(self):
+        """Every chain here has been run at least once. Whether start.ps1 can start it is
+        a separate property, and conflating them is what produced the error above."""
+        self.assertEqual(set(config.MEASURED_CHAINS), set(config.CHAINS))
+        self.assertIn("gemma-e2e", config.MEASURED_CHAINS)
+        self.assertIsInstance(config.STARTABLE_CHAINS, tuple)
+        self.assertIsInstance(config.MEASURED_CHAINS, tuple)
+
+    def test_gemma_e2e_has_no_asr_backend_because_there_is_no_separate_recogniser(self):
+        """None, and for the right reason: one model does both jobs, so there is no ASR
+        backend to name. Not "whisper" -- that would make a chain which cannot run this
+        way look like one that runs on the wrong setting."""
         self.assertIsNone(config.CHAINS["gemma-e2e"]["asr_backend"])
 
     def test_the_qwen3_port_is_named_in_one_place(self):
@@ -208,22 +231,29 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.host = (ROOT / "scripts" / "native_host.py").read_text(encoding="utf-8")
         self.start = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
 
-    def test_the_select_offers_exactly_the_implemented_chains(self):
+    def test_the_select_offers_what_start_can_start(self):
         """A chain in the dropdown that start.ps1 refuses would be a control that
-        selects a value the backend then throws on. The unimplemented one is listed
-        but disabled, so the reason it is not available is visible rather than absent.
+        selects a value the backend then throws on.
+
+        gemma-e2e is listed and disabled rather than absent, and its label has to say
+        why. The reason is not "not implemented" -- it is implemented and measured and
+        loses on music-backed material, which is a different sentence and a different
+        thing for the next reader to conclude.
         """
         declared = set(config.CHAINS)
-        implemented = {"whisper-hy", "qwen3-hy"}
-        self.assertEqual(declared - implemented, {"gemma-e2e"},
+        offered = {"whisper-hy", "qwen3-hy"}
+        self.assertEqual(declared - offered, {"gemma-e2e"},
                          "a new chain needs a dropdown row and a start.ps1 branch")
         self.assertIn('id="chainSelect"', self.popup)
-        for chain in implemented:
+        for chain in offered:
             self.assertIn(f'value="{chain}"', self.popup)
-        for chain in declared - implemented:
+        for chain in declared - offered:
             self.assertIn(f'value="{chain}" disabled', self.popup)
+        # The label must not claim it was never built.
+        row = [l for l in self.popup.splitlines() if 'value="gemma-e2e"' in l][0]
+        self.assertNotIn("未实现", row)
 
-    def test_start_ps1_refuses_the_unimplemented_chain_by_name(self):
+    def test_start_ps1_refuses_the_chain_it_cannot_start(self):
         self.assertIn("gemma-e2e", self.start)
         self.assertIn("未实现的链路", self.start)
 

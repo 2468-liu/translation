@@ -186,7 +186,7 @@
     <select id="chainSelect">
       <option value="whisper-hy">whisper 识别 + 混元翻译（默认，端到端最快）</option>
       <option value="qwen3-hy">Qwen3-ASR 识别 + 混元翻译（识别快 5.9 倍，但改口多 2.9 倍）</option>
-      <option value="gemma-e2e" disabled>音频直出（未实现，卡在 4GB 卡的预填充）</option>
+      <option value="gemma-e2e" disabled>音频直出（已实测：干净旁白可用，对白压在配乐下会崩）</option>
     </select>
     <p class="hint" id="chainHint">切换会重启后端，大约 10 秒；字幕会中断一下。切不过去会自动回退。</p>
   </div>
