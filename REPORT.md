@@ -4275,3 +4275,133 @@ relationship it does not have.
 
 `why`, `waiting` and `idle` stay, since they are what made the two causes separable.
 The 600 experiment left only the comments and the test. 208 tests pass.
+
+## 43. Wrap-up: what ships, and the three things left on hooks
+
+### The default combination
+
+`whisper-hy` at `PARTIAL_INTERVAL_MS` 750. It is the only combination measured end to
+end on real material on this card, and it is the only one whose first-translation-to-paint
+is 55ms.
+
+```
+asr p50                 829ms      over a 250ms budget on 100% of calls
+asr share of wall clock  57.1%      on samples/lecture_mix.wav
+e2e first-tr-to-paint    55ms p50   4/16 over 1s
+enqueue_qlen p90         1
+coverage                 24/25 (96%)
+```
+
+750 rather than 250 because at 250 turbo overran the cadence on every one of 215 calls, and
+at 750 the transcripts stop being fragments: median 19 characters, 71% over 10, only 4.4%
+under 5. The cost is 52ms of first-line delay on the same material. **750 is what makes the
+default usable, not what makes it good.**
+
+### Three hooks, and why each one is a hook
+
+| not adopted | where it lives | what would unlock it |
+|---|---|---|
+| Qwen3-ASR | `ASR_BACKEND`, chain `qwen3-hy` | a display layer that survives 2.9x more revisions, or a revision cap |
+| audio-native | chain `gemma-e2e`, refused by name | GPU compute. 4GB is the binding constraint |
+| Hy-MT2 StreamRevise-v4 | `models/_candidates/` | a measurement, since none exists |
+
+All three are reachable from one dropdown. The unimplemented one is listed and disabled
+rather than absent, because the reason it is unavailable is worth reading.
+
+### The chain is the whole pipeline
+
+Calling the dropdown "ASR engine" would have described it wrongly and would have made a
+fourth option look like a fourth engine. `gemma-e2e` is not an engine at all -- it removes
+the translator process. So the unit is the chain: which models, which ports, which
+llama builds.
+
+The table lives in `server/config.py`, not `runtime.json`, and that is the second attempt.
+It was written into `runtime.json` first, which is gitignored because it holds this
+machine's absolute paths to llama builds. The consequence was eleven tests passing on the
+working tree and failing on a clean checkout, because **the defaults for a shipped
+configuration were living in a file that is not shipped**. Verified by cloning: 230 pass,
+3 skip, with no `runtime.json` present.
+
+### Switching is a teardown, and it can fail back
+
+Full stop-and-start rather than a live swap, because "which processes should survive a
+chain change" is a question that has to be re-answered every time a chain gains a model.
+Two actions cannot be wrong that way.
+
+Three requirements were written down before the code, and each exists because its absence
+would have been worse than the bug it prevents:
+
+  **A fixed kill scope.** The three ports this project owns, plus a live pid file. Never
+  every llama-server on the machine -- that would stop an LM Studio chat model and nothing
+  here would report it as a failure. A test asserts no kill line mentions an image name,
+  because widening it to one is a one-line change nobody would notice.
+  **Three states in the UI.** Switching, ready, failed. No feedback reads as a dead
+  control, and the user clicks again into a restart already in flight.
+  **Rollback.** A chain that will not start restores the previous one. Without it,
+  recovering from a click meant opening `runtime.json` by hand. The popup is told
+  `rolled_back` and puts the dropdown back on what is actually running.
+
+Logs are flushed by waiting for the ports to close, not by asking the process to flush, so
+the tail of `llama*.err` can be lost on a deliberate kill. Accepted and documented rather
+than solved: a truncated tail after a kill is not a fault worth a shutdown hook.
+
+Measured end to end, both directions: whisper-hy to qwen3-hy in 16s with `Qwen3-ASR ready
+on 8099`, and back in 13s with 8099 closed. `netstat` is used for the port lookup because
+`Get-NetTCPConnection` is CIM underneath and CIM is refused in a confined session -- a
+probe that cannot run reads as a probe that passed.
+
+### Two UI changes
+
+The ms readout is gone from the caption window. It was honest feedback, fed by `ack_switch`
+so it showed what the server applied rather than what the extension asked for. That argument
+does not survive a continuous control: confirming a choice you just made, by eye, while
+watching, is not what a slider is for. **The ack still lands, recorded as state and never
+drawn** -- dropping it would make a control that lands silently.
+
+The cadence is a 250-1000 slider in 50ms steps. Both ends are measured rather than chosen:
+below 620ms the caption hold floor stops clamping anything, so a lower bound would offer a
+setting that cannot change the output; above 1000ms only first-line delay grows. The send
+path clamps too, because a stored value from an older build can be anything and the server
+applies what arrives.
+
+### Seven tests that were passing by accident
+
+Raising the default cadence to 750 broke seven, none of which had changed behaviour:
+
+`test_vad` built splitters with no `tuning`, so they inherited `PARTIAL_INTERVAL_MS`, and
+their 288ms utterances only produced a partial while it was 250. They now name the cadence
+they need, and a test asserts the helper's value stays below the shortest utterance those
+tests use -- otherwise the same failures come back wearing the costume of a regression.
+
+`test_whisper_tuning_still_emits_partials` was the worse one. It asked about the shipped
+tuning and then used an utterance the shipped tuning cannot reach, so **it asserted
+something the product does not do**. It now uses 1024ms and asserts that length exceeds the
+shipped cadence, so a future default raise fails there with a reason rather than as a
+`StopIteration` further down.
+
+And `test_a_very_short_line_falls_to_the_floor` asserted the floor value rather than how
+the floor participates, so it failed on the 800 to 600 change that was the entire point.
+It now asserts the expression, and a new test fails if the floor drops to where it cannot
+bind -- at 600 it clamped nothing at all, which is how a floor change looked harmless on
+the metric while costing 180ms of real readability on every short line.
+
+### Where the numbers stopped being free
+
+`start.ps1` defaults to the newest installed llama, and every measurement in this file was
+taken on 2.47.0. That is now a deliberate choice rather than a drift: the pinned path is an
+explicit field, `-UsePinned` returns to it, and the two-model chain runs 2.47.0 for hy-mt2
+and 2.53.0 for Qwen3 because that is the combination measured. `runtime.json` keeps its
+dead fields under `_deprecated` with a date, because the value of `llama_server` naming an
+uninstalled build is the answer to "why is 2.33.0 in here", and that answer is a date.
+
+## 两条方法论，写给下一个读这份报告的人
+
+**一、拿巧合当证据。** 选 600 那个旋钮的理由是「`waiting p50` 实测 808ms，而地板是 800」——两个数挨得那么近，读起来像因果。**它不是。** `hold_ms` 只是 deadline 的**候选之一**，而 `waiting` 测的是**余量**：两次运行的 `waiting` **最小值是 54ms 和 157ms**。两个数相邻不等于一个解释另一个。
+
+这与「拿延迟曲线读前缀缓存命中率」同形：把一个数放在另一个数旁边，就当成了关系。**判据：问「如果 A 消失，B 会变吗」，而不是「A 和 B 数值接近吗」。**
+
+**二、换引擎要看整条链路。** Qwen3 的引擎指标 p50 好了 **5.9 倍**，e2e 反而**差 4~8 倍**。两个数都真实，**单看任一个都会得出反向的结论**。
+
+而且我第一版写的「瓶颈转移到翻译」也是错的——翻译队列是空的。真实机制是**改口次数 ×2.9 让字幕重写成为限制**。**台账写错方向，下次就会按错的方向排查，走一遍已经走过的弯路。**
+
+判据：**任何「换掉 X 会更快」的结论，必须在 e2e 上验，而不是在 X 的指标上验。**如果 e2e 变差，正确结论是「X 的更快没有意义」，不是「Y 成了新瓶颈」——后者需要单独测量，不是前者自动推出的。
