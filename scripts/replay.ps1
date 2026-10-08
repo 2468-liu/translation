@@ -379,9 +379,42 @@ if (-not $liveCmd -and ($env:TRANSLATION_EXPECT_DRAFT -or $env:TRANSLATION_EXPEC
         "whether it loaded a draft or a projector cannot be verified; refusing to record " +
         "this run as if the check had passed")
 }
+# mtp_draft answers one narrow question: is a separate draft MODEL FILE loaded?
+# That is the Gemma-style path, --model-draft <file>.
+#
+# It is not the same question as "is speculative decoding on". llama.cpp also
+# enables MTP through --spec-type draft-mtp, which names no file at all -- so
+# hy-mt2 running with MTP records draft=False here while MTP is actually on, and
+# the meta reads like a settled fact. Same failure as the arm name one level
+# down: the field name says what it measures, and what it measures is narrower
+# than what a reader will assume.
+#
+# spec_args below covers both spellings. Read that one for "was speculative
+# decoding enabled at all"; read mtp_draft only when the separate-file path is
+# specifically what is meant.
 $draftLoaded = [bool]($liveCmd -and $liveCmd -match "model-draft")
+
+# Every speculative-decoding flag the serving backend was launched with, value
+# included where one follows. Both ways of turning it on:
+#   --model-draft <file>     Gemma-style, a separate draft model
+#   --spec-type draft-mtp    hy-mt2-style, no file, named by type
+# Empty array when there are none, and null when the command line could not be
+# read -- the same distinction process_state_readable already makes, and for the
+# same reason: "we could not look" is not "it was off".
+$specArgs = $null
+if ($liveCmd) {
+$specArgs = @()
+$tokens = @($liveCmd -split '\s+' | Where-Object { $_ })
+for ($i = 0; $i -lt $tokens.Count; $i++) {
+if ($tokens[$i] -like "--spec-*" -or $tokens[$i] -like "--model-draft") {
+$specArgs += $tokens[$i]
+$nxt = if ($i + 1 -lt $tokens.Count) { $tokens[$i + 1] } else { "" }
+if ($nxt -and -not $nxt.StartsWith("-")) { $specArgs += $nxt }
+}
+}
+}
 $mmprojLive = if ($liveCmd -and $liveCmd -match "--mmproj-device\s+(\S+)") { $Matches[1] } else { "unset" }
-Write-Host "### backend as launched: draft=$draftLoaded mmproj-device=$mmprojLive$(if (-not $liveCmd) { ' (command line unreadable)' })"
+Write-Host "### backend as launched: draft-file=$draftLoaded spec-args=$($specArgs -join ' ') mmproj-device=$mmprojLive$(if (-not $liveCmd) { ' (command line unreadable)' })"
 if ($env:TRANSLATION_EXPECT_DRAFT -eq "1" -and -not $draftLoaded) {
     throw "$Name wanted a draft model loaded and the serving llama-server has none"
 }
@@ -434,7 +467,18 @@ try {
     # session). null is honest and false is not: "no draft was loaded" and "we
     # could not find out" are different facts, and the meta is read later by
     # someone deciding whether two runs are comparable.
+    #
+    # SCOPE: this is the Gemma-style separate draft FILE only (--model-draft). It
+    # is NOT "was speculative decoding on". llama.cpp also enables MTP through
+    # --spec-type draft-mtp, which names no file, so hy-mt2 with MTP on records
+    # mtp_draft=false here. Use spec_args for that question.
     mtp_draft = if ($liveCmd) { $draftLoaded } else { $null }
+    # Every --spec-* flag plus --model-draft, value included where one follows.
+    # Read this to know whether speculative decoding was enabled at all, on either
+    # backend; read mtp_draft only when the separate-file path is what is meant.
+    # Empty array means "launched with none"; null means "could not read the
+    # command line", which is a different claim.
+    spec_args = $specArgs
     mmproj_device_live = if ($liveCmd) { $mmprojLive } else { $null }
     process_state_readable = [bool]$liveCmd
     thresholds = ($effective -join "").Trim()
