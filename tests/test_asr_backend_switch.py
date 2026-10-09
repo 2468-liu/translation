@@ -71,6 +71,22 @@ class Qwen3ReplyFramingTests(unittest.TestCase):
         self.assertEqual(asr_mod.parse_qwen3_asr("language Chinese<asr_text>x")[1], "zh")
         self.assertEqual(asr_mod.parse_qwen3_asr("language Japanese<asr_text>x")[1], "ja")
 
+    def test_colon_prefix_stripped_and_language_read(self):
+        text, lang, conf = asr_mod.parse_qwen3_asr("language: Japanese\nこんにちは")
+        self.assertEqual(text, "こんにちは")
+        self.assertEqual(lang, "ja")
+        self.assertEqual(conf, 1.0)
+
+    def test_language_code_mappings_are_comprehensive(self):
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["ja"], "Japanese")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["zh"], "Chinese")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["en"], "English")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["ko"], "Korean")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["fr"], "French")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["de"], "German")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["es"], "Spanish")
+        self.assertEqual(asr_mod._CODE_TO_FULL_LANG["ru"], "Russian")
+
     def test_empty_answer_scores_zero(self):
         _, _, confidence = asr_mod.parse_qwen3_asr("language English<asr_text>")
         self.assertEqual(confidence, 0.0)

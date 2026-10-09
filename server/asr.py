@@ -96,43 +96,100 @@ class AsrEngine:
 
 
 _LANG_NAMES = {
-    "english": "en", "chinese": "zh", "mandarin": "zh", "spanish": "es",
-    "french": "fr", "german": "de", "japanese": "ja", "korean": "ko",
-    "russian": "ru", "portuguese": "pt", "italian": "it", "arabic": "ar",
-    "turkish": "tr", "croatian": "hr", "hindi": "hi", "dutch": "nl",
+    "chinese": "zh", "mandarin": "zh", "cantonese": "zh",
+    "english": "en", "japanese": "ja", "korean": "ko",
+    "spanish": "es", "french": "fr", "german": "de",
+    "russian": "ru", "portuguese": "pt", "italian": "it",
+    "arabic": "ar", "turkish": "tr", "vietnamese": "vi",
+    "thai": "th", "indonesian": "id", "hindi": "hi",
+    "dutch": "nl", "polish": "pl", "swedish": "sv",
+    "czech": "cs", "hungarian": "hu", "romanian": "ro",
+    "ukrainian": "uk", "greek": "el", "hebrew": "he",
+    "malay": "ms", "persian": "fa", "urdu": "ur",
+    "tamil": "ta", "croatian": "hr",
 }
-_CODE_TO_FULL_LANG = {v: k.capitalize() for k, v in _LANG_NAMES.items()}
-_CODE_TO_FULL_LANG["zh"] = "Chinese"
+
+_CODE_TO_FULL_LANG = {
+    "zh": "Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "ru": "Russian",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ar": "Arabic",
+    "tr": "Turkish",
+    "vi": "Vietnamese",
+    "th": "Thai",
+    "id": "Indonesian",
+    "hi": "Hindi",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "sv": "Swedish",
+    "cs": "Czech",
+    "hu": "Hungarian",
+    "ro": "Romanian",
+    "uk": "Ukrainian",
+    "el": "Greek",
+    "he": "Hebrew",
+    "ms": "Malay",
+    "fa": "Persian",
+    "ur": "Urdu",
+    "ta": "Tamil",
+    "hr": "Croatian",
+}
 
 
 def parse_qwen3_asr(raw: str) -> tuple[str, str | None, float]:
     """Split the model's own framing off the transcript.
 
     Qwen3-ASR answers with a structured prefix before the text:
-
         language English<asr_text>I think you should go with your instincts.
+    or
+        language Japanese<asr_text>こんにちは
+    or without marker:
+        language: Japanese\nこんにちは
+    or bare text:
+        こんにちは
 
-    The language comes as a word, not a code, and the whole thing is one string, so
-    without this the pipeline would caption "language English" as if it were speech.
-    The separator is the reliable part; the language name is treated as advisory and
-    only used when it is one we know, because a wrong guess here would set the
-    recogniser's language for every later call.
+    This parser strips all metadata framing, extracts detected language,
+    and returns pure subtitle transcript text.
     """
-    marker = "<asr_text>"
-    if marker in raw:
-        head, text = raw.split(marker, 1)
-        text = text.strip()
-    else:
-        head, text = "", raw.strip()
+    if not raw:
+        return "", None, 0.0
+
     detected: str | None = None
-    lowered = head.strip().lower()
-    if lowered.startswith("language"):
-        name = lowered[len("language"):].strip().strip(".:")
+    text = raw.strip()
+
+    # 1. Standard Qwen3 <asr_text> marker
+    marker = "<asr_text>"
+    if marker in text:
+        head, body = text.split(marker, 1)
+        text = body.strip()
+        lowered = head.strip().lower()
+        if lowered.startswith("language"):
+            name = lowered[len("language"):].strip().strip(".:=")
+            for word, code in _LANG_NAMES.items():
+                if name.startswith(word):
+                    detected = code
+                    break
+        return text, detected, 1.0 if text else 0.0
+
+    # 2. Fallback prefix check (e.g. "language Japanese: ..." or "language: ja ...")
+    m = re.match(r"^language\s*[:=\s]?\s*([a-zA-Z]+)[\s:：\n]+(.*)$", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        name = m.group(1).lower()
         for word, code in _LANG_NAMES.items():
-            if name.startswith(word):
+            if name.startswith(word) or name == code:
                 detected = code
                 break
-    return text, detected, 1.0 if text else 0.0
+        text = m.group(2).strip()
+        return text, detected, 1.0 if text else 0.0
+
+    return text, None, 1.0 if text else 0.0
 
 
 def _pcm_bytes(audio: np.ndarray) -> bytes:
