@@ -1001,8 +1001,18 @@ class _Caption:
             return
         self.line = ""
         self._drawn_text = ""
-        self.visible = False
-        self.root.withdraw()
+        if self.text_only:
+            self.visible = False
+            try:
+                self.root.withdraw()
+            except (AttributeError, TclError):
+                pass
+        else:
+            # 有黑框模式：黑框保持在屏幕上，仅清除字幕文字，防止窗体反复隐藏/重新弹出产生闪烁
+            try:
+                self.canvas.delete("all")
+            except (AttributeError, TclError):
+                pass
         perf.emit("caption", "dismiss", why="timeout")
 
     def _broadcast_state(self, force: bool = False) -> None:
