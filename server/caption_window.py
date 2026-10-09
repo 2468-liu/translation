@@ -746,14 +746,35 @@ class _Caption:
             width=wrap,
         )
 
-    def _edges(self, event) -> tuple[bool, bool]:
+    def _edges(self, event) -> tuple[bool, bool, str]:
+        """Which edge the pointer is on: the right, the left, or neither.
+
+        The left edge used not to be here at all -- the test was only
+        `event.x >= width - EDGE` -- so the window could be dragged open from the right
+        and never from the left. Dragging the left edge has to move the window as well
+        as resize it, because the right edge is the one that should hold still; that is
+        why the side is returned rather than a bare "on a vertical edge" flag.
+
+        Returns ("left"|"right"|None) as the third element. Both edges can be true at
+        once on a window narrower than twice EDGE, and then the pointer is deeper into
+        one of them, which is the one it means.
+        """
         width = max(self.canvas.winfo_width(), 1)
-        return event.x >= width - EDGE, False
+        on_left = event.x <= EDGE
+        on_right = event.x >= width - EDGE
+        side = None
+        if on_left and on_right:
+            side = "left" if event.x < width - event.x else "right"
+        elif on_right:
+            side = "right"
+        elif on_left:
+            side = "left"
+        return side is not None, False, side
 
     def _hover(self, event) -> None:
         if self._resize_origin or self._drag:
             return
-        on_x, on_y = self._edges(event)
+        on_x, _on_y, _side = self._edges(event)
         if on_x:
             cursor = "sb_h_double_arrow"
         else:
@@ -763,32 +784,52 @@ class _Caption:
     def _press(self, event) -> None:
         if self.text_only and self.position_locked:
             return
-        on_x, on_y = self._edges(event)
+        on_x, on_y, side = self._edges(event)
         if on_x or on_y:
-            self._begin_resize(event, on_x, on_y)
+            self._begin_resize(event, side)
             return
         self._resize_origin = None
         self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
 
     def _press_resize(self, event) -> None:
-        self._begin_resize(event, True, False)
+        self._begin_resize(event, "right")
 
-    def _begin_resize(self, event, on_x: bool, on_y: bool) -> None:
+    def _begin_resize(self, event, side: str | None = "right") -> None:
         self._drag = None
-        if on_x:
+        if side:
             self.width_locked = True
         self.width = self.root.winfo_width()
         self.height = self.root.winfo_height()
-        self._resize_origin = (event.x_root, event.y_root, self.width, self.height, on_x, on_y)
+        self._resize_origin = (event.x_root, event.y_root, self.width, self.height, side,
+                               self.root.winfo_x())
+
+    def _resize_geometry(self, event) -> tuple[int, int, int, int] | None:
+        """(x, y, width, height) for a drag in progress, or None when there is none.
+
+        The right edge holds its screen position and the width follows the pointer. The
+        left edge does the opposite -- the right edge holds, so the width shrinks as the
+        pointer moves right and the window's x moves with it. That is why the origin
+        carries the window's x: without it a left-edge drag would resize from the wrong
+        anchor and the text would slide sideways while being dragged.
+        """
+        if not self._resize_origin:
+            return None
+        x0, _y0, width, height, side, origin_x = self._resize_origin
+        y = self.root.winfo_y()
+        if side == "left":
+            new_width = max(120, width - (event.x_root - x0))
+            return origin_x + (width - new_width), y, new_width, height
+        if side == "right":
+            return origin_x, y, max(120, width + event.x_root - x0), height
+        return None
 
     def _motion(self, event) -> None:
-        if self._resize_origin:
-            x0, y0, width, height, on_x, on_y = self._resize_origin
-            if on_x:
-                self.width = max(120, width + event.x_root - x0)
-            if on_y:
-                self.height = max(36, height + event.y_root - y0)
-            self.root.geometry(f"{self.width}x{self.height}")
+        geometry = self._resize_geometry(event)
+        if geometry is not None:
+            x, y, width, height = geometry
+            self.width = width
+            self.height = height
+            self.root.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
             self._paint()
             return
         if not self._drag:
@@ -798,6 +839,9 @@ class _Caption:
         self.root.geometry(f"+{x}+{y}")
 
     def _release(self, _event) -> None:
+        # Nothing to apply here: _motion already set the geometry on the last move, and
+        # re-applying it on release would resize a second time from a pointer that has
+        # already left the window.
         self._drag = None
         self._resize_origin = None
 
