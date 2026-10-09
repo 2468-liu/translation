@@ -185,11 +185,11 @@
     <p class="section-title">识别线路</p>
     <label for="chainSelect">线路</label>
     <select id="chainSelect">
-      <option value="whisper-hy">whisper 识别 + 混元翻译（默认，端到端最快）</option>
-      <option value="qwen3-hy">Qwen3-ASR 识别 + 混元翻译（识别快 5.9 倍，但改口多 2.9 倍）</option>
-      <option value="gemma-e2e">音频直出 Gemma4 E2B（实测：干净旁白可用，对白压在配乐下会崩）</option>
+      <option value="whisper-hy">whisper 识别 + 混元翻译（默认；流式字幕）</option>
+      <option value="qwen3-hy">Qwen3-ASR 识别 + 混元翻译（识别快 5.9 倍；块输出·按标点分块）</option>
+      <option value="gemma-e2e">音频直出 Gemma4 E2B（干净旁白可用，对白压在配乐下会崩；流式字幕）</option>
     </select>
-    <p class="hint" id="chainHint">切换会重启后端，大约 10 秒；字幕会中断一下。切不过去会自动回退。</p>
+    <p class="hint" id="chainHint">线路决定识别器和输出方式：whisper / 音频直出是流式，Qwen3 是块输出（子句到标点才上屏）。切换会重启后端，约 10 秒；字幕会自动回来。</p>
   </div>
   <div class="section">
     <p class="section-title">翻译设置</p>

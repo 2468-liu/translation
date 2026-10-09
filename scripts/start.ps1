@@ -615,5 +615,14 @@ try {
     Write-Note "runtime.json 的 chain_running 写不进去（$($_.Exception.Message)）；下拉会继续显示请求的链路"
 }
 
+# 把"实际在跑的路线"也交给进程环境。
+#
+# 输出方式是**路线的属性**（server/config.py 的 CHAINS[...]["output"]），而字幕窗、服务端
+# 都是另一个进程：它们要能自己查出这条路线声明的是哪一种，而不是自己比较识别器的名字。
+#
+# $ChainRunning 是**观测到的**值 —— 上面的回退分支改过它。用请求值会让"请求 qwen3-hy
+# 但回退到 whisper-hy"那次仍自称 qwen3，正是 AGENT §4 说的"臂的身份只能来自观测状态"。
+$env:TRANSLATION_CHAIN_RUNNING = $ChainRunning
+
 $env:PYTHONUNBUFFERED = "1"
 & $Python -m server

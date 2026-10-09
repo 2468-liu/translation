@@ -30,12 +30,17 @@ const CADENCE_STEP_MS = 50;
 
 let cadenceCommit = null;
 
-// A chain is the whole pipeline -- which models, which ports -- not one recogniser.
-// runtime.json holds the choice and native_host does the restart, so this widget only
-// asks and reports.
+// A chain is the whole pipeline -- which models, which ports, and which output mode --
+// not one recogniser. runtime.json holds the choice and native_host does the restart, so
+// this widget only asks and reports.
+//
+// The output mode is named here because it belongs to the line: 只有字/流式是显示层的事，
+// 而"块输出"只是 Qwen3 那条线路的属性（config.CHAINS[...]["output"]）。分开做成一个下拉
+// 会给出第二个可以设置它的地方，而两个开关里总会有一个在说谎。
 const CHAIN_LABELS = {
-  "whisper-hy": "whisper + 混元",
-  "qwen3-hy": "Qwen3-ASR + 混元",
+  "whisper-hy": "whisper + 混元（流式）",
+  "qwen3-hy": "Qwen3-ASR + 混元（块输出）",
+  "gemma-e2e": "音频直出 Gemma4（流式）",
 };
 
 function paintChain(chain, note) {

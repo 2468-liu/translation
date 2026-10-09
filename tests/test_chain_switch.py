@@ -261,6 +261,8 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.background = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
         self.host = (ROOT / "scripts" / "native_host.py").read_text(encoding="utf-8")
         self.start = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
+        self.config = (ROOT / "server" / "config.py").read_text(encoding="utf-8")
+        self.caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
 
     def test_the_select_offers_every_chain_start_can_start(self):
         """All three, because gemma-e2e is startable now.
@@ -283,6 +285,24 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         row = [l for l in self.popup.splitlines() if 'value="gemma-e2e"' in l][0]
         self.assertNotIn("未实现", row)
         self.assertIn("崩", row, "the label must carry the measured failure")
+
+    def test_the_output_mode_is_visible_as_part_of_the_line(self):
+        """流式/块状归并到线路：它不再是一个可以单独设置的下拉，而是线路的属性。
+
+        所以它必须**在线路名里看得见** —— 否则用户只能靠记忆知道 Qwen3 那条是块输出，
+        而这正是当初那个独立开关存在的理由（也是它说谎的地方）。
+        """
+        for chain, spec in config.CHAINS.items():
+            row = [l for l in self.popup.splitlines() if f'value="{chain}"' in l]
+            self.assertTrue(row, chain)
+            expected = "块输出" if spec["output"] == "block" else "流式"
+            self.assertIn(expected, row[0], f"{chain} 的输出方式没在线路名里")
+        # 显示层只读结论；两个可以设置它的地方是这一条要挡的东西。
+        self.assertIn("BLOCK_BY_PUNCT = BLOCK_OUTPUT", self.caption)
+        self.assertIn('"output": "block"', self.config)
+        self.assertIn('"output": "stream"', self.config)
+        # start.ps1 必须把**观测到的**路线交给进程环境，否则回退之后会自称 qwen3。
+        self.assertIn("$env:TRANSLATION_CHAIN_RUNNING = $ChainRunning", self.start)
 
     def test_start_ps1_refuses_a_chain_it_has_never_heard_of(self):
         """Unimplemented is not the same as unrecognised. gemma-e2e used to be caught by

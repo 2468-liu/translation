@@ -18,6 +18,7 @@ itself -- is checked against a stub window.
 
 import unittest
 import unittest.mock
+from pathlib import Path
 
 from server.caption_window import (
     CLAUSE_MAX_MS,
@@ -25,6 +26,9 @@ from server.caption_window import (
     introduces_boundary,
     punctuation_marks,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class BoundaryTests(unittest.TestCase):
@@ -62,6 +66,57 @@ class BoundaryTests(unittest.TestCase):
 
     def test_repeated_marks_are_kept_rather_than_deduplicated(self):
         self.assertEqual(punctuation_marks("你有。他。"), ("。", "。"))
+
+    def test_output_mode_is_a_property_of_the_route(self):
+        """流式/块状归并到三条路线：一条路线一处声明，别处只读结论。
+
+        它先是独立的 `TRANSLATION_BLOCK_BY_PUNCT` 开关，后来改成由识别后端派生，现在
+        声明在 `config.CHAINS[...]["output"]`。同一个行为有两个地方可以设置，就一定会有
+        一个在说谎 —— REPORT 58/59 那一周的日志就是两个开关打架的代价。
+        """
+        from server import config
+
+        for chain, spec in config.CHAINS.items():
+            self.assertIn("output", spec, f"{chain} 没有声明输出方式")
+            self.assertIn(spec["output"], ("stream", "block"), chain)
+        self.assertEqual(config.CHAINS["qwen3-hy"]["output"], "block")
+        self.assertEqual(config.CHAINS["whisper-hy"]["output"], "stream")
+        self.assertEqual(config.CHAINS["gemma-e2e"]["output"], "stream")
+        # 显示层只读结论，不再自己比较识别器的名字。
+        source = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
+        self.assertIn("BLOCK_BY_PUNCT = BLOCK_OUTPUT", source)
+        self.assertNotIn('BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"', source)
+
+    def test_the_declared_chain_wins_over_the_derived_one(self):
+        """`TRANSLATION_CHAIN_RUNNING` 是 start.ps1 观测到的值（回退之后就更新过）。"""
+        import importlib
+        import os
+
+        import server.caption_window as cw
+
+        cases = (
+            # (declared running chain, asr backend, expected BLOCK_BY_PUNCT)
+            ("qwen3-hy", "qwen3", True),
+            ("whisper-hy", "whisper", False),
+            # 回退之后导出的就是观测值，所以这里声明什么就是什么；
+            # "请求 qwen3 但实际 whisper" 由 start.ps1 在导出前改掉，不由这里猜。
+            ("qwen3-hy", "whisper", True),
+            ("gemma-e2e", "", False),
+        )
+        try:
+            for chain, backend, expected in cases:
+                with unittest.mock.patch.dict(os.environ, {
+                    "TRANSLATION_CHAIN_RUNNING": chain,
+                    "TRANSLATION_ASR_BACKEND": backend,
+                    "TRANSLATION_MT_BACKEND": "hy-mt2",
+                }):
+                    importlib.reload(importlib.import_module("server.config"))
+                    reloaded = importlib.reload(cw)
+                    self.assertIs(reloaded.BLOCK_BY_PUNCT, expected, f"{chain}/{backend}")
+        finally:
+            os.environ.pop("TRANSLATION_CHAIN_RUNNING", None)
+            importlib.reload(importlib.import_module("server.config"))
+            importlib.reload(cw)
 
     def test_block_mode_follows_the_recogniser(self):
         # whisper streams; qwen3 is the backend whose output was reported to rewrite

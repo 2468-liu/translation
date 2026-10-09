@@ -60,6 +60,13 @@ VAD        THRESHOLD 0.5 / MIN_SPEECH 250 / MIN_SILENCE 400 / PAD 120 / MERGE_WI
 切分       whisper 路：MAX_UTTERANCE 12000 / SOFT_CUT 5000ms 语音 + 200ms 停顿（vad.py:31/61-62）
            音频直出路：MAX_UTTERANCE 26000 / SOFT_CUT 12000 + 700（config.py:351-356）
 显示层     SETTLE 450 / HOLD_MIN 800 / HOLD_MAX 4200 / READABLE 0.7；SLIDE_MS 0（位移动画关）
+输出方式   **路线的属性**（`config.CHAINS[...]["output"]`），不是第二个开关：
+           whisper-hy 流式 ｜ qwen3-hy **块输出（按标点分块）** ｜ gemma-e2e 流式
+           谁在跑：优先读 start.ps1 导出的 `TRANSLATION_CHAIN_RUNNING`（**观测值**，回退之后也更新），
+           没有才按识别器/翻译器推 ⇒ 显示层只读 `config.BLOCK_OUTPUT`
+           ⚠ 独立的 `TRANSLATION_BLOCK_BY_PUNCT` 开关**已不存在**（§59.6 记的"默认改 0"是那个开关
+           时代的事；行为现在由路线决定，qwen3 那条自 cf2dbc0 起就是块状）
+           ⚠ "qwen3 需要块状"的前提是用户报的闪烁、**不是测量**；块状的代价量过（首字 +3.0s，REPORT 58.9）
 ```
 
 跑的是哪一版：启动日志含 `git_rev`；**llama 版本与 Python 环境在 `logs\start.log`**。
@@ -799,7 +806,7 @@ scripts/probe_caption_state_channel.py（真进程）：style(True)→1 帧 / �
    style(False)→1 帧 / **state? 且状态没变 → 1 帧**（连问两次两次都答）
 logs/popup_sync_probe.js（stub chrome 真跑 popup.js）：打开即问状态 / 点击发帧+写 storage /
    反向跟着走且不回发
-python -m pytest -q → 382 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+python -m pytest -q → 385 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
 ```
 
 **教训（同一天、同一处，改了三次方向）**
@@ -906,9 +913,9 @@ main / HEAD / gemma-audio  同指（已快进） ｜ 回退点 tag pre-merge-202
 `gemma-audio` 保留。**pytest（2026-10-07 晚）107 passed**（新增 `tests/test_translation_context.py` 8 条，
 钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）；此前 99 passed。
 `extension/` 与 Native Host 未变 ⇒ 主机无需重建（`start.ps1` 是文件调用，不在 exe 里）。
-**最近一次（2026-10-09 晚，UI↔字幕协调重做）：382 passed / 1 skipped / 10 failed** —— 10 条全在
+**最近一次（2026-10-09 晚，输出方式归并到路线）：385 passed / 1 skipped / 10 failed** —— 10 条全在
 `test_backend_cycle.py`，全是 DSH 沙箱拒写临时目录下的 `server.pid`，与改动无关。
-（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378 / 379 / 380。）
+（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378 / 379 / 380 / 382。）
 
 ## 实验日志（一行一条）
 

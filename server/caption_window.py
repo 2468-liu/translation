@@ -18,7 +18,7 @@ from tkinter import TclError
 from pathlib import Path
 
 from . import perf
-from .config import ASR_BACKEND, _env_int
+from .config import BLOCK_OUTPUT, _env_int
 from .translate import CHAR_RUN_MAX, CLAUSE_RUN_MAX, collapse_caption_repeats
 
 try:
@@ -110,16 +110,17 @@ CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
 #
 # The code stays because the switch, the instrumentation and the baselines do: the next
 # attempt has a comparison to make against rather than a blank page.
-# Derived from the recogniser rather than read from its own switch. Streaming is the
-# shipped behaviour; block mode is the response to Qwen3-ASR rewriting what it already
-# showed, which is why it belongs to that backend and not to a second dial that could
-# disagree with the first.
+#
+# 输出方式现在是**路线的属性**，声明在 config.CHAINS 里（whisper-hy / gemma-e2e 流式，
+# qwen3-hy 块状·按标点分块）。显示层只读结论，不再自己比较识别器的名字 ——
+# 这一步之前是"由识别后端派生"（cf2dbc0），再之前是一个独立的 TRANSLATION_BLOCK_BY_PUNCT
+# 开关；两个开关会打架，而打架的代价就是上面那几张表。
 #
 # Derived, not measured per backend: the block arm's cost (first-character p50 342ms
 # against a 37ms baseline) was measured on the whisper material, and the premise that
 # qwen3 needs block mode at all is the reported flicker rather than a measurement -- the
 # two arms are indistinguishable on every display-side metric that was recorded.
-BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"
+BLOCK_BY_PUNCT = BLOCK_OUTPUT
 
 # How long a dropped row or a moved block takes to settle. Zero means it does not move
 # at all: the line is drawn where it belongs the first time and no timer is armed.

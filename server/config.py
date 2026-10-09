@@ -210,6 +210,9 @@ CHAINS = {
         "label": "whisper 识别 + 混元翻译",
         "status": "whisper measured; translator weights swapped to a fine-tune, unmeasured",
         "asr_backend": "whisper",
+        # 输出方式归并到路线：流式。识别慢（p50 800ms+）、每次吐得少，
+        # 流式买到的是首字；块状在这条路上量过，代价是首字 37ms → 342ms（REPORT 58.9）。
+        "output": "stream",
         "qwen3_port": 0,
         "measured": "e2e first-translation-to-paint p50 55ms on samples/lecture_mix.wav at "
                     "partial 750; asr p50 829ms, 100% of calls over a 250ms budget, 57.1% "
@@ -230,6 +233,10 @@ CHAINS = {
         # synthetic material, coverage still behind and the tail heavier. REPORT 47/48.
         "status": "implemented, measured, indeterminate -- not adopted and not rejected",
         "asr_backend": "qwen3",
+        # 输出方式归并到路线：块状（按标点分割）。它吐字密、且会改写已经显示过的内容，
+        # 流式读作闪烁；子句到标点才上屏。⚠ 这条"需要块状"的前提是用户报的闪烁，
+        # 不是测量（两臂在所有已记录显示侧指标上分不开），而代价量过（REPORT 58.9）。
+        "output": "block",
         # The port Qwen3AsrEngine posts to. It is named here rather than in the engine
         # because three places have to agree -- the engine's default URL, the host's kill
         # scope and the server start -- and two agreeing is not enough.
@@ -269,6 +276,9 @@ CHAINS = {
         "label": "音频直出（一个模型同时听和译）",
         "status": "implemented, measured, rejected on music-backed material",
         "asr_backend": None,
+        # 输出方式归并到路线：流式。交付本身就是整句（没有可分的 partial），
+        # 标点分块在这条路上没有可切的东西。
+        "output": "stream",
         "qwen3_port": 0,
         "measured": "works on clean narration: blog_3min, 12.48s clip, four sentences "
                     "all correct. Degrades on music: er_3min mostly right, e_3min broken "
@@ -404,6 +414,37 @@ LOOPBACK_GAIN_MAX = float(os.environ.get("TRANSLATION_LOOPBACK_GAIN_MAX", "40.0"
 # the whole point of the switch: the audio-native branch and this one share
 # weights and nothing else.
 MT_BACKEND = os.environ.get("TRANSLATION_MT_BACKEND", "hy-mt2").strip().lower()
+
+
+# 输出方式（流式 / 块状）是**路线的属性**：一条路线一处声明（上面 CHAINS 里的 output），
+# 别处只读结论。它先是独立的 TRANSLATION_BLOCK_BY_PUNCT 开关，后来改成由识别后端派生
+# （cf2dbc0），现在归并进路线表 —— 理由两次都一样：同一个行为有两个地方可以设置，
+# 就一定会有一个在说谎，而 REPORT 58/59 那一周的日志就是两个开关打架的代价。
+#
+# 谁在跑：优先读 start.ps1 导出的 TRANSLATION_CHAIN_RUNNING —— 那是**观测到的**值，
+# 回退分支改过它；没有这个变量才按管线实际用的识别器/翻译器推。分辨"请求 qwen3-hy
+# 实际回退到 whisper-hy"正是这条存在的理由（AGENT §4：臂的身份只能来自观测状态）。
+#
+# 放在 MT_BACKEND 之后：它要读这个常量，而模块级赋值是自上而下执行的。
+def running_chain() -> str:
+    declared = os.environ.get("TRANSLATION_CHAIN_RUNNING", "").strip().lower()
+    if declared in CHAINS:
+        return declared
+    if MT_BACKEND == "gemma4":
+        return "gemma-e2e"
+    if ASR_BACKEND == "qwen3":
+        return "qwen3-hy"
+    return DEFAULT_CHAIN
+
+
+def chain_output(chain: str | None = None) -> str:
+    """'stream' or 'block' for a chain (default: the one running now)."""
+    spec = CHAINS.get(chain or running_chain(), CHAINS[DEFAULT_CHAIN])
+    return str(spec.get("output", "stream"))
+
+
+OUTPUT_MODE = chain_output()
+BLOCK_OUTPUT = OUTPUT_MODE == "block"
 
 # The Gemma translator runs as its own llama-server on its own port, because the
 # audio-native branch answers the same /v1/chat/completions shape and the two
