@@ -1,221 +1,417 @@
 <!doctype html>
-<meta charset="utf-8" />
-<title>实时字幕翻译</title>
-<style>
-  body {
-    margin: 0;
-    width: 360px;
-    font: 14px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
-    color: #28241d;
-    background: #fbf8ff;
-  }
-  main {
-    padding: 12px 14px 14px;
-  }
-  h1 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 700;
-  }
-  p {
-    margin: 4px 0 12px;
-    color: #777067;
-    font-size: 12px;
-  }
-  label {
-    display: block;
-    margin-bottom: 7px;
-  }
-  select, button, input[type="text"], input[type="password"], input[type="range"] {
-    width: 100%;
-    box-sizing: border-box;
-    font: inherit;
-  }
-  select, input[type="text"], input[type="password"] {
-    margin-bottom: 10px;
-    padding: 8px 10px;
-    border: 1px solid #d6cfc5;
-    border-radius: 10px;
-    background: #fff;
-  }
-  button {
-    border: 0;
-    border-radius: 10px;
-    padding: 10px;
-    background: #806900;
-    color: white;
-    cursor: pointer;
-  }
-  button.stop {
-    background: #9a4d3d;
-  }
-  button.secondary {
-    margin-top: 8px;
-    background: #31424a;
-  }
-  .media-card {
-    display: grid;
-    grid-template-columns: 48px 1fr auto;
-    gap: 10px;
-    align-items: center;
-    padding: 12px;
-    margin: 0 -2px 14px;
-    border-radius: 14px;
-    background: #f2ede8;
-  }
-  .media-art {
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
-    background: #d9c8a7;
-    color: #fff;
-    font-size: 22px;
-  }
-  .media-title {
-    margin: 0;
-    overflow: hidden;
-    font-weight: 650;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .media-subtitle {
-    margin: 2px 0 0;
-    color: #756d64;
-    font-size: 12px;
-  }
-  .section {
-    padding: 10px 2px 12px;
-    border-top: 1px solid #e6dcae;
-  }
-  .section-title {
-    margin: 0 0 9px;
-    font-size: 14px;
-    font-weight: 700;
-  }
-  .setting-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin: 9px 0;
-  }
-  .setting-row label {
-    margin: 0;
-  }
-  .switch {
-    width: 40px;
-    height: 22px;
-    margin: 0;
-    accent-color: #806900;
-  }
-  #fontColor {
-    width: 100%;
-    height: 24px;
-    padding: 0;
-    border: 1px solid #d6cfc5;
-    border-radius: 12px;
-    background: linear-gradient(90deg, #ffffff, #f4d35e, #ef8354, #d1495b, #7b2cbf, #0077b6, #2a9d8f, #1f2937);
-    cursor: pointer;
-  }
-  /* One slider rather than two buttons.
-     250 and 750 were the only two values ever offered and both were measured on
-     samples/blog_3min.wav, but the hold work showed the useful range is continuous:
-     the caption floor binds below 620ms and nothing binds above 1000ms because the
-     reference table tops out at 4200. Offering a continuum lets the next reader use
-     what was measured instead of re-picking from a menu of two. */
-  .cadence {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: center;
-    gap: 8px;
-  }
-  .cadence output {
-    font-variant-numeric: tabular-nums;
-    color: #4a443b;
-    min-width: 5.5ch;
-    text-align: right;
-  }
-  .hint {
-    margin: 6px 0 0;
-    color: #777067;
-    font-size: 12px;
-  }
-  #status {
-    min-height: 1.2em;
-    margin-top: 10px;
-    color: #6c645b;
-    font-size: 12px;
-  }
-  /* A failure has to survive. The status line used to be reset to 未开始 by the
-     refresh that ran in the same finally block, so every error was erased a few
-     milliseconds after it appeared -- indistinguishable from a dead button. */
-  #status.error {
-    color: #9a2f22;
-    font-weight: 600;
-  }
-</style>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>实时字幕翻译</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      --accent: #f59e0b;
+      --radius: 12px;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      width: 360px;
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background: var(--bg);
+      user-select: none;
+    }
+    main {
+      padding: 14px 16px 16px;
+    }
+    /* Header Card */
+    .header-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    }
+    .header-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.12);
+      font-size: 20px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .header-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .header-info h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+    .header-info p {
+      margin: 2px 0 0;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    #mediaState {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    /* Cards */
+    .card {
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      background: var(--card-bg);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 8px 0;
+    }
+    .setting-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+    /* Form controls */
+    label {
+      display: block;
+      margin: 8px 0 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    select, input[type="text"], input[type="password"] {
+      width: 100%;
+      height: 34px;
+      padding: 6px 10px;
+      margin-bottom: 8px;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      background: #ffffff;
+      font: inherit;
+      font-size: 12px;
+      color: var(--text-main);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    select:focus, input[type="text"]:focus, input[type="password"]:focus {
+      border-color: var(--primary);
+    }
+    /* Switch */
+    .switch {
+      position: relative;
+      width: 38px;
+      height: 22px;
+      margin: 0;
+      cursor: pointer;
+      accent-color: var(--primary);
+    }
+    /* Slider row */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 8px 0 2px;
+    }
+    .slider-row label {
+      margin: 0;
+    }
+    .pill-badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      background: #f1f5f9;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--primary);
+      font-variant-numeric: tabular-nums;
+    }
+    input[type="range"] {
+      width: 100%;
+      margin: 6px 0;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .cadence {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+    .cadence output {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-muted);
+      font-size: 12px;
+      min-width: 4.5ch;
+      text-align: right;
+    }
+    /* Color Row & Presets */
+    .color-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0 8px;
+    }
+    .color-presets {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .color-dot {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid #e2e8f0;
+      cursor: pointer;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+    .color-dot:hover {
+      transform: scale(1.15);
+      border-color: var(--primary);
+    }
+    #fontColor {
+      width: 32px;
+      height: 24px;
+      padding: 0;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+    /* Engine Badge */
+    .engine-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      font-size: 12px;
+      color: #334155;
+      font-weight: 500;
+    }
+    .engine-icon {
+      font-size: 14px;
+    }
+    /* Hints */
+    .hint {
+      margin: 4px 0 0;
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    /* Start / Stop Button */
+    #toggle {
+      width: 100%;
+      padding: 12px;
+      margin-top: 4px;
+      border: 0;
+      border-radius: var(--radius);
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+    }
+    #toggle:hover {
+      background: var(--primary-hover);
+    }
+    #toggle:active {
+      transform: scale(0.99);
+    }
+    #toggle.stop {
+      background: var(--danger);
+      box-shadow: 0 4px 10px rgba(220, 38, 38, 0.25);
+    }
+    #toggle.stop:hover {
+      background: var(--danger-hover);
+    }
+    #toggle:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    /* Status */
+    #status {
+      min-height: 1.4em;
+      margin-top: 10px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.4;
+      text-align: center;
+    }
+    #status.error {
+      background: #fef2f2;
+      color: var(--danger);
+      font-weight: 600;
+      border: 1px solid #fecaca;
+    }
+    /* Collapsible advanced area */
+    .chain-area {
+      display: none;
+    }
+  </style>
+</head>
+<body>
 <main>
-  <div class="media-card">
-    <div class="media-art">字幕</div>
-    <div>
+  <div class="header-card">
+    <div class="header-logo">译</div>
+    <div class="header-info">
       <h1>实时字幕翻译</h1>
-      <p class="media-subtitle">本地识别 · 系统回环 · 不修改网页</p>
+      <p>本地识别 · WASAPI系统回环 · 原生置顶</p>
     </div>
-    <span id="mediaState">●</span>
+    <div class="status-badge">
+      <span id="mediaState">●</span>
+    </div>
   </div>
-  <div class="section">
-    <p class="section-title">字幕显示</p>
-    <div class="setting-row"><label for="textOnly">只有字，不要背景</label><input class="switch" id="textOnly" type="checkbox" /></div>
+
+  <!-- Subtitle Display Settings -->
+  <div class="card">
+    <div class="card-title">
+      <span>🖥️ 字幕显示</span>
+    </div>
+    
+    <div class="setting-row">
+      <span class="setting-label">透明悬浮 (仅文字，隐藏底框)</span>
+      <input class="switch" id="textOnly" type="checkbox" />
+    </div>
     <p class="hint" id="captionStateHint"></p>
-    <div class="setting-row"><label for="audioOnly">仅音频，不显示字幕</label><input class="switch" id="audioOnly" type="checkbox" /></div>
-    <label for="fontSize">字号 <span id="fontSizeValue">20</span></label>
+
+    <div class="slider-row">
+      <label for="fontSize">字号大小</label>
+      <span class="pill-badge"><span id="fontSizeValue">20</span> px</span>
+    </div>
     <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
-    <label for="fontColor">字幕颜色</label>
-    <input id="fontColor" type="color" value="#ffffff" title="选择字幕颜色" />
-    <label for="cadenceSlider">改口节奏 <span id="cadenceValue">750</span> 毫秒</label>
+
+    <label>字幕颜色</label>
+    <div class="color-section">
+      <div class="color-presets">
+        <span class="color-dot" style="background:#ffffff;" data-color="#ffffff" title="纯白"></span>
+        <span class="color-dot" style="background:#fef08a;" data-color="#fef08a" title="明黄"></span>
+        <span class="color-dot" style="background:#7dd3fc;" data-color="#7dd3fc" title="天蓝"></span>
+        <span class="color-dot" style="background:#86efac;" data-color="#86efac" title="浅绿"></span>
+        <span class="color-dot" style="background:#fca5a5;" data-color="#fca5a5" title="珊瑚粉"></span>
+      </div>
+      <input id="fontColor" type="color" value="#ffffff" title="自定义颜色" />
+    </div>
+
+    <div class="slider-row">
+      <label for="cadenceSlider">改口节奏</label>
+      <span class="pill-badge"><span id="cadenceValue">750</span> ms</span>
+    </div>
     <div class="cadence">
       <input id="cadenceSlider" type="range" min="250" max="1000" step="50" value="750" />
       <output id="cadenceReadout" for="cadenceSlider">750</output>
     </div>
-    <p class="hint" id="cadenceHint">识别中途每隔多久回一次字幕。小改口多但跟得紧，大改口少但首句更晚。</p>
+    <p class="hint" id="cadenceHint">识别中途刷新频率。750ms为最佳平衡点，首字快且不频繁跳动。</p>
   </div>
-  <div class="section">
-    <p class="section-title">识别线路</p>
-    <label for="chainSelect">线路</label>
-    <select id="chainSelect">
-      <option value="whisper-hy">whisper 识别 + 混元翻译（默认；流式字幕）</option>
-      <option value="qwen3-hy">Qwen3-ASR 识别 + 混元翻译（识别快 5.9 倍；块输出·按标点分块）</option>
-      <option value="gemma-e2e">音频直出 Gemma4 E2B（干净旁白可用，对白压在配乐下会崩；流式字幕）</option>
+
+  <!-- Engine & Language Settings -->
+  <div class="card">
+    <div class="card-title">
+      <span>⚡ 引擎与语言</span>
+    </div>
+    
+    <div class="engine-pill">
+      <span class="engine-icon">🚀</span>
+      <span>主力引擎：<strong>Qwen3-ASR + 混元翻译 (标点分块)</strong></span>
+    </div>
+
+    <!-- Hidden compatibility select for scripts/tests -->
+    <div class="chain-area">
+      <select id="chainSelect">
+        <option value="qwen3-hy" selected>Qwen3-ASR 识别 + 混元翻译（主力；块输出·按标点分块）</option>
+        <option value="whisper-hy">whisper 识别 + 混元翻译（回退；流式字幕）</option>
+        <option value="gemma-e2e">音频直出 Gemma4 E2B（对白压在配乐下会崩；流式字幕）</option>
+      </select>
+      <p id="chainHint"></p>
+    </div>
+
+    <label for="language">目标识别语言</label>
+    <select id="language">
+      <option value="auto">自动检测 (推荐)</option>
+      <option value="en">英语 (English)</option>
+      <option value="ja">日语 (日本語)</option>
+      <option value="ko">韩语 (한국어)</option>
+      <option value="fr">法语 (Français)</option>
+      <option value="de">德语 (Deutsch)</option>
+      <option value="es">西班牙语 (Español)</option>
+      <option value="ru">俄语 (Русский)</option>
     </select>
-    <p class="hint" id="chainHint">线路决定识别器和输出方式：whisper / 音频直出是流式，Qwen3 是块输出（子句到标点才上屏）。切换会重启后端，约 10 秒；字幕会自动回来。</p>
+
+    <div class="setting-row" style="margin-top: 10px;">
+      <label for="apiEnabled" class="setting-label" style="margin:0;">使用外部大模型翻译</label>
+      <input class="switch" id="apiEnabled" type="checkbox" />
+    </div>
+    <div id="apiFields" hidden>
+      <label for="apiUrl">接口地址 (URL)</label>
+      <input id="apiUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" />
+      <label for="apiKey">API Key</label>
+      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+      <label for="apiModel">模型名 (Model)</label>
+      <input id="apiModel" type="text" placeholder="如 gpt-4o-mini 或 gemini-2.5" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div class="setting-row" style="margin-top: 10px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">
+      <span class="setting-label" style="color: var(--text-muted); font-size: 12px;">诊断模式：仅音频不显字幕</span>
+      <input class="switch" id="audioOnly" type="checkbox" />
+    </div>
   </div>
-  <div class="section">
-    <p class="section-title">翻译设置</p>
-  <label><input id="apiEnabled" type="checkbox" /> 用外部接口翻译</label>
-  <div id="apiFields" hidden>
-    <label for="apiUrl">接口地址</label>
-    <input id="apiUrl" type="text" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" />
-    <label for="apiKey">API Key</label>
-    <input id="apiKey" type="password" placeholder="没有密钥就留空" autocomplete="off" />
-    <label for="apiModel">模型名</label>
-    <input id="apiModel" type="text" placeholder="例如 gemini-2.0-flash" autocomplete="off" spellcheck="false" />
-    <p>地址填到 /v1 即可，请求发往 /chat/completions。识别仍在本机。</p>
-  </div>
-  <label for="language">语言</label>
-  <select id="language">
-    <option value="auto">自动检测</option>
-    <option value="en">英语</option>
-    <option value="ja">日语</option>
-    <option value="ko">韩语</option>
-    <option value="fr">法语</option>
-    <option value="de">德语</option>
-    <option value="es">西班牙语</option>
-    <option value="ru">俄语</option>
-  </select>
-  </div>
-  <button id="toggle" type="button">开始</button>
-  <div id="status"></div>
+
+  <button id="toggle" type="button">开始实时字幕</button>
+  <div id="status">未开始</div>
 </main>
 <script src="popup.js"></script>
+</body>
+</html>
+

@@ -422,12 +422,27 @@ fontSize.addEventListener("input", () => {
   const px = Math.max(16, Math.min(40, Number(fontSize.value) || 20));
   fontSizeValue.textContent = String(px);
   chrome.storage.local.set({ captionFontPx: px });
+  tellCaptionWindow();
 });
 
 fontColor.addEventListener("input", () => {
   paintColorBar(fontColor.value);
   chrome.storage.local.set({ captionColor: fontColor.value });
+  tellCaptionWindow();
   status.textContent = `字幕颜色已设为 ${fontColor.value.toUpperCase()}。`;
+});
+
+document.querySelectorAll(".color-dot").forEach((dot) => {
+  dot.addEventListener("click", () => {
+    const color = dot.dataset.color;
+    if (color) {
+      fontColor.value = color;
+      paintColorBar(color);
+      chrome.storage.local.set({ captionColor: color });
+      tellCaptionWindow();
+      status.textContent = `字幕颜色已设为 ${color.toUpperCase()}。`;
+    }
+  });
 });
 
 function saveApi() {
@@ -443,12 +458,14 @@ for (const field of [apiUrl, apiKey, apiModel]) {
 }
 cadenceSlider.addEventListener("input", onCadenceInput);
 cadenceSlider.addEventListener("change", onCadenceChange);
-chainSelect.addEventListener("change", () => {
-  // Reset the hint colour before switching: a previous failure left it red, and a red
-  // hint next to a busy control reads as a second error.
-  chainHint.style.color = "";
-  switchChain(chainSelect.value);
-});
+if (chainSelect) {
+  chainSelect.addEventListener("change", () => {
+    // Reset the hint colour before switching: a previous failure left it red, and a red
+    // hint next to a busy control reads as a second error.
+    if (chainHint) chainHint.style.color = "";
+    switchChain(chainSelect.value);
+  });
+}
 
 toggle.addEventListener("click", async () => {
   toggle.disabled = true;

@@ -37,7 +37,7 @@ PARTIAL_INTERVAL_MS 750  ← 生效值。此行原写 250，而这是「生效�
 AUDIO_NATIVE 0（音频直出关）
 HOLD_ABS_MIN_MS 800（caption_window.py:70）参考表最低 1000 × 最快 factor 0.62 = 620
            = 这张表能产出的最低值 ⇒ 地板 ≤620 是空操作；试过 600 无效已回退（REPORT 42）
-默认链路   whisper-hy（config.DEFAULT_CHAIN）；可选 whisper-hy / qwen3-hy / gemma-e2e（切换 = 全拆 + 重启）
+默认链路   qwen3-hy（主力，块输出·按标点分块）；可选 whisper-hy（回退）/ gemma-e2e（停用）
 投影层     CPU（--mmproj-device none）
 翻译后端   已装（cuda12-avx2）：2.33.0 / 2.47.0 / 2.51.0 / 2.52.0 / 2.53.0 / **2.55.0**（10-09 08:52 装，2026-10-09 核盘）
            缺省无 pin = 本机已装最新（现为 2.55.0，**在任何东西上都没测过**）
