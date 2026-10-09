@@ -54,12 +54,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   //
   // The popup cannot read storage for this: storage is only what the last start will
   // read, and the window's own control (which is hidden in 只有字 mode, by design) can
-  // move the state without storage hearing about it. The answer comes back as a
-  // toggle_transparent frame and is written to storage here, so the popup's checkbox
-  // ends up showing the window's real state -- that is what makes the first press work.
+  // move the state without storage hearing about it. The server does not keep a copy
+  // either -- it asks the window -- so the answer comes back as a toggle_transparent
+  // frame, is written to storage here, and the popup's checkbox ends up showing the
+  // window's real state. That is what makes the first press work.
+  //
+  // `sent` says whether the question actually went out. False means there is no live
+  // caption window to ask (nothing running, or audio-only mode), which is different
+  // from a window that was asked and did not answer -- and only the second one is a
+  // fault worth reporting to the user.
   if (message.type === "caption-state") {
-    sendJson({ type: "get_state" });
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, sent: sendJson({ type: "get_state" }) });
     return false;
   }
   if (message.type === "hide-caption") {
@@ -114,8 +119,9 @@ function rememberStyle(message) {
 }
 
 function sendJson(payload) {
-  if (!payload || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (!payload || !socket || socket.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(payload));
+  return true;
 }
 
 function tracksEnded(media) {

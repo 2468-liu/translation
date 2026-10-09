@@ -162,6 +162,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   status.textContent = captionTextOnlyNote(next);
 });
 
+// The window's answer travels as the same frame the offscreen document turns into that
+// storage write. Hearing it is what separates "asked and answered" from "asked and
+// silent", and only the second one is worth telling the user about.
+chrome.runtime.onMessage.addListener((message) => {
+  if (message && message.type === "toggle_transparent") captionAnswered = true;
+  return false;
+});
+
 // One state, two controls: this checkbox and the caption window's own header control.
 //
 // 只有字 hides the caption window's header -- its own control included -- because that is
@@ -197,8 +205,25 @@ function tellCaptionWindow() {
 // On the same message bus as the style frame, so it only lands while a caption window
 // exists; when there is none, storage is the only thing that can be known and it is
 // what the next start will apply anyway.
+//
+// "No answer" is reported rather than swallowed. It is the one failure the user cannot
+// see from the outside: the window is in 只有字, this checkbox is clear, and nothing says
+// why. Asked-and-silent means the window's build is older than this ask (restart the
+// backend) or it died; not-sent at all means there is nothing to ask, which is normal.
+const CAPTION_ANSWER_MS = 1500;
+let captionAnswered = false;
+
 function askCaptionWindowState() {
-  chrome.runtime.sendMessage({ type: "caption-state" }).catch(() => {});
+  captionAnswered = false;
+  chrome.runtime.sendMessage({ type: "caption-state" })
+    .then((reply) => {
+      if (!reply || !reply.sent) return;
+      setTimeout(() => {
+        if (captionAnswered) return;
+        status.textContent = "字幕窗没有回应「只有字」的状态 —— 重启一次后端即可（旧版本不认这个询问）。";
+      }, CAPTION_ANSWER_MS);
+    })
+    .catch(() => {});
 }
 
 async function refresh(keepMessage, failedStep) {
@@ -216,11 +241,12 @@ async function refresh(keepMessage, failedStep) {
   });
   paintCadence(theme.partialIntervalMs);
   textOnly.checked = Boolean(theme.captionTextOnly);
-  // Ask the live window to correct that. Storage is what the next start reads; this
-  // checkbox has to show what is on screen now, and 只有字 hides the window's own
-  // control so there is no other place a stale value could be noticed.
-  askCaptionWindowState();
   audioOnly.checked = Boolean(theme.audioOnly);
+  // Storage is what the next start reads; this checkbox has to show what is on screen
+  // now. 只有字 hides the window's own control, so there is no other place a stale value
+  // would be noticed. Skipped in audio-only mode, where no caption window exists to ask
+  // and "no answer" would be a false alarm.
+  if (!audioOnly.checked) askCaptionWindowState();
   const px = Math.max(16, Math.min(40, Number(theme.captionFontPx) || 20));
   fontSize.value = String(px);
   fontSizeValue.textContent = String(px);

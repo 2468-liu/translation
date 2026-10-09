@@ -784,7 +784,8 @@ storage 由"最后动的一方"写入 ⇒ 值没变时 onChanged 不触发、什
 3. caption 新增 `kind == "state?"` 应答：收到就**强制广播一次**（`force=True` 绕过去重）。
    "这边没变"不等于"没人需要知道" —— 窗口是这份状态的唯一持有者
 4. popup 打开时问一次（`caption-state`）。勾选时**直接发 `caption-style` 帧**，意图不搭
-   storage 的顺风车
+   storage 的顺风车。**窗口没答（旧版本 / 进程死了）就在状态行说明** —— "问了没答"是故障，
+   "没发出去"（没在跑 / 仅音频）不是，别误报
 
 实测（`scripts/probe_caption_text_only.py`，灰底衬在下 + 真 UDP，照用户流程走）：
 ```
@@ -798,7 +799,7 @@ scripts/probe_caption_state_channel.py（真进程）：style(True)→1 帧 / �
    style(False)→1 帧 / **state? 且状态没变 → 1 帧**（连问两次两次都答）
 logs/popup_sync_probe.js（stub chrome 真跑 popup.js）：打开即问状态 / 点击发帧+写 storage /
    反向跟着走且不回发
-python -m pytest -q → 379 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+python -m pytest -q → 380 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
 ```
 
 **教训（同一天、同一处，改了三次方向）**
@@ -862,9 +863,9 @@ main / HEAD / gemma-audio  同指（已快进） ｜ 回退点 tag pre-merge-202
 `gemma-audio` 保留。**pytest（2026-10-07 晚）107 passed**（新增 `tests/test_translation_context.py` 8 条，
 钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）；此前 99 passed。
 `extension/` 与 Native Host 未变 ⇒ 主机无需重建（`start.ps1` 是文件调用，不在 exe 里）。
-**最近一次（2026-10-09 晚，只有字状态源改完、服务端不再缓存）：379 passed / 1 skipped / 10 failed** —— 10 条全在
+**最近一次（2026-10-09 晚，只有字状态源改完、服务端不再缓存）：380 passed / 1 skipped / 10 failed** —— 10 条全在
 `test_backend_cycle.py`，全是 DSH 沙箱拒写临时目录下的 `server.pid`，与改动无关。
-（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378。）
+（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378 / 379。）
 
 ## 实验日志（一行一条）
 

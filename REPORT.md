@@ -5581,8 +5581,10 @@ storage 可能还是旧的（WS 断着 / 刚重启过 / 帧丢过）。用户打
    （`_broadcast_state(force=True)`，绕过去重）。"这边没变"不等于"没人需要知道"：
    窗口是这份状态的唯一持有者，问它就必须得到回答。
 4. popup.js：勾选时直接发 `caption-style` 帧（不再只写 storage 等 `onChanged`），
-   打开弹窗时发 `caption-state`（offscreen 转成 `get_state`）。状态文案改为
-   "黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"
+   打开弹窗时发 `caption-state`（offscreen 转成 `get_state`，并回答"问出去了没有"）。
+   状态文案改为"黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"；
+   **窗口没答就在状态行说明**（"问了没答"= 旧版本窗口或进程死了；"没发出去"= 没在跑 / 仅音频，
+   不误报）
 ```
 
 **同一处改了三次方向（必须留在原地）**
@@ -5629,7 +5631,7 @@ logs/popup_sync_probe.js（stub chrome 跑真 extension/popup.js，逐条断言�
 **强制广播在"没变化"时也发**）；extension 侧（`tellCaptionWindow` + `askCaptionWindowState` +
 offscreen 的 `caption-state`）；server 侧（**`request_caption_state()` 必须存在、
 `_CAPTION_TEXT_ONLY` 必须不存在**——即"没有第二份状态"这条是断言出来的）。
-`python -m pytest -q` → **379 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
+`python -m pytest -q` → **380 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
 
 **判据（下次再看到"要点两次"）**
 

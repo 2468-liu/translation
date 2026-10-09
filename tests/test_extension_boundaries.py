@@ -107,10 +107,30 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertIn('type: "caption-state"', popup)
         self.assertIn('message.type === "caption-style"', offscreen)
         self.assertIn('message.type === "caption-state"', offscreen)
-        self.assertIn('sendJson({ type: "get_state" })', offscreen)
+        self.assertIn('sendResponse({ ok: true, sent: sendJson({ type: "get_state" }) })', offscreen)
         # And the note says where to press to get the frame back, rather than claiming a
         # control that is no longer on screen.
         self.assertIn("再点一下即可恢复", popup)
+
+    def test_a_window_that_never_answers_is_reported(self):
+        """The one failure the user cannot see: window in 只有字, checkbox clear, no reason.
+
+        "Asked and silent" is a fault (an older window build, or a dead process) and is
+        said out loud; "not sent at all" is normal -- there is no caption window to ask
+        in audio-only mode -- and must not raise a false alarm.
+        """
+        popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+        offscreen = (ROOT / "extension" / "offscreen.js").read_text(encoding="utf-8")
+
+        self.assertIn("captionAnswered", popup)
+        self.assertIn('message.type === "toggle_transparent"', popup)
+        self.assertIn("没有回应", popup)
+        self.assertIn("if (!audioOnly.checked) askCaptionWindowState();", popup)
+        # sendJson has to be able to say whether the question went out at all.
+        self.assertIn(
+            "return false;\n  socket.send(JSON.stringify(payload));\n  return true;",
+            offscreen,
+        )
 
     def test_get_state_asks_the_window_instead_of_keeping_a_copy(self):
         """No cache anywhere: the window is asked, and it answers for itself.
