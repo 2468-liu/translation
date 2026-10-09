@@ -112,5 +112,84 @@ class NativePortProbeTests(unittest.TestCase):
         self.assertNotIn("function nativeConnection(", executable())
 
 
+class StaleFailureTests(unittest.TestCase):
+    """A failure message must stop being shown once it stops being true.
+
+    The backend start is the one step whose failure expires on its own: the powershell
+    it launched keeps running after the request times out, so the backend comes up
+    behind the popup's back. The button then reads 终止后端 while the status line still
+    reads 启动后端失败, which is a contradiction the user cannot act on.
+
+    The comment at the catch block explains why a failure must not be erased
+    immediately, so a naive assertion that refresh never keeps a message would be
+    satisfied by a fix that reintroduces the original bug. These assert the narrower
+    property: kept, but only while still true.
+    """
+
+    def setUp(self):
+        self.popup = (Path(__file__).resolve().parents[1] / "extension" / "popup.js").read_text(
+            encoding="utf-8"
+        )
+
+    def test_refresh_is_told_which_step_failed(self):
+        # Passing only the message string would force the check to match on wording, and
+        # the wording is exactly what gets reworded.
+        self.assertIn("async function refresh(keepMessage, failedStep)", self.popup)
+        self.assertIn("refresh(failure, step)", self.popup)
+
+    def test_a_backend_start_failure_is_dropped_once_something_is_running(self):
+        self.assertIn(
+            'failedStep === "启动后端" && running',
+            self.popup,
+            "the stale check has to be about the step and the observed state",
+        )
+
+    def test_other_failures_are_still_kept(self):
+        # A caption-window failure and a failed stop both stay true after the backend is
+        # up, so the check must be narrow.
+        code = _strip_js_comments(self.popup)
+        for step in ("启动字幕窗", "终止"):
+            self.assertNotIn(
+                f'failedStep === "{step}"',
+                code,
+                f"{step} failures do not expire and must not be dropped",
+            )
+
+    def test_the_stale_check_runs_after_running_is_settled(self):
+        lines = _strip_js_comments(self.popup).splitlines()
+        settled = next(i for i, l in enumerate(lines)
+                       if "running = running || hostUp" in l)
+        checked = next(i for i, l in enumerate(lines) if "const stale = keepMessage" in l)
+        self.assertLess(settled, checked, "stale is decided before running is known")
+
+
+def _strip_js_comments(source: str) -> str:
+    out = []
+    in_block = False
+    for raw in source.splitlines():
+        line = raw
+        if in_block:
+            if "*/" in line:
+                line = line.split("*/", 1)[1]
+                in_block = False
+            else:
+                continue
+        while "/*" in line:
+            head, _, rest = line.partition("/*")
+            if "*/" in rest:
+                line = head + rest.split("*/", 1)[1]
+            else:
+                line = head
+                in_block = True
+                break
+        hash_at = line.find("//")
+        if hash_at >= 0:
+            before = line[:hash_at]
+            if before.count('"') % 2 == 0 and before.count("'") % 2 == 0:
+                line = before
+        out.append(line)
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
     unittest.main()

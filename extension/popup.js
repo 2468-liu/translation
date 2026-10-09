@@ -163,7 +163,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   status.textContent = target;
 });
 
-async function refresh(keepMessage) {
+async function refresh(keepMessage, failedStep) {
   const stored = await chrome.storage.session.get(["running", "language"]);
   const theme = await chrome.storage.local.get({
     captionTextOnly: false,
@@ -230,6 +230,20 @@ async function refresh(keepMessage) {
   toggle.classList.toggle("stop", running);
   mediaState.textContent = running ? "●" : "○";
   mediaState.style.color = running ? "#806900" : "#aaa39b";
+  // A failure is kept so it cannot be erased a few milliseconds after it appears, but
+  // "kept" is not "kept forever". The backend start is the one step whose failure stops
+  // being true on its own: the powershell it launched keeps running after the request
+  // times out, so the backend comes up behind the popup's back and the button turns into
+  // 终止后端 while the status line still reads 启动后端失败. The two together read as a
+  // contradiction and send the user looking for a second fault.
+  //
+  // Only that step is dropped, and only while nothing is up. A caption-window failure or a
+  // failed stop stays true after the backend is running, so those are left alone.
+  const stale = keepMessage && failedStep === "启动后端" && running;
+  if (stale) {
+    console.info("[字幕] 上次「启动后端失败」已不成立：后端已经在跑，清掉那行字");
+    keepMessage = "";
+  }
   if (keepMessage) {
     status.textContent = keepMessage;
   } else if (!hostReachable) {
@@ -340,7 +354,7 @@ toggle.addEventListener("click", async () => {
     console.error("[字幕]", failure, error);
   } finally {
     toggle.disabled = false;
-    await refresh(failure);
+    await refresh(failure, step);
   }
 });
 

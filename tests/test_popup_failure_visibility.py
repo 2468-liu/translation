@@ -32,8 +32,11 @@ class PopupFailureVisibilityTests(unittest.TestCase):
         assertion follows the intent rather than the expression: keepMessage is checked
         before anything can overwrite it.
         """
-        self.assertIn("async function refresh(keepMessage)", self.popup)
-        body = self.popup.split("async function refresh(keepMessage)", 1)[1]
+        # The signature grew a second parameter: which step failed. The stale-message fix
+        # needs it, because "the backend would not start" stops being true the moment
+        # the backend is up, while "the caption window would not open" does not.
+        self.assertIn("async function refresh(keepMessage, failedStep)", self.popup)
+        body = self.popup.split("async function refresh(keepMessage, failedStep)", 1)[1]
         branch = body.split("if (keepMessage) {", 1)
         self.assertEqual(len(branch), 2, "keepMessage is no longer checked in refresh")
         # It must be the first branch, so nothing else can claim the line first.
@@ -46,7 +49,9 @@ class PopupFailureVisibilityTests(unittest.TestCase):
                          "an unconditional fallback would overwrite the failure again")
 
     def test_click_handler_forwards_the_failure_to_refresh(self):
-        self.assertIn("await refresh(failure)", self.popup)
+        # The step travels with the message. Without it the receiver cannot tell a
+        # failure that has expired from one that is still true.
+        self.assertIn("await refresh(failure, step)", self.popup)
         self.assertIn("failure = `${step}失败", self.popup)
 
     def test_stop_reply_is_checked_instead_of_only_awaited(self):

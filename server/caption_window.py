@@ -14,6 +14,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import TclError
 from pathlib import Path
 
 from . import perf
@@ -120,6 +121,11 @@ CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
 # two arms are indistinguishable on every display-side metric that was recorded.
 BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"
 
+# How long a dropped row takes to settle. Short enough not to lag the next caption,
+# long enough that the movement is visible as movement -- at 60Hz, 120ms is seven
+# frames, and a one-row shift at a 31px line height is about 260px/s over that time.
+SLIDE_MS = _env_int("TRANSLATION_CAPTION_SLIDE_MS", 120)
+
 
 def punctuation_marks(text: str) -> tuple:
     """The terminal marks the text carries, in order and with repeats kept.
@@ -210,7 +216,16 @@ def fit_caption_width(measured: int, current: int, screen_width: int, locked: bo
     return current
 
 
-def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str]:
+def wrap_all(text: str, width: int, measure) -> list[str]:
+    """Every display line the text needs, with no cap.
+
+    Separate from `wrap_caption` because the capped version cannot say whether it
+    dropped anything. Knowing that is the whole point: `wrap_caption` keeps the *last*
+    `max_lines` rows, so when a caption outgrows the box the front row disappears, the
+    rows below move up one place, and the window does not resize -- the height formula
+    sees the same row count either way. The result is content jumping upward with no
+    transition, which is what a caption window must never do.
+    """
     if not text:
         return []
     lines: list[str] = []
@@ -231,7 +246,13 @@ def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str
             current = candidate
     if current or not lines:
         lines.append(current.rstrip())
-    return [line for line in lines[-max_lines:] if line]
+    return [line for line in lines if line]
+
+
+def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str]:
+    return wrap_all(text, width, measure)[-max_lines:] if max_lines else wrap_all(
+        text, width, measure
+    )
 
 
 def _port_busy() -> bool:
@@ -317,6 +338,10 @@ class _Caption:
         # flush_caption's deadline is the swap deadline, and threading a clause cap
         # into it would have put a fourth candidate into 12 tested pure functions for
         # a behaviour that is opt-out. The 400ms fallback is a separate job instead.
+        self._slide_job = None
+        self._slide_item = None
+        self._slide_from = 25.0
+        self._slide_t0 = 0.0
         self._block_by_punct = bool(BLOCK_BY_PUNCT)
         self._clause_t0 = 0.0
         self._clause_pending = ""
@@ -570,6 +595,12 @@ class _Caption:
             self.root.geometry(f"{self.width}x{self.height}+{left}+{self.root.winfo_y()}")
             wrap = self.width - 48
         display_lines = wrap_caption(body, wrap, self.font_line.measure)
+        # One pass, both answers. Asking wrap_caption again for the uncapped count would
+        # measure every unit twice, and the measure is the expensive part for Korean
+        # (1.33ms per character against 0.066ms for Chinese).
+        all_lines = display_lines
+        if len(display_lines) >= 2:
+            all_lines = wrap_all(body, wrap, self.font_line.measure)
         display_body = "\n".join(display_lines)
         line_h = max(1, self.font_line.metrics("linespace"))
         lines = len(display_lines)
@@ -586,10 +617,32 @@ class _Caption:
                 self.root.geometry(f"{self.width}x{self.height}")
         # Draw first, then drop what the draw replaced. Ordering it this way is what
         # keeps the canvas non-empty across the paint.
-        fresh = self._draw(display_body, self.font_line, wrap)
+        #
+        # The y it starts at is not always 25. wrap_caption keeps the *last* max_lines
+        # rows, so a caption that outgrows the box loses its front row and everything
+        # below moves up one place -- while `lines` stays at two, so the height formula
+        # above sees no change and the window does not resize. Measured at width 760 and
+        # a 32px font, 45 characters is enough to cross that boundary; at 24px it needs
+        # more than 58, which is why this reads as rare when the text happens to stay
+        # short and as constant once it does not.
+        #
+        # Starting the new row where the old one was and easing it up turns that jump
+        # into a move. The item is created once and moved with `coords`, never recreated
+        # per frame, so the animation does not reintroduce the clear-and-redraw that the
+        # paint order above exists to avoid.
+        dropped = max(0, len(all_lines) - len(display_lines))
+        self._cancel_slide()
+        start_y = 25 + dropped * line_h if dropped else 25
+        fresh = self._draw(display_body, self.font_line, wrap, start_y)
         for stale in self.canvas.find_all():
             if stale != fresh:
                 self.canvas.delete(stale)
+        if dropped:
+            self._slide_item = fresh
+            self._slide_from = start_y
+            self._slide_t0 = time.monotonic()
+            self._slide_job = self.root.after(16, self._step_slide)
+            perf.emit("caption", "slide", rows=dropped, chars=len(display_body))
         now = time.monotonic()
         self._report_dwell(now)
         if self._trace_action in ("grow", "swap"):
@@ -624,11 +677,40 @@ class _Caption:
             self._trace_recv = 0.0
             self._trace_action = ""
 
-    def _draw(self, text: str, font: tkfont.Font, wrap: int) -> int:
-        x = self.width / 2
-        y = 25
+    def _cancel_slide(self) -> None:
+        if self._slide_job is not None:
+            try:
+                self.root.after_cancel(self._slide_job)
+            except (ValueError, TclError):
+                pass
+            self._slide_job = None
+        self._slide_item = None
+
+    def _step_slide(self) -> None:
+        """Ease the item from where the dropped rows left it up to its resting place.
+
+        Only `coords` moves it. Recreating the text each frame would rebuild the glyph
+        runs sixty times a second and put back the flicker the paint order avoids.
+        """
+        self._slide_job = None
+        item = self._slide_item
+        if item is None or not self.canvas.find_all():
+            self._slide_item = None
+            return
+        elapsed = (time.monotonic() - self._slide_t0) * 1000.0
+        if elapsed >= SLIDE_MS:
+            self.canvas.coords(item, self.width / 2, 25)
+            self._slide_item = None
+            return
+        # Ease out cubic: fast at first, settling on the row, which reads as the line
+        # arriving rather than sliding mechanically.
+        t = 1.0 - (1.0 - elapsed / SLIDE_MS) ** 3
+        self.canvas.coords(item, self.width / 2, self._slide_from + (25 - self._slide_from) * t)
+        self._slide_job = self.root.after(16, self._step_slide)
+
+    def _draw(self, text: str, font: tkfont.Font, wrap: int, y: float = 25) -> int:
         return self.canvas.create_text(
-            x,
+            self.width / 2,
             y,
             text=text,
             anchor="n",
