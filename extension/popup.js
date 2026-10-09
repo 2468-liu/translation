@@ -24,32 +24,12 @@ const dismissValue = document.getElementById("dismissValue");
 const dismissReadout = document.getElementById("dismissReadout");
 const dismissHint = document.getElementById("dismissHint");
 
-const captionLabelText = document.getElementById("captionLabelText");
-const captionActiveSwitch = document.getElementById("captionActiveSwitch");
-const translateActiveSwitch = document.getElementById("translateActiveSwitch");
 const settingsTrigger = document.getElementById("settingsTrigger");
 const settingsDrawer = document.getElementById("settingsDrawer");
 const mediaDomain = document.getElementById("mediaDomain");
 const mediaTitle = document.getElementById("mediaTitle");
-
-const LANG_NAME_MAP = {
-  auto: "自动检测",
-  zh: "中文（简体）",
-  ja: "日语（日本語）",
-  en: "英语（English）",
-  ko: "韩语（한국어）",
-  fr: "法语（Français）",
-  de: "德语（Deutsch）",
-  es: "西班牙语（Español）",
-  ru: "俄语（Русский）",
-};
-
-function updateCaptionLabel() {
-  if (captionLabelText && language) {
-    const name = LANG_NAME_MAP[language.value] || language.value;
-    captionLabelText.textContent = `实时字幕 - ${name}`;
-  }
-}
+const liveDot = document.getElementById("liveDot");
+const sessionStatusText = document.getElementById("sessionStatusText");
 
 // Must equal server/config.py PARTIAL_INTERVAL_MS. A lower default here would mean
 // pressing start silently changes behaviour, and that mismatch has been the cause
@@ -328,7 +308,6 @@ async function refresh(keepMessage, failedStep) {
   paintDismiss(theme.captionDismissSec !== undefined ? theme.captionDismissSec : 5);
   textOnly.checked = Boolean(theme.captionTextOnly);
   audioOnly.checked = Boolean(theme.audioOnly);
-  if (captionActiveSwitch) captionActiveSwitch.checked = !Boolean(theme.audioOnly);
 
   captionPresent = null;
   paintCaptionState();
@@ -354,13 +333,12 @@ async function refresh(keepMessage, failedStep) {
     running = false;
   }
   if (stored.language) language.value = stored.language;
-  updateCaptionLabel();
 
-  // Query active tab title and domain for the media card
+  // Read active tab title and domain for the session card header
   chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
     if (tab) {
       const title = tab.title || "网页实时音视频字幕";
-      let domain = "bilibili.com";
+      let domain = "当前网页";
       try {
         if (tab.url && tab.url.startsWith("http")) domain = new URL(tab.url).hostname.replace(/^www\./, "");
       } catch (_) {}
@@ -385,10 +363,9 @@ async function refresh(keepMessage, failedStep) {
 
   toggle.textContent = running ? "终止后端" : "开始";
   toggle.classList.toggle("stop", running);
-  toggle.setAttribute("aria-label", running ? "终止后端" : "开始");
-  toggle.innerHTML = running
-    ? '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="sr-only">终止后端</span>'
-    : '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><polygon points="7,5 19,12 7,19"/></svg><span class="sr-only">开始</span>';
+
+  if (liveDot) liveDot.classList.toggle("active", running);
+  if (sessionStatusText) sessionStatusText.textContent = running ? "正在实时采集与翻译" : "服务已就绪";
 
   mediaState.textContent = running ? "●" : "○";
   mediaState.style.color = running ? "#806900" : "#aaa39b";
@@ -424,7 +401,6 @@ textOnly.addEventListener("change", () => {
 });
 
 audioOnly.addEventListener("change", () => {
-  if (captionActiveSwitch) captionActiveSwitch.checked = !audioOnly.checked;
   chrome.storage.local.set({ audioOnly: audioOnly.checked });
   captionPresent = null;
   paintCaptionState();
@@ -434,13 +410,6 @@ audioOnly.addEventListener("change", () => {
     : "已恢复显示原生字幕窗。";
 });
 
-if (captionActiveSwitch) {
-  captionActiveSwitch.addEventListener("change", () => {
-    audioOnly.checked = !captionActiveSwitch.checked;
-    audioOnly.dispatchEvent(new Event("change"));
-  });
-}
-
 if (settingsTrigger && settingsDrawer) {
   settingsTrigger.addEventListener("click", () => {
     settingsTrigger.classList.toggle("open");
@@ -449,7 +418,6 @@ if (settingsTrigger && settingsDrawer) {
 }
 
 language.addEventListener("change", () => {
-  updateCaptionLabel();
   chrome.storage.session.set({ language: language.value });
 });
 

@@ -67,72 +67,41 @@
     }
 
     /* -------------------------------------------------------------
-       Top Media Card (Google Chrome Global Media Controls Style)
+       Top Session Header Card (Authentic AI Translation Hub)
     ------------------------------------------------------------- */
-    .media-card {
+    .session-card {
       background: var(--card-bg);
       border-radius: var(--radius-lg);
-      padding: 12px 14px;
+      padding: 14px 16px;
       display: flex;
-      flex-direction: column;
-      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
       transition: background 0.15s ease;
     }
-    .media-card-top {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .media-thumbnail-wrap {
-      position: relative;
-      width: 48px;
-      height: 48px;
-      flex-shrink: 0;
-      border-radius: var(--radius-md);
-      overflow: hidden;
-      background: #1e293b;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.12);
-    }
-    .media-thumbnail-wrap img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .media-thumbnail-wrap .hd-badge {
-      position: absolute;
-      top: 3px;
-      left: 3px;
-      background: #f59e0b;
-      color: #000;
-      font-size: 8px;
-      font-weight: 800;
-      padding: 1px 3px;
-      border-radius: 2px;
-      line-height: 1;
-    }
-    .media-info {
+    .session-info {
       flex: 1;
       min-width: 0;
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 4px;
     }
-    .media-domain-row {
+    .session-tag-row {
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 6px;
       font-size: 11.5px;
       font-weight: 500;
       color: #0288d1;
     }
-    .media-domain-row svg {
+    .session-tag-row svg {
       width: 13px;
       height: 13px;
       fill: currentColor;
     }
-    .media-title {
-      font-size: 13.5px;
+    .session-title {
+      font-size: 14.5px;
       font-weight: 700;
       color: var(--text-main);
       white-space: nowrap;
@@ -140,50 +109,53 @@
       text-overflow: ellipsis;
       letter-spacing: -0.2px;
     }
-    .media-actions {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-    .media-top-icons {
+    .session-meta {
+      font-size: 11px;
+      color: var(--text-muted);
       display: flex;
       align-items: center;
-      gap: 6px;
-      color: var(--text-sub);
+      gap: 5px;
     }
-    .media-top-icons svg {
-      width: 14px;
-      height: 14px;
-      cursor: pointer;
-      opacity: 0.8;
-      transition: opacity 0.15s;
-    }
-    .media-top-icons svg:hover {
-      opacity: 1;
-    }
-    #toggle {
-      width: 44px;
-      height: 44px;
+    .live-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
+      background: #aaa39b;
+      transition: background 0.2s;
+    }
+    .live-dot.active {
+      background: #16a34a;
+      box-shadow: 0 0 6px #16a34a;
+    }
+
+    /* Primary Action Start/Stop Button */
+    #toggle {
+      min-width: 82px;
+      height: 38px;
+      padding: 0 14px;
+      border-radius: var(--radius-pill);
       border: 0;
       background: var(--accent-olive);
       color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+      gap: 6px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
       transition: background 0.15s, transform 0.08s, box-shadow 0.15s;
+      flex-shrink: 0;
     }
     #toggle:hover {
       background: var(--accent-olive-hover);
-      transform: scale(1.03);
-      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22);
+      transform: scale(1.02);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
     }
     #toggle:active {
-      transform: scale(0.96);
+      transform: scale(0.97);
     }
     #toggle.stop {
       background: var(--danger);
@@ -192,97 +164,74 @@
       background: var(--danger-hover);
     }
     #toggle svg {
-      width: 20px;
-      height: 20px;
-      fill: currentColor;
-    }
-
-    /* Media Scrubber Bar */
-    .media-scrubber-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text-sub);
-      padding: 2px 0 0;
-    }
-    .media-scrubber-row svg {
       width: 14px;
       height: 14px;
       fill: currentColor;
-      opacity: 0.75;
-      cursor: default;
-    }
-    .scrubber-track {
-      flex: 1;
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      position: relative;
-    }
-    .scrubber-progress {
-      position: absolute;
-      left: 0;
-      top: 0;
-      height: 100%;
-      width: 32%;
-      background: var(--text-sub);
-      border-radius: 2px;
-    }
-    .scrubber-thumb {
-      position: absolute;
-      left: 32%;
-      top: 50%;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      transform: translate(-50%, -50%);
     }
 
     /* -------------------------------------------------------------
-       Caption & Translation Controls (Chrome Native Popup Style)
+       Key Primary Options (Directly Accessible)
     ------------------------------------------------------------- */
-    .control-list {
+    .primary-options {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 4px 2px;
+      gap: 8px;
+      padding: 2px 2px;
     }
-    .control-row {
+
+    /* Form Option Card */
+    .option-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .option-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      min-height: 38px;
+      min-height: 28px;
     }
-    .control-label-group {
+    .option-label-group {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       color: var(--text-main);
-      font-size: 13.5px;
+      font-size: 13px;
       font-weight: 500;
     }
-    .control-icon {
-      width: 18px;
-      height: 18px;
+    .option-icon {
+      width: 16px;
+      height: 16px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--text-muted);
       flex-shrink: 0;
     }
-    .control-icon svg {
-      width: 18px;
-      height: 18px;
+    .option-icon svg {
+      width: 16px;
+      height: 16px;
       fill: currentColor;
+    }
+    .option-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-olive);
+      font-variant-numeric: tabular-nums;
+    }
+    .option-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.35;
+      padding-left: 24px;
     }
 
     /* Material 3 Pill Switch */
     .m3-switch {
       position: relative;
       display: inline-block;
-      width: 44px;
-      height: 24px;
+      width: 40px;
+      height: 22px;
       flex-shrink: 0;
     }
     .m3-switch input {
@@ -300,13 +249,13 @@
       bottom: 0;
       background-color: var(--border);
       transition: background-color 0.2s, box-shadow 0.2s;
-      border-radius: 24px;
+      border-radius: 22px;
     }
     .m3-switch .slider:before {
       position: absolute;
       content: "";
-      height: 18px;
-      width: 18px;
+      height: 16px;
+      width: 16px;
       left: 3px;
       bottom: 3px;
       background-color: #ffffff;
@@ -318,17 +267,13 @@
       background-color: var(--accent-olive);
     }
     .m3-switch input:checked + .slider:before {
-      transform: translateX(20px);
+      transform: translateX(18px);
     }
 
-    /* Language Dropdown */
-    .lang-dropdown-container {
-      margin-top: 2px;
-      margin-bottom: 4px;
-    }
+    /* Language Select Box */
     .lang-select-box {
       width: 100%;
-      height: 38px;
+      height: 36px;
       padding: 0 12px;
       border: 1.5px solid var(--border);
       border-radius: var(--radius-md);
@@ -351,22 +296,45 @@
       box-shadow: 0 0 0 1px var(--accent-olive);
     }
 
+    /* Range Sliders */
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      margin: 4px 0 2px;
+      background: var(--border);
+      border-radius: 2px;
+      accent-color: var(--accent-olive);
+      cursor: pointer;
+    }
+    .range-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+    }
+    .range-grid output {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      min-width: 4ch;
+      text-align: right;
+    }
+
     /* Golden Accent Divider */
     .golden-divider {
       height: 2px;
       background: var(--accent-gold);
       border-radius: 1px;
-      margin: 6px 0 2px;
+      margin: 4px 0 2px;
     }
 
     /* -------------------------------------------------------------
-       Footer: Settings Row
+       Footer: Settings Collapsible Trigger
     ------------------------------------------------------------- */
     .settings-footer-btn {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 4px;
+      padding: 8px 6px;
       cursor: pointer;
       border-radius: var(--radius-sm);
       color: var(--text-main);
@@ -378,13 +346,13 @@
     .settings-footer-left {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-size: 13.5px;
+      gap: 8px;
+      font-size: 13px;
       font-weight: 500;
     }
     .settings-footer-left svg {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       fill: var(--text-muted);
     }
     .settings-footer-right svg {
@@ -398,7 +366,7 @@
     }
 
     /* -------------------------------------------------------------
-       Expandable Settings Drawer (Customizer)
+       Expandable Settings Drawer (Secondary Customizer)
     ------------------------------------------------------------- */
     .settings-drawer {
       display: none;
@@ -407,7 +375,7 @@
       padding: 12px;
       background: var(--card-bg);
       border-radius: var(--radius-md);
-      margin-top: 4px;
+      margin-top: 2px;
       animation: fadeIn 0.18s ease;
     }
     .settings-drawer.open {
@@ -416,14 +384,6 @@
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(-4px); }
       to { opacity: 1; transform: translateY(0); }
-    }
-    .drawer-section-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 2px;
     }
     .drawer-row {
       display: flex;
@@ -440,27 +400,6 @@
       font-weight: 600;
       color: var(--accent-olive);
       font-variant-numeric: tabular-nums;
-    }
-    input[type="range"] {
-      width: 100%;
-      height: 4px;
-      margin: 4px 0 2px;
-      background: var(--border);
-      border-radius: 2px;
-      accent-color: var(--accent-olive);
-      cursor: pointer;
-    }
-    .cadence-grid {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: center;
-      gap: 10px;
-    }
-    .cadence-grid output {
-      font-size: 11.5px;
-      color: var(--text-muted);
-      min-width: 4.5ch;
-      text-align: right;
     }
     .color-row {
       display: flex;
@@ -553,103 +492,85 @@
 </head>
 <body>
 <main>
-  <!-- Top Media Hub Card (Chrome Live Caption / GMC Layout) -->
-  <div class="media-card">
-    <div class="media-card-top">
-      <div class="media-thumbnail-wrap">
-        <span class="hd-badge">HD</span>
-        <svg viewBox="0 0 48 48" width="48" height="48" fill="#475569">
-          <rect width="48" height="48" fill="#1e293b"/>
-          <circle cx="24" cy="20" r="10" fill="#334155"/>
-          <path d="M12 40c0-6.6 5.4-12 12-12s12 5.4 12 12" fill="#334155"/>
-        </svg>
+  <!-- Top Session Header Card -->
+  <div class="session-card">
+    <div class="session-info">
+      <div class="session-tag-row">
+        <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
+        <span id="mediaDomain">实时音视频翻译</span>
       </div>
-
-      <div class="media-info">
-        <div class="media-domain-row">
-          <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
-          <span id="mediaDomain">bilibili.com</span>
-        </div>
-        <div class="media-title" id="mediaTitle">网页实时音视频字幕</div>
-      </div>
-
-      <div class="media-actions">
-        <div class="media-top-icons">
-          <!-- PiP icon -->
-          <svg viewBox="0 0 24 24" title="画中画"><path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"/></svg>
-          <!-- Pop-out icon -->
-          <svg viewBox="0 0 24 24" title="置顶窗口"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
-        </div>
-        <!-- Main Circular Play/Stop Action Button -->
-        <button id="toggle" type="button" aria-label="开始">
-          <svg id="togglePlayIcon" viewBox="0 0 24 24"><polygon points="7,5 19,12 7,19"/></svg>
-        </button>
+      <div class="session-title" id="mediaTitle">AI 智能实时字幕</div>
+      <div class="session-meta">
+        <span class="live-dot" id="liveDot"></span>
+        <span id="sessionStatusText">服务已就绪</span>
       </div>
     </div>
 
-    <!-- Scrubber Bar -->
-    <div class="media-scrubber-row">
-      <!-- Prev -->
-      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-      <!-- Rewind 10 -->
-      <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8zm-1.1 11h-.8v-3.3l-.9.3v-.6l1.3-.5h.4v4.1zm3.8-2.1c0 .8-.2 1.4-.5 1.7-.3.3-.8.5-1.3.5s-1-.2-1.3-.5c-.3-.3-.5-.9-.5-1.7v-.9c0-.8.2-1.4.5-1.7.3-.3.8-.5 1.3-.5s1 .2 1.3.5c.3.3.5.9.5 1.7v.9zm-.8-.9c0-.5-.1-.9-.2-1.1-.1-.3-.4-.4-.7-.4s-.6.1-.7.4c-.1.2-.2.6-.2 1.1v1c0 .5.1.9.2 1.1.1.3.4.4.7.4s.6-.1.7-.4c.1-.2.2-.6.2-1.1v-1z"/></svg>
-      <!-- Bar -->
-      <div class="scrubber-track">
-        <div class="scrubber-progress"></div>
-        <div class="scrubber-thumb"></div>
-      </div>
-      <!-- Forward 10 -->
-      <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8zm-1.1 11h-.8v-3.3l-.9.3v-.6l1.3-.5h.4v4.1zm3.8-2.1c0 .8-.2 1.4-.5 1.7-.3.3-.8.5-1.3.5s-1-.2-1.3-.5c-.3-.3-.5-.9-.5-1.7v-.9c0-.8.2-1.4.5-1.7.3-.3.8-.5 1.3-.5s1 .2 1.3.5c.3.3.5.9.5 1.7v.9zm-.8-.9c0-.5-.1-.9-.2-1.1-.1-.3-.4-.4-.7-.4s-.6.1-.7.4c-.1.2-.2.6-.2 1.1v1c0 .5.1.9.2 1.1.1.3.4.4.7.4s.6-.1.7-.4c.1-.2.2-.6.2-1.1v-1z"/></svg>
-      <!-- Next -->
-      <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-    </div>
+    <!-- Primary Action Toggle Button -->
+    <button id="toggle" type="button">开始</button>
   </div>
 
-  <!-- Middle Controls (Live Caption & Translation Rows) -->
-  <div class="control-list">
-    <!-- Row 1: 实时字幕 -->
-    <div class="control-row">
-      <div class="control-label-group">
-        <div class="control-icon">
-          <!-- Captions Subtitles Icon -->
-          <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
+  <!-- Primary Key Options (Exposed directly for easy use) -->
+  <div class="primary-options">
+    <!-- Option 1: 识别语种 -->
+    <div class="option-item">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Language / Translate Icon -->
+            <svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.08c1.74-1.94 2.98-4.17 3.71-6.49H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
+          </div>
+          <span>识别语种</span>
         </div>
-        <span id="captionLabelText">实时字幕 - 中文（简体）</span>
       </div>
-      <label class="m3-switch" title="开启/关闭字幕窗口">
-        <input type="checkbox" id="captionActiveSwitch" checked />
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <!-- Row 2: 实时翻译 -->
-    <div class="control-row">
-      <div class="control-label-group">
-        <div class="control-icon">
-          <!-- Google Translate / Translation Icon -->
-          <svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.08c1.74-1.94 2.98-4.17 3.71-6.49H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
-        </div>
-        <span>实时翻译</span>
-      </div>
-      <label class="m3-switch" title="开启/关闭实时翻译">
-        <input type="checkbox" id="translateActiveSwitch" checked />
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <!-- Language Selector Dropdown -->
-    <div class="lang-dropdown-container">
       <select id="language" class="lang-select-box">
-        <option value="auto">自动检测</option>
-        <option value="zh" selected>中文（简体）</option>
-        <option value="ja">日语（日本語）</option>
-        <option value="en">英语（English）</option>
-        <option value="ko">韩语（한국어）</option>
-        <option value="fr">法语（Français）</option>
-        <option value="de">德语（Deutsch）</option>
-        <option value="es">西班牙语（Español）</option>
-        <option value="ru">俄语（Русский）</option>
+        <option value="auto">自动检测 (默认)</option>
+        <option value="ja">日语 (日本語) — 锁定语种，消除假名误识别</option>
+        <option value="en">英语 (English)</option>
+        <option value="ko">韩语 (한국어)</option>
+        <option value="zh">中文 (普通话)</option>
+        <option value="fr">法语 (Français)</option>
+        <option value="de">德语 (Deutsch)</option>
+        <option value="es">西班牙语 (Español)</option>
+        <option value="ru">俄语 (Русский)</option>
       </select>
+    </div>
+
+    <!-- Option 2: 透明悬浮 (只有字) -->
+    <div class="option-item" style="margin-top: 4px;">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Caption Subtitle Icon -->
+            <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
+          </div>
+          <span>透明悬浮 (只有字)</span>
+        </div>
+        <label class="m3-switch" title="切换透明悬浮/黑底框模式">
+          <input id="textOnly" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="option-desc" id="captionStateHint">黑底框，「只有字」在最左边。</p>
+    </div>
+
+    <!-- Option 3: 静音自动隐去 -->
+    <div class="option-item" style="margin-top: 4px;">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Timer Icon -->
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/></svg>
+          </div>
+          <span>静音自动隐去</span>
+        </div>
+        <span class="option-value" id="dismissValue">5 秒</span>
+      </div>
+      <div class="range-grid" style="padding-left: 24px;">
+        <input id="dismissSlider" type="range" min="0" max="15" step="1" value="5" />
+        <output id="dismissReadout" for="dismissSlider">5s</output>
+      </div>
+      <p class="option-desc" id="dismissHint">静音 5 秒后自动隐去字幕，防止无声场景或切换视频时残留。</p>
     </div>
   </div>
 
@@ -661,7 +582,7 @@
     <div class="settings-footer-left">
       <!-- Gear Settings Icon -->
       <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-      <span>字幕设置</span>
+      <span>高级样式与设置</span>
     </div>
     <div class="settings-footer-right">
       <!-- Chevron Down / Open Icon -->
@@ -671,18 +592,8 @@
 
   <!-- Settings Expandable Drawer -->
   <div class="settings-drawer" id="settingsDrawer">
-    <!-- View Mode: 只有字 -->
-    <div class="drawer-row">
-      <span class="drawer-label">透明悬浮 (只有字)</span>
-      <label class="m3-switch">
-        <input id="textOnly" type="checkbox" />
-        <span class="slider"></span>
-      </label>
-    </div>
-    <p class="hint" id="captionStateHint"></p>
-
     <!-- Font Size -->
-    <div class="drawer-row" style="margin-top: 4px;">
+    <div class="drawer-row">
       <span class="drawer-label">字号大小</span>
       <span class="drawer-value"><span id="fontSizeValue">20</span> px</span>
     </div>
@@ -708,22 +619,11 @@
       <span class="drawer-label">刷新步频</span>
       <span class="drawer-value"><span id="cadenceValue">750</span> ms</span>
     </div>
-    <div class="cadence-grid">
+    <div class="range-grid">
       <input id="cadenceSlider" type="range" min="250" max="1000" step="50" value="750" />
       <output id="cadenceReadout" for="cadenceSlider">750</output>
     </div>
     <p class="hint" id="cadenceHint">默认 750ms。跟进及时且避免频繁改口。</p>
-
-    <!-- Auto-Dismiss Timeout -->
-    <div class="drawer-row" style="margin-top: 4px;">
-      <span class="drawer-label">静音自动隐去</span>
-      <span class="drawer-value" id="dismissValue">5 秒</span>
-    </div>
-    <div class="cadence-grid">
-      <input id="dismissSlider" type="range" min="0" max="15" step="1" value="5" />
-      <output id="dismissReadout" for="dismissSlider">5s</output>
-    </div>
-    <p class="hint" id="dismissHint">静音 5 秒后自动隐去字幕，防止无声场景或切换视频时残留。</p>
 
     <!-- External API -->
     <div class="drawer-row" style="margin-top: 6px;">
