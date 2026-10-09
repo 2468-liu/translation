@@ -51,8 +51,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-function nativeConnection() {
-  if (nativePort) return nativePort;
+function openNativeConnection() {
   nativePort = chrome.runtime.connectNative(NATIVE_HOST);
   nativePort.onMessage.addListener((message) => {
     const request = nativeRequests.get(message && message.requestId);
@@ -81,7 +80,7 @@ function nativeRequest(type, timeoutMs = 120000, extra = {}) {
     }, timeoutMs);
     nativeRequests.set(requestId, { resolve, reject, timer });
     try {
-      nativeConnection().postMessage({ type, requestId, ...extra });
+      (nativePort || openNativeConnection()).postMessage({ type, requestId, ...extra });
     } catch (error) {
       clearTimeout(timer);
       nativeRequests.delete(requestId);
@@ -89,7 +88,35 @@ function nativeRequest(type, timeoutMs = 120000, extra = {}) {
     }
   });
 }
+// Probe before trusting a cached port.
+//
+// Chrome suspends the service worker and restarts it, which leaves `nativePort`
+// holding a port object whose native side is gone. postMessage on that port is
+// dropped rather than refused, so nothing comes back and nothing throws: the only
+// thing that ever fires is the 120s timer, and the popup reports
+// "本地后端操作超时" for a backend that would have started in eight seconds.
+// Verified by running the host by hand -- ensure answered ok in 7.7s with the
+// backend down and no pid file.
+//
+// `status` is the probe because it starts nothing: it answers from the ports. A
+// probe that fails means the port is dead, so it is dropped and a fresh one opened
+// rather than waiting out the real request's timeout on it.
+const NATIVE_PROBE_TIMEOUT_MS = 5000;
+async function liveNativeConnection() {
+  if (!nativePort) return openNativeConnection();
+  try {
+    await nativeRequest("status", NATIVE_PROBE_TIMEOUT_MS);
+    return nativePort;
+  } catch (error) {
+    console.warn("[字幕] 本地桥接探活失败，重连", error);
+    nativePort = null;
+    return openNativeConnection();
+  }
+}
 async function ensureBackend(audioOnly) {
+  // Probe first so the 120s is only ever spent on a connection that answers. See
+  // liveNativeConnection for what the cached-port failure looks like.
+  await liveNativeConnection();
   const response = await nativeRequest("ensure", 120000, { audioOnly: Boolean(audioOnly) });
   if (!response || !response.ok || !response.ready) {
     throw new Error((response && response.error) || "本地后端启动失败");
@@ -97,6 +124,7 @@ async function ensureBackend(audioOnly) {
 }
 
 async function shutdownBackend() {
+  await liveNativeConnection();
   // 30s, not 15. The host waits 15s for the ports to close after taskkill, so a 15s
   // request timeout expired at the same moment the host was still working and reported
   // a failure for a teardown that then succeeded -- the popup showing an error over a
@@ -119,6 +147,7 @@ async function switchChain(chain) {
   // and a failed attempt is followed by a full second start for the fallback. Anything
   // less would time out on the slow-but-working path and report a failure that did not
   // happen.
+  await liveNativeConnection();
   const reply = await nativeRequest("switch-chain", 180000, { chain: String(chain || "") });
   if (!reply) return { ok: false, error: "本地后端没有回应链路切换" };
   // rolled_back is not an error to hide: the user clicked something that did not work,
