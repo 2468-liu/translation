@@ -10,6 +10,7 @@ scripts/*.spec
 runtime.json
 .venv/
 logs/
+dist/
 
 # Media is not versioned. samples/ carries two film excerpts and a meeting
 # recording with other people's voices in it, none of which belongs in the
