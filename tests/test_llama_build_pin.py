@@ -24,6 +24,7 @@ inheriting whatever the machine happens to have.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import subprocess
@@ -237,6 +238,31 @@ class ResolverBehaviourTests(unittest.TestCase):
             cwd=str(ROOT), env=full_env)
 
     def test_unspecified_resolves_to_the_highest_installed_version(self):
+        """With nothing naming a version, the newest installed one runs.
+
+        "Nothing" has to be checked rather than assumed. runtime.json's llama_version is
+        a machine-level pin, and the resolver honours it, so a pinned machine resolves to
+        the pinned build even though a newer one is installed. That is the policy working,
+        not a fault -- and it arrived during this work, when 2.55.0 was installed while
+        every measurement stayed on 2.53.0.
+
+        So a pinned machine skips rather than fails. Failing would report a fault that does
+        not exist; passing silently would report a newest-installed behaviour that was
+        never exercised.
+        """
+        pinned = ""
+        runtime = ROOT / "runtime.json"
+        if runtime.exists():
+            try:
+                pinned = str(json.loads(runtime.read_text(encoding="utf-8")).get(
+                    "llama_version") or "")
+            except (ValueError, OSError):
+                pinned = ""
+        if pinned:
+            self.skipTest(
+                f"runtime.json pins llama_version={pinned!r}, so 'unspecified' is not "
+                f"reached on this machine. Remove the key to exercise this rule.")
+
         done = self._resolve()
         self.assertEqual(done.returncode, 0, done.stderr)
         highest = max(self.installed, key=lambda v: tuple(int(p) for p in v.split(".")))

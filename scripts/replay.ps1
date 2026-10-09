@@ -388,6 +388,30 @@ $ErrorActionPreference = "Continue"
 $replayExit = $LASTEXITCODE
 $ErrorActionPreference = $previousPreference
 
+# Was it the server that went away, or the client that gave up?
+#
+# "no close frame received or sent" says the client never saw a close handshake, which
+# has two very different causes and two opposite fixes: the server process died (something
+# kills it, and it is a memory or lifecycle problem), or the server is fine and the
+# connection was dropped from its side without a close (a protocol or lifecycle problem
+# in the server's handler). Three runs stopped this way -- 11.0s, 48.6s, 34.4s, same
+# message -- and nothing recorded which side was at fault, because the server is started
+# with -PassThru and its state was never read afterwards.
+#
+# Refresh() before reading HasExited, or the property reflects the state as of the last
+# .NET query rather than now.
+$serverAlive = $false
+$serverExit = $null
+try {
+    $serverProc.Refresh()
+    $serverAlive = -not $serverProc.HasExited
+    if (-not $serverAlive) { $serverExit = $serverProc.ExitCode }
+} catch {
+    Write-Host "could not read the server process state: $($_.Exception.Message)"
+}
+$portAlive = Test-TcpPort -Port 8765
+Write-Host "after playback: server pid $($serverProc.Id) alive=$serverAlive exitCode=$serverExit port8765=$portAlive"
+
 # A replay that died partway still leaves a log behind, and measuring that would
 # report a short window with no indication anything was wrong.
 if ($replayExit -ne 0 -or -not (Test-Path "logs\blog_3min_test.json")) {
@@ -440,7 +464,13 @@ if ($clipSec -gt 0 -and $playedSec -lt 0.8 * $clipSec) {
   六次回放里三次这样断过（11.0s / 48.6s / 34.4s，同一条信息）。**残缺运行拿满分比
   运行失败更糟，因为它不留任何可疑的地方。**
 
-  成因未定位（掐断的是到字幕窗口那条 WebSocket）。这一条只负责不让它出数。
+  掐在哪一侧：
+      服务端进程 alive = $serverAlive   exitCode = $serverExit
+      8765 端口还在监听      = $portAlive
+  alive=False ⇒ 服务端死了（找什么杀了它：显存、生命周期、外部 kill）
+  alive=True  且端口还在     ⇒ 服务端活着但连接被它那边丢掉（找 handler 的关闭路径）
+
+  成因未定位。这一条只负责不让它出数，并把这一侧的事实记录下来。
 "@
 }
 
