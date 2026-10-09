@@ -21,6 +21,11 @@
 ASR_DEVICE          cuda
 ASR_COMPUTE_TYPE    float16
 ASR_MODEL           faster-whisper-small
+翻译权重            Hy-MT2-1.8B-StreamRevise-v4-Q4_K_M.gguf（10-08 20:54 起在用）
+                    **流式 LoRA 微调，与基线 Q4_K_M 视作同一个模型**（用户判定 10-09）。
+                    基线那份已不在 models\hy-mt2-1.8b\ 盘上，只有 v4 + README_CN.md。
+                    ⇒10-08 20:16 之前的绝对值与之后的**不可并列**；同权重之间的对照照常。
+                    10-09 全部运行都在 v4 上，含 BLK1/2/3 与 PUNCT1~4。
 PARTIAL_INTERVAL_MS 750   ← 生效值。**这一行原来写的是 250，而这是一份「生效值」表，
                             最不该错的字段。**750 的理由不是"更快"：823ms 的 ASR 在
                             250 节奏下 215 次全部 overrun，750 下占墙钟 57.1%。
