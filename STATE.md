@@ -875,7 +875,8 @@ final 覆盖残句 → 可见的跳，体感是「一个人说话断点续」，
    而只有 _strip_frame 会设它，已显示的窗口不会再跑 show()
 3. _broadcast_state 只发变化值：扩展收到 state 会回一个同值的 style，
    回到 caption 又是 apply_text_only ⇒ 两边都不比较，这个环在 WS+UDP 上一直来回跑
-4. 8767 监听器改成进程一个，连接只换发送目标（见 ③）
+4. 8767 监听器改成进程一个，连接只换发送目标（见 ③）；bind 失败会打印一行
+   并允许下一个连接重试 —— 原来它只往 stderr 丢 traceback，症状是"点了没反应"
 ```
 
 **实测（`scripts/probe_caption_text_only.py`、`probe_caption_state_channel.py`，两者都不入库）：**

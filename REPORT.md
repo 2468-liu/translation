@@ -6131,6 +6131,13 @@ style(False) -> 8767 收到 1 帧 {'textOnly': False, ...}
 改成进程一个监听器，连接只更新发送目标。文件名反了整整一天的方向在这里：
 上一轮把它记成「扩展没监听」，其实扩展一直在听，坏的是发的那一头。
 
+顺带把同一条路上另一个「不响的失败」也堵了：bind 抛异常时原来只有 traceback 落在
+stderr，现在打印一行 `caption state listener could not bind 8767: ...`，并把
+`_STATE_LISTENER` 置回 None，让下一个连接再试一次（线程在 `start()` 之前就登记，
+所以不会把一个已经死掉的线程放回去）。实测：占住 8767 后打印那行且 `_STATE_LISTENER`
+保持 None；空闲时线程起来、第二次调用是空操作。测试见
+`StateListenerStartupTests`。
+
 ### 60.6 测试
 
 ```
