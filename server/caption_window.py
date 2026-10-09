@@ -121,10 +121,18 @@ CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
 # two arms are indistinguishable on every display-side metric that was recorded.
 BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"
 
-# How long a dropped row takes to settle. Short enough not to lag the next caption,
-# long enough that the movement is visible as movement -- at 60Hz, 120ms is seven
-# frames, and a one-row shift at a 31px line height is about 260px/s over that time.
-SLIDE_MS = _env_int("TRANSLATION_CAPTION_SLIDE_MS", 120)
+# How long a dropped row or a moved block takes to settle. Zero means it does not move
+# at all: the line is drawn where it belongs the first time and no timer is armed.
+#
+# It was 120ms, chosen as seven frames at 60Hz, and the user reported the movement as
+# worse than the jump it replaced. So it is off by default. The threshold below and the
+# measurement behind it are kept, because they are what a future attempt would start
+# from, and because with the duration at zero they cost nothing.
+#
+# The distinction that matters when turning it off: the duration going to zero must also
+# take the *offset* with it. Drawing at the offset and jumping back a frame later is a
+# flash in the wrong place, which is worse than either the move or the jump.
+SLIDE_MS = _env_int("TRANSLATION_CAPTION_SLIDE_MS", 0)
 
 # How far the centred block has to move before it is worth animating.
 #
@@ -699,16 +707,28 @@ class _Caption:
         # by a character at a time, which is a creep and is left alone; block mode adds a
         # whole clause at once, and that reads as a jump. The threshold is the measured
         # gap between those two populations, not a taste judgement.
+        #
+        # SLIDE_MS at or below zero turns the movement off entirely, and both the offset
+        # and the timer go with it. Setting only the duration to zero would be worse than
+        # doing nothing: the item would still be *created* at the offset position and then
+        # jumped back one frame later, which is a flash at the wrong place rather than a
+        # move. Turning it off has to mean the line is drawn where it belongs the first
+        # time.
+        #
+        # It is off because the movement read as worse than the jump it replaced, not
+        # because it was measured to be wrong. The row drop is still a content swap; what
+        # is gone is the attempt to make it look deliberate.
+        moving = SLIDE_MS > 0
         shift = settle_shift(self._drawn_text, display_body, self.width, wrap,
-                             self.font_line.measure, self._block_by_punct)
+                             self.font_line.measure, self._block_by_punct and moving)
         self._cancel_slide()
-        start_y = 25 + dropped * line_h if dropped else 25
+        start_y = 25 + dropped * line_h if (dropped and moving) else 25
         fresh = self._draw(display_body, self.font_line, wrap, start_y, shift)
         for stale in self.canvas.find_all():
             if stale != fresh:
                 self.canvas.delete(stale)
         self._drawn_text = display_body
-        if dropped or shift:
+        if moving and (dropped or shift):
             self._slide_item = fresh
             self._slide_from = start_y
             self._slide_shift = shift
@@ -740,6 +760,12 @@ class _Caption:
                 # unanswerable from the log -- the one thing that moves on screen was
                 # the one thing the content hash was blind to.
                 lines=lines,
+                # Rows the caption outgrew, which wrap_caption dropped from the front.
+                # Recorded here rather than only on the slide event because the movement
+                # is off by default: without this the fact that a row was discarded would
+                # leave no trace at all, and turning the animation off would quietly turn
+                # off the measurement of what the animation was for.
+                dropped=dropped,
                 held=1 if self._held_paint else 0,
                 # A hash of what was actually shown, so a recorder can tell
                 # whether this fragment's translation reached the screen at all.

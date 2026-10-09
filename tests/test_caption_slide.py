@@ -69,11 +69,18 @@ class DroppedRowTests(unittest.TestCase):
             "this sample fits, so there is nothing to animate",
         )
 
-    def test_the_slide_is_short_enough_to_keep_up(self):
-        # 120ms is seven frames at 60Hz. Longer and the next caption arrives mid-move;
-        # shorter and the movement reads as a jump again.
-        self.assertGreaterEqual(SLIDE_MS, 60)
-        self.assertLessEqual(SLIDE_MS, 200)
+    def test_the_slide_is_short_enough_to_keep_up_when_it_is_on(self):
+        # The movement is off by default now, so this no longer asserts a number the
+        # program ships with. What it still guards is that a future attempt to turn it
+        # back on does not pick something that lags the next caption: 120ms was seven
+        # frames at 60Hz, and longer than that and the next paint arrives mid-move.
+        from server import caption_window as cw
+
+        self.assertEqual(SLIDE_MS, 0, "off by default; see MovementOffTests")
+        self.assertGreaterEqual(cw.SLIDE_MS, 0)
+        if cw.SLIDE_MS > 0:
+            self.assertGreaterEqual(cw.SLIDE_MS, 60)
+            self.assertLessEqual(cw.SLIDE_MS, 200)
 
 
 class SourceShapeTests(unittest.TestCase):
@@ -309,6 +316,53 @@ def _shift_for(old: str, new: str) -> float:
 
     stub = Stub()
     return stub._visual_left(old, stub.wrap) - stub._visual_left(new, stub.wrap)
+
+
+class MovementOffTests(unittest.TestCase):
+    """Turning the movement off has to take the offset with it.
+
+    Setting only the duration to zero is worse than doing nothing: the item is still
+    *created* at the offset position and then jumps back on the next frame, which is a
+    flash in the wrong place rather than a move. The first cut of the off switch did
+    exactly that.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from server import caption_window as cw
+
+        cls.cw = cw
+        cls.source = inspect.getsource(cw._Caption._paint)
+        cls.code = "\n".join(line.split("#")[0] for line in cls.source.splitlines())
+
+    def test_movement_is_off_by_default(self):
+        # The user reported the movement as worse than the jump. That is the reason it
+        # is off; it is not a measurement, and the default says so.
+        self.assertEqual(self.cw.SLIDE_MS, 0)
+
+    def test_the_offset_only_applies_when_moving(self):
+        self.assertIn(
+            "start_y = 25 + dropped * line_h if (dropped and moving) else 25",
+            self.code,
+            "the row offset survives with the duration at zero, so the line is drawn "
+            "displaced and jumped back a frame later",
+        )
+
+    def test_horizontal_settling_is_gated_on_moving_too(self):
+        self.assertIn("self._block_by_punct and moving", self.code)
+
+    def test_no_timer_is_armed_when_movement_is_off(self):
+        self.assertRegex(self.code, r"if moving and \(dropped or shift\)")
+
+    def test_a_row_drop_is_still_recorded_with_the_movement_off(self):
+        # caption.slide only fires when something moves, so with the movement off the
+        # only trace of a discarded row would be gone. It goes on the paint event
+        # instead: turning the animation off must not turn off the measurement of what
+        # the animation was for.
+        source = inspect.getsource(self.cw._Caption._paint)
+        code = "\n".join(line.split("#")[0] for line in source.splitlines())
+        paint_block = code.split('"paint"', 1)[1]
+        self.assertIn("dropped=dropped", paint_block)
 
 
 if __name__ == "__main__":
