@@ -189,7 +189,7 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     apiUrl: apiUrl || "",
     apiKey: apiKey || "",
     apiModel: apiModel || "",
-    textOnly: saved.captionTextOnly !== false,
+    textOnly: Boolean(saved.captionTextOnly),
     fontPx,
     color: saved.captionColor,
     dismissMs: timeoutMs,
@@ -297,7 +297,7 @@ async function applyCaptionStyle() {
   const fontPx = clampFont(saved.captionFontPx);
   chrome.runtime.sendMessage({
     type: "caption-style",
-    textOnly: saved.captionTextOnly !== false,
+    textOnly: Boolean(saved.captionTextOnly),
     fontPx,
     color: saved.captionColor,
     dismissMs: Number(saved.captionDismissSec || 5) * 1000,
