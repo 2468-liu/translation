@@ -12,7 +12,11 @@ These tests pin both halves: that the switch reaches the live session, and that
 the extension's frame is what carries it.
 """
 
+import contextlib
+import io
 from pathlib import Path
+import socket
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -229,6 +233,33 @@ class WebSocketConfigCarriesTheSwitchTests(unittest.TestCase):
         self.assertIn("partialIntervalMs: DEFAULT_CADENCE_MS", self.popup)
         self.assertEqual(config.PARTIAL_INTERVAL_MS, 750)
         self.assertIn("const DEFAULT_CADENCE_MS = 750", self.popup)
+
+
+class StateListenerStartupTests(unittest.TestCase):
+    """What happens when 8767 is already held -- the case that used to be silent."""
+
+    def setUp(self):
+        self.previous = ws_server._STATE_LISTENER
+        # Hold the port exactly as a stale process would.
+        self.holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.holder.bind(("127.0.0.1", ws_server.STATE_PORT))
+        ws_server._STATE_LISTENER = None
+
+    def tearDown(self):
+        ws_server._STATE_LISTENER = self.previous
+        self.holder.close()
+
+    def test_a_held_port_is_announced_and_retryable(self):
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            ws_server._start_state_listener()
+            for _ in range(100):
+                if ws_server._STATE_LISTENER is None:
+                    break
+                time.sleep(0.01)
+        self.assertIn("could not bind", said.getvalue(),
+                      "a bind failure has to be reported, not left on stderr")
+        self.assertIsNone(ws_server._STATE_LISTENER,
+                          "a later connection must be able to try again")
 
 
 if __name__ == "__main__":

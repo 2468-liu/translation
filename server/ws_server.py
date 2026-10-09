@@ -77,8 +77,11 @@ def _start_state_listener() -> None:
     global _STATE_LISTENER
     if _STATE_LISTENER is not None:
         return
-    _STATE_LISTENER = threading.Thread(target=_listen_caption_state, daemon=True)
-    _STATE_LISTENER.start()
+    # Registered before start(), so a thread that fails immediately can clear it again
+    # without the starter putting the dead thread back afterwards.
+    thread = threading.Thread(target=_listen_caption_state, daemon=True)
+    _STATE_LISTENER = thread
+    thread.start()
 
 
 # The session serving the current connection. Held so the caption window's switch
@@ -128,8 +131,20 @@ def _listen_caption_state() -> None:
     loop. After the first reconnect a click on the caption window's control therefore
     stopped reaching the popup, and nothing said so.
     """
+    global _STATE_LISTENER
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", STATE_PORT))
+    try:
+        sock.bind(("127.0.0.1", STATE_PORT))
+    except OSError as exc:
+        # Say it out loud, and forget the thread so a later connection tries again.
+        # This is the part that used to be invisible: a stale process holding the port
+        # made the bind raise, the thread died with its traceback on stderr, and the
+        # only symptom was a checkbox in the caption window that did nothing. A control
+        # whose channel never opened cannot be judged while watching any more than one
+        # whose confirmation is dropped.
+        _STATE_LISTENER = None
+        print(f"caption state listener could not bind {STATE_PORT}: {exc}", flush=True)
+        return
     while True:
         data, _ = sock.recvfrom(65535)
         try:
