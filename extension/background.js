@@ -167,7 +167,7 @@ function clampFont(px) {
   return Math.max(16, Math.min(40, Math.round(size)));
 }
 
-async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel, partialIntervalMs }) {
+async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel, partialIntervalMs, dismissMs }) {
   captureError = "";
   await ensureBackend(audioOnly);
   // Chrome keeps a tab captured until its tracks end. Release the previous
@@ -177,8 +177,10 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     captionTextOnly: false,
     captionFontPx: 20,
     captionColor: "#ffffff",
+    captionDismissSec: 5,
   });
   const fontPx = clampFont(saved.captionFontPx);
+  const timeoutMs = dismissMs != null ? Number(dismissMs) : (Number(saved.captionDismissSec || 5) * 1000);
   const response = await sendWhenReady({
     type: "start-capture",
     language: language || "auto",
@@ -190,6 +192,7 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     textOnly: saved.captionTextOnly !== false,
     fontPx,
     color: saved.captionColor,
+    dismissMs: timeoutMs,
     partialIntervalMs,
   });
   if (!response || !response.ok) {
@@ -289,6 +292,7 @@ async function applyCaptionStyle() {
     captionTextOnly: false,
     captionFontPx: 20,
     captionColor: "#ffffff",
+    captionDismissSec: 5,
   });
   const fontPx = clampFont(saved.captionFontPx);
   chrome.runtime.sendMessage({
@@ -296,6 +300,7 @@ async function applyCaptionStyle() {
     textOnly: saved.captionTextOnly !== false,
     fontPx,
     color: saved.captionColor,
+    dismissMs: Number(saved.captionDismissSec || 5) * 1000,
   }).catch(() => {});
 }
 

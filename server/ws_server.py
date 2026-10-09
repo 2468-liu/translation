@@ -25,6 +25,7 @@ from .caption_window import (
     note_caption,
     raise_caption,
     request_caption_state,
+    set_dismiss_timeout,
     set_font_size,
     set_font_color,
     set_text_only,
@@ -133,6 +134,8 @@ def _apply_caption_controls(data: dict) -> None:
     color = style_font_color(data)
     if color is not None:
         set_font_color(color)
+    if "dismissMs" in data and data.get("dismissMs") is not None:
+        set_dismiss_timeout(int(data["dismissMs"]))
 
 
 def _listen_caption_state() -> None:

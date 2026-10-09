@@ -388,6 +388,9 @@ def _enable_dpi() -> float:
 
 
 class _Caption:
+    dismiss_ms: int = 5000
+    _dismiss_job: object = None
+
     def __init__(self, scale: float) -> None:
         self.root = tk.Tk()
         self.root.withdraw()
@@ -447,6 +450,8 @@ class _Caption:
         # the readout moved to the extension, and this survives so the ack is not a
         # packet the window silently swallows.
         self._cadence_applied = 0
+        self.dismiss_ms = _env_int("TRANSLATION_CAPTION_DISMISS_MS", 5000)
+        self._dismiss_job = None
         self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
         self.font_px = 20
         self.font_color = "#ffffff"
@@ -975,6 +980,31 @@ class _Caption:
         if self.line or self.visible:
             self._paint()
 
+    def apply_dismiss_timeout(self, ms: int) -> None:
+        try:
+            val = int(ms)
+        except (TypeError, ValueError):
+            return
+        self.dismiss_ms = max(0, min(30000, val))
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        if self.line and self.visible and self.dismiss_ms > 0:
+            self._dismiss_job = self.root.after(self.dismiss_ms, self._on_dismiss_timeout)
+
+    def _on_dismiss_timeout(self) -> None:
+        self._dismiss_job = None
+        if self._pending:
+            return
+        self.line = ""
+        self._drawn_text = ""
+        self.visible = False
+        self.root.withdraw()
+        perf.emit("caption", "dismiss", why="timeout")
+
     def _broadcast_state(self, force: bool = False) -> None:
         payload = {
             "kind": "state",
@@ -1094,6 +1124,12 @@ class _Caption:
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
             self._hold_job = None
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
         self.close.place_forget()
         self.root.withdraw()
 
@@ -1121,6 +1157,12 @@ class _Caption:
         if self._hold_job is not None:
             self.root.after_cancel(self._hold_job)
             self._hold_job = None
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
         self._close_wait("", "clear")
         if self.visible:
             self._paint()
@@ -1128,6 +1170,12 @@ class _Caption:
     def begin_segment(self) -> None:
         now = time.monotonic()
         self._segment_seq += 1
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
         if self._last_segment_at:
             gap = now - self._last_segment_at
             if 0.45 <= gap <= 8.0:
@@ -1455,6 +1503,12 @@ class _Caption:
     def _apply_line(self, text: str, action: str = "") -> None:
         # The caller says why this line is changing, so the paint probe can
         # tell an immediate redraw apart from a held one.
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
         if action:
             self._trace_action = action
         self._prev_chars = len(self.line)
@@ -1468,8 +1522,10 @@ class _Caption:
             return
         if action == "paint":
             self._paint()
-            return
-        self.show()
+        else:
+            self.show()
+        if self.line and self.dismiss_ms > 0:
+            self._dismiss_job = self.root.after(self.dismiss_ms, self._on_dismiss_timeout)
 
     def _pump(self) -> None:
         while True:
@@ -1523,6 +1579,8 @@ class _Caption:
                 self.apply_font(value)
             elif kind == "color":
                 self.apply_color(value)
+            elif kind == "dismiss":
+                self.apply_dismiss_timeout(value)
             elif kind == "arm":
                 self.arm()
             elif kind == "clear":
@@ -1960,6 +2018,14 @@ def set_font_size(px: int) -> None:
 def set_font_color(color: str) -> None:
     if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         _send("color", color.lower())
+
+
+def set_dismiss_timeout(ms: int) -> None:
+    try:
+        val = int(ms)
+    except (TypeError, ValueError):
+        return
+    _send("dismiss", val)
 
 
 def arm_caption() -> None:

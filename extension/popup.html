@@ -396,6 +396,16 @@
       <output id="cadenceReadout" for="cadenceSlider">750</output>
     </div>
     <p class="hint" id="cadenceHint">默认 750ms。跟进及时且避免频繁改口。</p>
+
+    <div class="row" style="margin-top: 8px;">
+      <span class="row-label">静音自动隐去</span>
+      <span class="row-value" id="dismissValue">5 秒</span>
+    </div>
+    <div class="cadence">
+      <input id="dismissSlider" type="range" min="0" max="15" step="1" value="5" />
+      <output id="dismissReadout" for="dismissSlider">5s</output>
+    </div>
+    <p class="hint" id="dismissHint">静音 5 秒后自动隐去字幕，防止无声场景或切换视频时残留。</p>
   </div>
 
   <!-- Advanced Settings -->

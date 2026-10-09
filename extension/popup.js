@@ -19,6 +19,10 @@ const cadenceValue = document.getElementById("cadenceValue");
 const cadenceReadout = document.getElementById("cadenceReadout");
 const cadenceHint = document.getElementById("cadenceHint");
 const captionStateHint = document.getElementById("captionStateHint");
+const dismissSlider = document.getElementById("dismissSlider");
+const dismissValue = document.getElementById("dismissValue");
+const dismissReadout = document.getElementById("dismissReadout");
+const dismissHint = document.getElementById("dismissHint");
 
 // Must equal server/config.py PARTIAL_INTERVAL_MS. A lower default here would mean
 // pressing start silently changes behaviour, and that mismatch has been the cause
@@ -29,6 +33,43 @@ const CADENCE_MAX_MS = 1000;
 const CADENCE_STEP_MS = 50;
 
 let cadenceCommit = null;
+let dismissCommit = null;
+
+function clampDismiss(sec) {
+  const v = Number(sec);
+  if (!Number.isFinite(v)) return 5;
+  return Math.min(15, Math.max(0, Math.round(v)));
+}
+
+function paintDismiss(sec) {
+  const v = clampDismiss(sec);
+  if (dismissSlider) dismissSlider.value = String(v);
+  if (dismissValue) dismissValue.textContent = v === 0 ? "常驻不隐去" : `${v} 秒`;
+  if (dismissReadout) dismissReadout.textContent = v === 0 ? "常驻" : `${v}s`;
+  if (dismissHint) {
+    dismissHint.textContent = v === 0
+      ? "字幕将持续保留在屏幕上，直到有新台词覆盖。"
+      : `静音 ${v} 秒后自动隐去字幕，防止无声场景或切换视频时残留。`;
+  }
+  return v;
+}
+
+async function sendDismiss(sec) {
+  const v = paintDismiss(sec);
+  await chrome.storage.local.set({ captionDismissSec: v });
+  tellCaptionWindow();
+}
+
+function onDismissInput() {
+  if (dismissSlider) paintDismiss(dismissSlider.value);
+  if (dismissCommit !== null) clearTimeout(dismissCommit);
+  dismissCommit = setTimeout(() => { dismissCommit = null; if (dismissSlider) sendDismiss(dismissSlider.value); }, 400);
+}
+
+function onDismissChange() {
+  if (dismissCommit !== null) { clearTimeout(dismissCommit); dismissCommit = null; }
+  if (dismissSlider) sendDismiss(dismissSlider.value);
+}
 
 // A chain is the whole pipeline -- which models, which ports, and which output mode --
 // not one recogniser. runtime.json holds the choice and native_host does the restart, so
@@ -273,6 +314,7 @@ function tellCaptionWindow() {
     textOnly: textOnly.checked,
     fontPx: Number(fontSize.value) || 20,
     color: fontColor.value,
+    dismissMs: clampDismiss(dismissSlider ? dismissSlider.value : 5) * 1000,
   }).catch(() => {});
 }
 
@@ -306,6 +348,7 @@ async function refresh(keepMessage, failedStep) {
     audioOnly: false,
     captionFontPx: 20,
     captionColor: "#ffffff",
+    captionDismissSec: 5,
     apiEnabled: false,
     apiUrl: "",
     apiKey: "",
@@ -313,6 +356,7 @@ async function refresh(keepMessage, failedStep) {
     partialIntervalMs: DEFAULT_CADENCE_MS,
   });
   paintCadence(theme.partialIntervalMs);
+  paintDismiss(theme.captionDismissSec !== undefined ? theme.captionDismissSec : 5);
   textOnly.checked = Boolean(theme.captionTextOnly);
   audioOnly.checked = Boolean(theme.audioOnly);
   // Storage is what the next start reads; this checkbox has to show what is on screen
@@ -466,6 +510,10 @@ for (const field of [apiUrl, apiKey, apiModel]) {
 }
 cadenceSlider.addEventListener("input", onCadenceInput);
 cadenceSlider.addEventListener("change", onCadenceChange);
+if (dismissSlider) {
+  dismissSlider.addEventListener("input", onDismissInput);
+  dismissSlider.addEventListener("change", onDismissChange);
+}
 if (chainSelect) {
   chainSelect.addEventListener("change", () => {
     // Reset the hint colour before switching: a previous failure left it red, and a red
@@ -507,6 +555,7 @@ toggle.addEventListener("click", async () => {
         language: language.value,
         audioOnly: audioOnly.checked,
         partialIntervalMs: clampCadence(cadenceSlider.value),
+        dismissMs: clampDismiss(dismissSlider ? dismissSlider.value : 5) * 1000,
         ...api,
       });
       if (!response || !response.ok) {

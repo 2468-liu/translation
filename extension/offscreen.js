@@ -105,6 +105,7 @@ function configPayload(message) {
   if (typeof message.textOnly === "boolean") payload.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") payload.fontPx = clampFont(message.fontPx);
   if (typeof message.color === "string") payload.color = message.color;
+  if (message.dismissMs != null && message.dismissMs !== "") payload.dismissMs = Number(message.dismissMs);
   // The cadence switch. Carried on the same config frame as the rest so a start
   // already opens on the chosen value; ws_server applies it like any other.
   if (Number(message.partialIntervalMs) > 0) {
@@ -118,6 +119,7 @@ function rememberStyle(message) {
   if (typeof message.textOnly === "boolean") style.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") style.fontPx = clampFont(message.fontPx);
   if (typeof message.color === "string") style.color = message.color;
+  if (message.dismissMs != null && message.dismissMs !== "") style.dismissMs = Number(message.dismissMs);
   desiredStyle = style;
 }
 
