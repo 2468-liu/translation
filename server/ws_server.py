@@ -376,7 +376,14 @@ async def main() -> None:
         print("pipeline: audio-native (no ASR)")
     else:
         asr = build_asr()
-        print("pipeline: whisper + text model")
+        # The backend's own name, not a literal. This branch covers whisper *and*
+        # qwen3 -- both load a recogniser and a separate text translator -- so a
+        # hardcoded "whisper" printed "pipeline: whisper + text model" on the qwen3-hy
+        # chain, where the only thing that gave the arm away was effective.config.
+        # Reading an arm off a log line that can be wrong is the thing this repository
+        # has been bitten by repeatedly; the arm identity has to come from the field
+        # that is set, not from the branch it took.
+        print(f"pipeline: {type(asr).__name__} + text model (asr_backend={config.ASR_BACKEND})")
     print(f"WebSocket ws://{WS_HOST}:{WS_PORT}/ws")
     async with serve(
         lambda ws: handle(ws, asr),
