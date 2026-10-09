@@ -175,6 +175,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !Object.prototype.hasOwnProperty.call(changes, "captionTextOnly")) return;
   const next = Boolean(changes.captionTextOnly.newValue);
   textOnly.checked = next;
+  captionLive = next;
+  if (captionPresent === null) captionPresent = true;
+  paintCaptionState();
   status.textContent = captionTextOnlyNote(next);
 });
 
@@ -285,6 +288,11 @@ function askCaptionWindowState() {
         // No socket to the local service: state ③, not a caption fault.
         captionPresent = false;
         captionLive = null;
+        paintCaptionState();
+      } else if (reply && typeof reply.currentTextOnly === "boolean") {
+        captionPresent = true;
+        captionLive = reply.currentTextOnly;
+        textOnly.checked = reply.currentTextOnly;
         paintCaptionState();
       }
     })

@@ -6,260 +6,109 @@
   <title>实时字幕翻译</title>
   <style>
     :root {
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --card-border: #e2e8f0;
-      --text-main: #0f172a;
-      --text-muted: #64748b;
-      --primary: #2563eb;
-      --primary-hover: #1d4ed8;
-      --danger: #dc2626;
-      --danger-hover: #b91c1c;
-      --accent: #f59e0b;
-      --radius: 12px;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --surface-variant: #f1f3f4;
+      --border: #dadce0;
+      --text: #202124;
+      --text-secondary: #5f6368;
+      --text-tertiary: #80868b;
+      --primary: #1a73e8;
+      --primary-hover: #1557d0;
+      --primary-bg: #e8f0fe;
+      --danger: #d93025;
+      --danger-hover: #b31412;
+      --danger-bg: #fce8e6;
+      --success: #1e8e3e;
+      --success-bg: #e6f4ea;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
     }
     * {
       box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
     }
     body {
       margin: 0;
-      width: 360px;
-      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      color: var(--text-main);
+      width: 340px;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
       background: var(--bg);
       user-select: none;
     }
     main {
-      padding: 14px 16px 16px;
+      padding: 16px;
     }
-    /* Header Card */
-    .header-card {
+
+    /* Top Bar */
+    .header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 12px 14px;
-      margin-bottom: 12px;
-      border-radius: var(--radius);
-      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-      color: #ffffff;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+      justify-content: space-between;
+      margin-bottom: 14px;
     }
-    .header-logo {
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-icon {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.12);
-      font-size: 20px;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      background: var(--primary-bg);
+      color: var(--primary);
       font-weight: 700;
-      flex-shrink: 0;
+      font-size: 14px;
     }
-    .header-info {
-      flex: 1;
-      min-width: 0;
+    .brand-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.1px;
     }
-    .header-info h1 {
-      margin: 0;
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: -0.2px;
-    }
-    .header-info p {
-      margin: 2px 0 0;
-      font-size: 11px;
-      color: #94a3b8;
-    }
-    .status-badge {
+    .badge {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 4px 8px;
-      border-radius: 20px;
-      background: rgba(255, 255, 255, 0.1);
+      padding: 3px 8px;
+      border-radius: 12px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
+      background: var(--surface-variant);
+      color: var(--text-secondary);
+    }
+    .badge.active {
+      background: var(--success-bg);
+      color: var(--success);
     }
     #mediaState {
-      font-size: 10px;
-      color: #94a3b8;
+      font-size: 8px;
     }
-    /* Cards */
-    .card {
-      padding: 12px 14px;
-      margin-bottom: 10px;
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius);
-      background: var(--card-bg);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+
+    /* Primary Action */
+    .action-container {
+      margin-bottom: 14px;
     }
-    .card-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin: 0 0 10px;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .setting-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin: 8px 0;
-    }
-    .setting-label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-main);
-    }
-    /* Form controls */
-    label {
-      display: block;
-      margin: 8px 0 4px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    select, input[type="text"], input[type="password"] {
-      width: 100%;
-      height: 34px;
-      padding: 6px 10px;
-      margin-bottom: 8px;
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      background: #ffffff;
-      font: inherit;
-      font-size: 12px;
-      color: var(--text-main);
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    select:focus, input[type="text"]:focus, input[type="password"]:focus {
-      border-color: var(--primary);
-    }
-    /* Switch */
-    .switch {
-      position: relative;
-      width: 38px;
-      height: 22px;
-      margin: 0;
-      cursor: pointer;
-      accent-color: var(--primary);
-    }
-    /* Slider row */
-    .slider-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin: 8px 0 2px;
-    }
-    .slider-row label {
-      margin: 0;
-    }
-    .pill-badge {
-      display: inline-block;
-      padding: 1px 7px;
-      border-radius: 10px;
-      background: #f1f5f9;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--primary);
-      font-variant-numeric: tabular-nums;
-    }
-    input[type="range"] {
-      width: 100%;
-      margin: 6px 0;
-      accent-color: var(--primary);
-      cursor: pointer;
-    }
-    .cadence {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: center;
-      gap: 8px;
-    }
-    .cadence output {
-      font-variant-numeric: tabular-nums;
-      color: var(--text-muted);
-      font-size: 12px;
-      min-width: 4.5ch;
-      text-align: right;
-    }
-    /* Color Row & Presets */
-    .color-section {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 6px 0 8px;
-    }
-    .color-presets {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex: 1;
-    }
-    .color-dot {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      border: 2px solid #e2e8f0;
-      cursor: pointer;
-      transition: transform 0.15s, border-color 0.15s;
-    }
-    .color-dot:hover {
-      transform: scale(1.15);
-      border-color: var(--primary);
-    }
-    #fontColor {
-      width: 32px;
-      height: 24px;
-      padding: 0;
-      border: 1px solid var(--card-border);
-      border-radius: 6px;
-      background: #ffffff;
-      cursor: pointer;
-    }
-    /* Engine Badge */
-    .engine-pill {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: #f1f5f9;
-      border: 1px solid #e2e8f0;
-      font-size: 12px;
-      color: #334155;
-      font-weight: 500;
-    }
-    .engine-icon {
-      font-size: 14px;
-    }
-    /* Hints */
-    .hint {
-      margin: 4px 0 0;
-      color: var(--text-muted);
-      font-size: 11px;
-      line-height: 1.4;
-    }
-    /* Start / Stop Button */
     #toggle {
       width: 100%;
-      padding: 12px;
-      margin-top: 4px;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       border: 0;
-      border-radius: var(--radius);
+      border-radius: var(--radius-md);
       background: var(--primary);
       color: #ffffff;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
-      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+      transition: background 0.15s, transform 0.05s;
     }
     #toggle:hover {
       background: var(--primary-hover);
@@ -269,7 +118,6 @@
     }
     #toggle.stop {
       background: var(--danger);
-      box-shadow: 0 4px 10px rgba(220, 38, 38, 0.25);
     }
     #toggle.stop:hover {
       background: var(--danger-hover);
@@ -278,140 +126,295 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
-    /* Status */
-    #status {
-      min-height: 1.4em;
-      margin-top: 10px;
-      padding: 6px 10px;
-      border-radius: 8px;
-      background: #f1f5f9;
-      color: var(--text-muted);
+
+    /* Section & Cards */
+    .group {
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .group:last-of-type {
+      border-bottom: none;
+      margin-bottom: 8px;
+      padding-bottom: 0;
+    }
+    .group-title {
       font-size: 11px;
-      line-height: 1.4;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin: 0 0 8px;
+    }
+
+    /* Form Rows */
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 28px;
+      margin: 6px 0;
+    }
+    .row-label {
+      font-size: 13px;
+      color: var(--text);
+    }
+    .row-value {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--primary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Native Material Switch */
+    .switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      margin: 0;
+      cursor: pointer;
+      accent-color: var(--primary);
+    }
+
+    /* Form Controls */
+    select, input[type="text"], input[type="password"] {
+      width: 100%;
+      height: 32px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      font: inherit;
+      font-size: 12px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    select:focus, input[type="text"]:focus, input[type="password"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+    label {
+      display: block;
+      margin: 6px 0 3px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* Sliders */
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      margin: 6px 0;
+      background: var(--surface-variant);
+      border-radius: 2px;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .cadence {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+    }
+    .cadence output {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      min-width: 4.5ch;
+      text-align: right;
+    }
+
+    /* Color Palette */
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+    .color-presets {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .color-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: transform 0.12s;
+    }
+    .color-dot:hover {
+      transform: scale(1.2);
+    }
+    #fontColor {
+      width: 28px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+
+    /* Help Text & Details */
+    .hint {
+      margin: 3px 0 0;
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.35;
+    }
+
+    /* Status Banner */
+    #status {
+      min-height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      margin-top: 10px;
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      font-size: 11px;
+      color: var(--text-secondary);
       text-align: center;
+      line-height: 1.35;
     }
     #status.error {
-      background: #fef2f2;
+      background: var(--danger-bg);
       color: var(--danger);
-      font-weight: 600;
-      border: 1px solid #fecaca;
+      font-weight: 500;
     }
-    /* Collapsible advanced area */
-    .chain-area {
-      display: none;
+
+    /* Hidden Compatibility Elements */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
   </style>
 </head>
 <body>
 <main>
-  <div class="header-card">
-    <div class="header-logo">译</div>
-    <div class="header-info">
-      <h1>实时字幕翻译</h1>
-      <p>本地识别 · WASAPI系统回环 · 原生置顶</p>
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <div class="brand-icon">译</div>
+      <div class="brand-title">实时字幕与翻译</div>
     </div>
-    <div class="status-badge">
+    <div class="badge" id="stateBadge">
       <span id="mediaState">●</span>
+      <span id="stateText">就绪</span>
     </div>
   </div>
 
-  <!-- Subtitle Display Settings -->
-  <div class="card">
-    <div class="card-title">
-      <span>🖥️ 字幕显示</span>
-    </div>
-    
-    <div class="setting-row">
-      <span class="setting-label">透明悬浮 (仅文字，隐藏底框)</span>
-      <input class="switch" id="textOnly" type="checkbox" />
-    </div>
-    <p class="hint" id="captionStateHint"></p>
-
-    <div class="slider-row">
-      <label for="fontSize">字号大小</label>
-      <span class="pill-badge"><span id="fontSizeValue">20</span> px</span>
-    </div>
-    <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
-
-    <label>字幕颜色</label>
-    <div class="color-section">
-      <div class="color-presets">
-        <span class="color-dot" style="background:#ffffff;" data-color="#ffffff" title="纯白"></span>
-        <span class="color-dot" style="background:#fef08a;" data-color="#fef08a" title="明黄"></span>
-        <span class="color-dot" style="background:#7dd3fc;" data-color="#7dd3fc" title="天蓝"></span>
-        <span class="color-dot" style="background:#86efac;" data-color="#86efac" title="浅绿"></span>
-        <span class="color-dot" style="background:#fca5a5;" data-color="#fca5a5" title="珊瑚粉"></span>
-      </div>
-      <input id="fontColor" type="color" value="#ffffff" title="自定义颜色" />
-    </div>
-
-    <div class="slider-row">
-      <label for="cadenceSlider">改口节奏</label>
-      <span class="pill-badge"><span id="cadenceValue">750</span> ms</span>
-    </div>
-    <div class="cadence">
-      <input id="cadenceSlider" type="range" min="250" max="1000" step="50" value="750" />
-      <output id="cadenceReadout" for="cadenceSlider">750</output>
-    </div>
-    <p class="hint" id="cadenceHint">识别中途刷新频率。750ms为最佳平衡点，首字快且不频繁跳动。</p>
+  <!-- Primary Action -->
+  <div class="action-container">
+    <button id="toggle" type="button">开启实时字幕</button>
   </div>
 
-  <!-- Engine & Language Settings -->
-  <div class="card">
-    <div class="card-title">
-      <span>⚡ 引擎与语言</span>
-    </div>
-    
-    <div class="engine-pill">
-      <span class="engine-icon">🚀</span>
-      <span>主力引擎：<strong>Qwen3-ASR + 混元翻译 (标点分块)</strong></span>
-    </div>
-
-    <!-- Hidden compatibility select for scripts/tests -->
-    <div class="chain-area">
-      <select id="chainSelect">
-        <option value="qwen3-hy" selected>Qwen3-ASR 识别 + 混元翻译（主力；块输出·按标点分块）</option>
-        <option value="whisper-hy">whisper 识别 + 混元翻译（回退；流式字幕）</option>
-        <option value="gemma-e2e">音频直出 Gemma4 E2B（对白压在配乐下会崩；流式字幕）</option>
-      </select>
-      <p id="chainHint"></p>
-    </div>
-
-    <label for="language">目标识别语言</label>
+  <!-- Language Selection -->
+  <div class="group">
+    <div class="group-title">识别语种</div>
     <select id="language">
-      <option value="auto">自动检测 (推荐)</option>
+      <option value="auto">自动检测 (默认)</option>
+      <option value="ja">日语 (日本語) — 锁定识别，消除误判</option>
       <option value="en">英语 (English)</option>
-      <option value="ja">日语 (日本語)</option>
       <option value="ko">韩语 (한국어)</option>
+      <option value="zh">中文 (普通话)</option>
       <option value="fr">法语 (Français)</option>
       <option value="de">德语 (Deutsch)</option>
       <option value="es">西班牙语 (Español)</option>
       <option value="ru">俄语 (Русский)</option>
     </select>
+    <p class="hint">选择具体语种可直接注入语言引导，显著提高专业词汇与小语种准确度。</p>
+  </div>
 
-    <div class="setting-row" style="margin-top: 10px;">
-      <label for="apiEnabled" class="setting-label" style="margin:0;">使用外部大模型翻译</label>
+  <!-- Subtitle Window Appearance -->
+  <div class="group">
+    <div class="group-title">字幕显示</div>
+    
+    <div class="row">
+      <span class="row-label">透明悬浮 (仅文字)</span>
+      <input class="switch" id="textOnly" type="checkbox" />
+    </div>
+    <p class="hint" id="captionStateHint"></p>
+
+    <div class="row" style="margin-top: 8px;">
+      <span class="row-label">字号</span>
+      <span class="row-value"><span id="fontSizeValue">20</span> px</span>
+    </div>
+    <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
+
+    <div class="row" style="margin-top: 4px;">
+      <span class="row-label">颜色</span>
+      <div class="color-row">
+        <div class="color-presets">
+          <span class="color-dot" style="background:#ffffff;" data-color="#ffffff" title="纯白"></span>
+          <span class="color-dot" style="background:#fef08a;" data-color="#fef08a" title="淡黄"></span>
+          <span class="color-dot" style="background:#7dd3fc;" data-color="#7dd3fc" title="天蓝"></span>
+          <span class="color-dot" style="background:#86efac;" data-color="#86efac" title="浅绿"></span>
+          <span class="color-dot" style="background:#fca5a5;" data-color="#fca5a5" title="粉红"></span>
+        </div>
+        <input id="fontColor" type="color" value="#ffffff" title="自定义颜色" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 6px;">
+      <span class="row-label">刷新节奏</span>
+      <span class="row-value"><span id="cadenceValue">750</span> ms</span>
+    </div>
+    <div class="cadence">
+      <input id="cadenceSlider" type="range" min="250" max="1000" step="50" value="750" />
+      <output id="cadenceReadout" for="cadenceSlider">750</output>
+    </div>
+    <p class="hint" id="cadenceHint">默认 750ms。跟进及时且避免频繁改口。</p>
+  </div>
+
+  <!-- Advanced Settings -->
+  <div class="group">
+    <div class="row">
+      <span class="row-label" style="font-size:12px; color:var(--text-secondary);">使用外部大模型翻译</span>
       <input class="switch" id="apiEnabled" type="checkbox" />
     </div>
     <div id="apiFields" hidden>
-      <label for="apiUrl">接口地址 (URL)</label>
+      <label for="apiUrl">接口地址</label>
       <input id="apiUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" />
       <label for="apiKey">API Key</label>
       <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
-      <label for="apiModel">模型名 (Model)</label>
-      <input id="apiModel" type="text" placeholder="如 gpt-4o-mini 或 gemini-2.5" autocomplete="off" spellcheck="false" />
+      <label for="apiModel">模型名称</label>
+      <input id="apiModel" type="text" placeholder="gpt-4o-mini / gemini-2.5" autocomplete="off" spellcheck="false" />
     </div>
 
-    <div class="setting-row" style="margin-top: 10px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">
-      <span class="setting-label" style="color: var(--text-muted); font-size: 12px;">诊断模式：仅音频不显字幕</span>
+    <div class="row" style="margin-top: 6px;">
+      <span class="row-label" style="font-size:12px; color:var(--text-secondary);">仅音频诊断模式</span>
       <input class="switch" id="audioOnly" type="checkbox" />
     </div>
   </div>
 
-  <button id="toggle" type="button">开始实时字幕</button>
+  <!-- Status readout -->
   <div id="status">未开始</div>
+
+  <!-- Hidden elements preserving automated test interfaces -->
+  <div class="sr-only">
+    <select id="chainSelect">
+      <option value="qwen3-hy" selected>Qwen3-ASR 识别 + 混元翻译（主力；块输出·按标点分块）</option>
+      <option value="whisper-hy">whisper 识别 + 混元翻译（回退；流式字幕）</option>
+      <option value="gemma-e2e">音频直出 Gemma4 E2B（对白压在配乐下会崩；流式字幕）</option>
+    </select>
+    <span id="chainHint"></span>
+  </div>
 </main>
 <script src="popup.js"></script>
 </body>
 </html>
+
 

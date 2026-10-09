@@ -238,18 +238,11 @@ function openSocket(config) {
         const payload = JSON.parse(event.data);
         if (payload && payload.type === "toggle_transparent") {
           const nextValue = Boolean(payload.value);
-          chrome.storage.local.get(["captionTextOnly"]).then((stored) => {
-            if (stored.captionTextOnly !== nextValue) {
-              chrome.storage.local.set({ captionTextOnly: nextValue });
-            }
-          }).catch(() => {});
-          // Echoed back so the server has the applied value. The caption window no
-          // longer broadcasts an identical state frame (it compares before sending),
-          // so this no longer bounces between the two forever.
-          desiredStyle = { type: "style", textOnly: nextValue };
+          chrome.storage.local.set({ captionTextOnly: nextValue }).catch(() => {});
+          if (!desiredStyle) desiredStyle = { type: "style" };
+          desiredStyle.textOnly = nextValue;
           if (payload.fontPx != null && payload.fontPx !== "") desiredStyle.fontPx = clampFont(payload.fontPx);
           if (typeof payload.fontColor === "string") desiredStyle.color = payload.fontColor;
-          sendJson(desiredStyle);
         }
         chrome.runtime.sendMessage(payload).catch(() => {});
       } catch (_error) {

@@ -90,11 +90,10 @@ Qwen3-ASR (llama.cpp)
   - 模板形式：user\n<audio_placeholder>\nassistant\nlanguage {full_name}<asr_text>
 ```
 
-### 2. 当前实现与未接入原因
-- 本项目当前使用 llama.cpp 的 `/v1/chat/completions` + `--jinja` 模板引擎，无法在 `assistant\n` 之后直接插入自定义引导 token。
-- 若改走 `/completion` 接口传递裸 prompt，存在音频多模态占位符能否正确展开的不确定性。
-- **连带改动风险**：一旦强制指定语言，Qwen3 模型将不再输出 `<asr_text>` 等元数据标记；若未同步修改 `parse_qwen3_asr`，解析层会直接将语言标签误作为识别文本输出到屏幕。
-- **当前策略**：采用 `auto` 自动检测作为默认方案，保留稳定解析。
+### 2. 当前实现机制
+- **Whisper 分支**：直接传递 ISO 简码给 `model.transcribe(language=code)`。
+- **Qwen3-ASR 分支**：在 `server/asr.py` 中将 ISO 简码映射为英文全名（如 `ja` -> `Japanese`），当用户锁定特定语种时（非 `auto`），在 user 轮的 prompt 中注入 `Transcribe the {full_name} audio.`。
+- **双模解析保护**：`parse_qwen3_asr` 同步兼容带 `<asr_text>` 的前缀结构与不带 `<asr_text>` 的直接输出，自动去除语言标记并提取真实转录文本，彻底避免将语言标签打印到屏幕或语音播报。
 
 ---
 

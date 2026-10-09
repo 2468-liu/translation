@@ -101,6 +101,8 @@ _LANG_NAMES = {
     "russian": "ru", "portuguese": "pt", "italian": "it", "arabic": "ar",
     "turkish": "tr", "croatian": "hr", "hindi": "hi", "dutch": "nl",
 }
+_CODE_TO_FULL_LANG = {v: k.capitalize() for k, v in _LANG_NAMES.items()}
+_CODE_TO_FULL_LANG["zh"] = "Chinese"
 
 
 def parse_qwen3_asr(raw: str) -> tuple[str, str | None, float]:
@@ -231,6 +233,12 @@ class Qwen3AsrEngine:
         import httpx
 
         wav = _wav_bytes(audio)
+        lang_prompt = "Transcribe the audio."
+        if language and language.lower() != "auto":
+            code = language.lower().strip()
+            full_name = _CODE_TO_FULL_LANG.get(code, code.capitalize())
+            lang_prompt = f"Transcribe the {full_name} audio."
+
         payload = {
             "model": "qwen3-asr",
             "temperature": 0,
@@ -239,7 +247,7 @@ class Qwen3AsrEngine:
                 {"type": "input_audio", "input_audio": {
                     "data": base64.b64encode(wav).decode("ascii"),
                     "format": "wav"}},
-                {"type": "text", "text": "Transcribe the audio."},
+                {"type": "text", "text": lang_prompt},
             ]}],
         }
         # A client per call, deliberately.
