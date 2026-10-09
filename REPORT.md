@@ -6004,3 +6004,160 @@ BLK2 的 104 次绘制里 42 次来自边界，`why` 却显示 `{'timeout': 62}`
 | **自己提方案前不查它成立** | 「缩小清空范围」——背景不是 canvas item，空操作 |
 | **改渲染前先验前提** | 层没做，因为判据没跑——这次守住了 |
 ```
+
+## 60. 删掉「锁定」：一个未提交的自我递归，和一条被判错方向的同步通道
+
+用户报的是三件事：「只有字点了不去黑框」「无框时不能拖」「caption 勾选和扩展不同步」，
+外加一条残留：字幕窗上还留着一个黑底的「锁定」勾选框。查完发现第四件更严重——
+**字幕整个没了**。
+
+### 60.1 先报事实，再改（四件事，实际代码）
+
+```
+一、状态变量
+  caption_window.py  self.text_only（BoolVar text_only_var，label「只有字」）
+                     self.position_locked（BoolVar position_lock_var，label「锁定」，默认 True）
+  ws_server.py       caption_text_only / caption_position_locked（每个连接一份）
+  offscreen.js       chrome.storage.local.captionTextOnly / captionPositionLocked
+  popup.js           checkbox #textOnly（只写 storage，不发消息）
+
+二、「锁定」是谁开的
+  默认值：caption_window._Caption.__init__  self.position_locked = True
+  另一条路：apply_text_only(True) 里显式 position_locked = True（bace154 删掉了这条）
+  再一条：native host / 扩展都不会开它；UDP 8767 也没有 config 分支了（cadence 已改走 WS）
+  它禁掉拖动有两处：_press 里 `if self.position_locked: return`，
+  以及只有字时给窗口加 WS_EX_TRANSPARENT（点击穿透，鼠标根本到不了窗口）
+
+三、通道（谁发谁收）——上一轮记的「extension 完全没听 8767」是错的
+  caption -> 扩展   caption_window._broadcast_state --UDP8767-->
+                    ws_server._listen_caption_state --WS "toggle_transparent"-->
+                    offscreen.js --storage.captionTextOnly--> popup 的复选框
+  扩展 -> caption   popup --storage--> background.applyCaptionStyle --"caption-style"-->
+                    offscreen --WS "style"--> ws_server._apply_caption_controls
+                    --UDP8766--> caption_window.apply_text_only
+  频率              每次状态变化；但两边都不比较，所以一直在回声（见 60.4）
+
+四、三处之间的消息类型
+  caption->ws_server(UDP8767)  kind=state
+  ws_server->caption(UDP8766)  kind=style / font / color / text / note / segment /
+                               status / arm / clear / switch_ok / raise / hide
+  ws_server->扩展(WS)          toggle_transparent / capture-mode / status / translation / segment_start
+  扩展->ws_server(WS)          config / style / toggle_transparent / get_state / media-start /
+                               note / hide / arm / raise / flush
+```
+
+### 60.2 真正的第一现场：未提交的那版让字幕窗起不来
+
+`apply_position_lock` 被整段删掉时，它的两行尾巴留在了下面一个方法里：
+
+```python
+    def _set_input_mode(self) -> None:
+        ...
+        set_long(hwnd, GWL_EXSTYLE, exstyle)
+        self._set_input_mode()      # ← 上一轮的残留，自己调自己
+        self._broadcast_state()
+```
+
+`__init__` 里的 `_apply_colors()` 会调 `_set_input_mode()`，于是**构造字幕窗就
+RecursionError**，`_main()` 连 `caption window ready` 都打不出来。用户说的
+「把字幕给我弄没了」就是这条。
+
+复现（把两行放回一份临时副本，`logs/repro/`，跑完即删）：
+
+```
+RecursionError: maximum recursion depth exceeded
+  File "logs/repro/server/caption_window.py", line 591, in _set_input_mode
+    hwnd = self.hwnd()
+```
+
+修好之后同一条生产命令（`start_caption()` 用的就是它）：
+
+```
+$ python -m server.caption_window
+caption window ready          ← 进程活着，窗口在等包
+```
+
+### 60.3 截图里那个黑框是「锁定」自己
+
+不是背景没去掉。`_apply_colors` 只把「只有字」那个控件重新着色成透明色 `_KEY`，
+锁定那个从创建起就是 `bg="#000000"`，谁也没再改它 —— 于是它在透明窗口上留下一个
+黑方块，正好是截图里那块。删掉锁定，残留随之消失。
+
+「只有字」本身的透明是有效的，实测（白底衬在下、抓屏数黑像素）：
+
+| | layered | transparentcolor | bg | 黑像素 |
+|---|---|---|---|---|
+| 有框 | False | '' | #000000 | **98.9%** |
+| 只有字 | True | #010203 | #010203 | **0.1%** |
+| 改回有框 | True | '' | #000000 | **98.9%** |
+
+同一次探测：表头只剩 `['只有字']`；`_press` 之后 `drag=True`（可拖）。
+
+顺带补了一个没被测到的洞：`apply_text_only` 原先只在窗口**没显示**时调 `show()`，
+而透明靠 `WS_EX_LAYERED`、只有 `_strip_frame()` 会设它 —— 已经显示在屏幕上的窗口
+再也不会跑 `show()`，所以从扩展切「只有字」时背景只会变成近黑 `#010203`。现在
+已显示时补调 `_strip_frame()`。
+
+### 60.4 回声环：状态帧在 WS+UDP 上一直来回跑
+
+```
+caption.apply_text_only -> _broadcast_state --UDP8767--> ws_server
+   -> 扩展(offscreen) 收到 toggle_transparent -> 写 storage + 回一个同值 style
+   -> ws_server -> set_text_only --UDP8766--> caption.apply_text_only -> 再广播 ...
+```
+
+两边都不比较就发，所以只要进程活着这个环就在转。`_broadcast_state` 改成只在值变化时
+发（发送成功后才记住，丢包不会让窗口的控件从此静音）。实测真进程：
+
+```
+style(True)  -> 8767 收到 1 帧 {'textOnly': True, ...}
+style(True)  -> 8767 收到 0 帧        ← 回声断了
+style(False) -> 8767 收到 1 帧 {'textOnly': False, ...}
+```
+
+`positionLocked` 已从 `state` 帧里消失。
+
+### 60.5 8767 监听器：每个连接一个，第二个 bind 必失败
+
+`_listen_caption_state` 原来在 `handle()` 里按连接起线程，而 UDP 端口不能重复 bind：
+
+```
+第二个线程 sock.bind(("127.0.0.1", 8767)) -> WSAEADDRINUSE
+  -> 该线程带着 traceback 死掉（stderr），没人看见
+  -> 帧继续被交给**已经关闭**的那个连接的 loop
+  => 第一次重连之后，caption 上的勾选再也到不了扩展，且不报错
+```
+
+改成进程一个监听器，连接只更新发送目标。文件名反了整整一天的方向在这里：
+上一轮把它记成「扩展没监听」，其实扩展一直在听，坏的是发的那一头。
+
+### 60.6 测试
+
+```
+新增 tests/test_caption_text_only.py（10 条）
+  · 类里任何方法都不得调用自己（AST 查，堵的是这个 bug 的形状，不只这一处）
+  · apply_text_only 必须对已显示窗口补 _strip_frame
+  · _press 里不得再有 position_locked；_strip_frame 不得 |= WS_EX_TRANSPARENT
+  · _broadcast_state 同值不发 / 变值发 / 发送失败不记为已送达
+改 test_extension_boundaries：position_locked / apply_position_lock / 锁定 /
+  positionLocked / |= WS_EX_TRANSPARENT 全部 assertNotIn
+  （断言跑在去注释后的源码上：解释删除的文字里就写着被删的名字）
+
+python -m pytest -q  ->  370 passed, 1 skipped, 10 failed
+  10 条失败全在 test_backend_cycle.py，全是 DSH 沙箱拒绝写
+  C:\Users\...\AppData\Local\Temp\dsh-*\server.pid（PermissionError），
+  与本次改动无关：改动前后同样失败。
+```
+
+### 60.7 教训
+
+**「残留」这个词用得太轻。** 一个被删函数的尾巴不是排版问题：它把 `_set_input_mode`
+变成了无限递归，而字幕窗是**另一个进程**，它死在启动的第一帧 —— 主进程照常跑，
+日志里没有异常，用户看到的是「字幕没了」。**删除一个方法时，尾巴去哪了要当成缺陷查，
+不是当成缩进看。**（同族：AGENT §5 第十一条「以为修了比没修更糟」。）
+
+**「报出通道不存在」之前先 grep 收端。** 上一轮把 caption→扩展 记成「完全没有」，
+实际 `offscreen.js` 里就有 `toggle_transparent` 分支，`ws_server` 里就有转发。
+**结论写进 STATE 之后，下一个人不会再去查它** —— 这正是 §5 第十三条说的下游冻结：
+这条错记录会让「重连之后不同步」这个真 bug 一直没人看。
+

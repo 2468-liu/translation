@@ -841,21 +841,56 @@ final 覆盖残句 → 可见的跳，体感是「一个人说话断点续」，
 **它比改前好**：改前屏幕永远停在残句上、final 从不上屏；现在是「先说一句半的，
 再接完整句」，语义上仍是一句话。**但那一次跳是真实存在的，别当成已消除。**
 
-### 「只有字」模式修复（10-09 晚）
+### 「只有字」模式修复（10-09 晚；上半场留了一个崩溃，下半场才修掉）
+
+**上一轮写下的三条，两条是错的，第三条漏了。先纠正，否则下一个人照错理由改回去：**
 
 ```
-问题 1  apply_text_only 没调 show() ⇒ _strip_frame 不跑 ⇒ 框没去掉
-问题 2  apply_text_only 强制 position_locked=True ⇒ _press 里 if text_only and position_locked 挡住拖动
-问题 3  caption 广播 state 到 UDP 8767，extension 侧完全没听这个端口
+① 上一轮未提交的那版把 apply_position_lock 的两行尾巴留在了 _set_input_mode 里
+   ⇒ 那个方法调用自己 ⇒ __init__ 里的 _apply_colors 直接 RecursionError
+   ⇒ 字幕窗进程起不来，"caption window ready" 都打不出来，一个字幕都没有。
+   这就是用户说的"把字幕给我弄没了"。已实测复现（构造 _Caption → RecursionError）。
 
-修法：
-  1. apply_text_only 删强制锁定、补 show()
-  2. _press 保留 if position_locked: return（不加特例）
-  3. _apply_colors 只有字时也显示锁定 checkbox
+② 截图里的黑框不是"背景没去掉"，是锁定 checkbox 自己：
+   _apply_colors 只把「只有字」那个控件重新着色成 _KEY，锁定那个没被重新着色，
+   于是它在透明窗口上留着一个 bg=#000000 的方块。删掉锁定，残留就没了。
 
-结果：只有字 = 去框+透明+默认可拖动；用户想锁再点锁定即可；两状态正交。
-扩展同步（问题 3）是另一条独立任务（需 extension 侧加 UDP 8767 监听），未在本次改动。
+③ 「extension 侧完全没听 8767」是错的，通道一直在：
+   caption --UDP8767--> ws_server._listen_caption_state --WS--> offscreen.js
+     --storage.captionTextOnly--> popup 的复选框
+   反向：popup --storage--> background.applyCaptionStyle --caption-style-->
+     offscreen --WS style--> ws_server --UDP8766--> caption
+   真正坏的是那个监听器**每个连接起一个线程**：第二个 bind 失败（WSAEADDRINUSE），
+   新线程死在 stderr，帧继续发给已经关闭的连接 ⇒ 第一次重连之后，
+   caption 上的勾选就再也到不了扩展，而且不报错。
 ```
+
+**本轮实际修法：**
+
+```
+1. 锁定整体删除：caption 的 checkbox / 常量 / _press 判断、ws_server 的 positionLocked、
+   offscreen.js 的 storage 写入、WS_EX_TRANSPARENT，全部删掉。
+   ⇒ 只有字 = 无框 + 透明 + 可拖动，没有"锁死"这条路（用户 2026-10-09 确认）
+2. 只有字 在窗口**已经显示**时也走一次 _strip_frame()：透明靠 WS_EX_LAYERED，
+   而只有 _strip_frame 会设它，已显示的窗口不会再跑 show()
+3. _broadcast_state 只发变化值：扩展收到 state 会回一个同值的 style，
+   回到 caption 又是 apply_text_only ⇒ 两边都不比较，这个环在 WS+UDP 上一直来回跑
+4. 8767 监听器改成进程一个，连接只换发送目标（见 ③）
+```
+
+**实测（`scripts/probe_caption_text_only.py`、`probe_caption_state_channel.py`，两者都不入库）：**
+
+```
+有框       layered=False  transparentcolor=''        bg=#000000  黑像素 98.9%
+只有字     layered=True   transparentcolor=#010203   bg=#010203  黑像素  0.1%
+改回有框   layered=True   transparentcolor=''        bg=#000000  黑像素 98.9%
+只有字时表头只剩 ['只有字']；_press 之后 drag=True
+真进程（python -m server.caption_window）：style(True) → 8767 收到 1 帧；
+                                            同值再发 → 0 帧；style(False) → 1 帧
+```
+
+**仍未做（是"没做"，不是"已停止"）：** 只有字 模式下字幕窗自己的「只有字」控件被
+place_forget，关不掉 —— 要切回有框只能从扩展弹窗。用户没提这一条，先不动。
 
 ## 待办
 
