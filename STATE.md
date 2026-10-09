@@ -799,7 +799,7 @@ scripts/probe_caption_state_channel.py（真进程）：style(True)→1 帧 / �
    style(False)→1 帧 / **state? 且状态没变 → 1 帧**（连问两次两次都答）
 logs/popup_sync_probe.js（stub chrome 真跑 popup.js）：打开即问状态 / 点击发帧+写 storage /
    反向跟着走且不回发
-python -m pytest -q → 380 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+python -m pytest -q → 382 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
 ```
 
 **教训（同一天、同一处，改了三次方向）**
@@ -810,6 +810,49 @@ python -m pytest -q → 380 passed / 1 skipped / 10 failed（10 条仍是沙箱�
 ⇒ 判据：**同一个状态出现第二份副本时，先问"这一份能不能删掉、改成问一次"**；
    缓存只在"问不到"时才成立，而这里问得到。写下来，否则下一个人会再缓存一次。
 ```
+
+## UI ↔ 字幕窗 的协调（三条状态、一个权威）
+
+**规则只有一句：屏幕上的东西由字幕窗说了算；`chrome.storage.local` 只是"下次开始时用什么"。**
+
+```
+① 窗口在跑    复选框 = 问出来的真实值；hint「字幕窗当前：只有字 / 黑底框」
+② 窗口没在跑  复选框 = storage（下次开始时生效）；hint「字幕窗未运行 —— 下面是设置」，不是错误
+③ 服务没连上  不报错，等重连；连上后自动重问一次
+```
+
+**谁改谁**
+
+```
+插件改  → ①写 storage（意图）②直接发 style 帧（当前窗口）；复选框先乐观更新，
+          窗口的回报到达后以窗口为准
+窗口改  → 广播 → 服务端转发 → offscreen 写 storage（意图同步）+ popup 对勾跟着勾
+只有字  → 窗口表头（含它自己的控件）随黑框一起隐藏 = 这个模式的本意
+          ⇒ 回头路只有插件 ⇒ 插件必须显示窗口的真实状态（就是①那个"问"）
+```
+
+**不许用定时器猜"当前状态"**
+
+```
+唯一的"有没有窗口"权威是服务端（它持 CAPTION_PORT）：
+  get_state 时窗口在跑 → request_caption_state() 问它；没跑 → 回 caption-absent
+踩过的坑：用 1.5s 超时猜"窗口没答"就报警。而线路切换会重启后端 ——
+  socket 已开、窗口还没起 ⇒ 每次切换都误报，用户看到"一次有一次没有"。
+⇒ 判据：**能问就问，问不到要说"没有对象"，不要用超时替对方回答。**
+```
+
+**线路切换（"一次有一次没有"的另一半）**
+
+```
+切换时 popup 进"重启中"（不问、不报）
+后端被杀 ⇒ 字幕窗是它的子进程，一起没了
+offscreen 检测到断开**自己重连**（1.2s 一次，最长 200s；重发 config/arm/style）
+连上后 popup 重问一次 ⇒ 用户不需要再按"开始"，字幕自己回来
+（用户主动"终止"时不重连）
+```
+
+实测：`logs/popup_sync_probe.js` 三条状态逐条断言；`logs/offscreen_reconnect_probe.js`
+断开→1.2s 后新 socket→开场帧重发→通知 popup；用户停止后不再重连。
 
 ## 模型定位
 
@@ -863,9 +906,9 @@ main / HEAD / gemma-audio  同指（已快进） ｜ 回退点 tag pre-merge-202
 `gemma-audio` 保留。**pytest（2026-10-07 晚）107 passed**（新增 `tests/test_translation_context.py` 8 条，
 钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）；此前 99 passed。
 `extension/` 与 Native Host 未变 ⇒ 主机无需重建（`start.ps1` 是文件调用，不在 exe 里）。
-**最近一次（2026-10-09 晚，只有字状态源改完、服务端不再缓存）：380 passed / 1 skipped / 10 failed** —— 10 条全在
+**最近一次（2026-10-09 晚，UI↔字幕协调重做）：382 passed / 1 skipped / 10 failed** —— 10 条全在
 `test_backend_cycle.py`，全是 DSH 沙箱拒写临时目录下的 `server.pid`，与改动无关。
-（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378 / 379。）
+（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378 / 379 / 380。）
 
 ## 实验日志（一行一条）
 

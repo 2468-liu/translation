@@ -5,6 +5,9 @@ let audioContext = null;
 let stream = null;
 let capturing = false;
 let desiredStyle = null;
+// The last start-capture request, kept so a reconnect can resend the same opening
+// frames (config carries language / api / cadence / style) without the popup.
+let lastStart = null;
 
 function clampFont(px) {
   const size = Number(px);
@@ -167,8 +170,54 @@ function closeSocket() {
 async function stopCapture(hide) {
   if (hide) sendJson({ type: "hide" });
   capturing = false;
+  cancelReconnect();
   await releaseMedia();
   closeSocket();
+}
+
+// Coming back on its own, because the thing that disconnects it is usually us.
+//
+// Switching the line in the popup asks the native host to kill and restart the backend,
+// which drops this socket AND takes the caption window down with it (the window is a
+// child of that process). Until now nothing reconnected: the user pressed 开始 again,
+// which is why a line switch worked "sometimes" -- and while they were deciding, the
+// popup was asking a caption window that did not exist yet. Capture itself lives in the
+// server (WASAPI loopback), so there is no audio graph to rebuild here: reconnect, resend
+// the opening frames, and the pipeline picks the same tab up again.
+const RECONNECT_MS = 1200;
+const RECONNECT_GIVE_UP_MS = 200000;
+let reconnectTimer = null;
+let reconnectDeadline = 0;
+let reconnectTries = 0;
+
+function cancelReconnect() {
+  if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectDeadline = 0;
+  reconnectTries = 0;
+}
+
+function scheduleReconnect() {
+  if (!capturing || reconnectTimer !== null) return;
+  if (reconnectDeadline === 0) reconnectDeadline = Date.now() + RECONNECT_GIVE_UP_MS;
+  if (Date.now() > reconnectDeadline) {
+    chrome.runtime
+      .sendMessage({ type: "capture-error", error: "本地服务断开，重连超时" })
+      .catch(() => {});
+    return;
+  }
+  reconnectTries += 1;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      await openSocket(lastStart || {});
+      reconnectTries = 0;
+      reconnectDeadline = 0;
+      chrome.runtime.sendMessage({ type: "capture-restored" }).catch(() => {});
+    } catch (_error) {
+      scheduleReconnect();
+    }
+  }, RECONNECT_MS);
 }
 
 function openSocket(config) {
@@ -212,9 +261,10 @@ function openSocket(config) {
     };
     socket.onclose = () => {
       if (!capturing) return;
-      chrome.runtime
-        .sendMessage({ type: "capture-error", error: "本地服务已断开" })
-        .catch(() => {});
+      // Not an error yet: the backend may be restarting (a line switch does exactly
+      // that). Report only when the retries run out, so the status line does not cry
+      // wolf every time the user changes line.
+      scheduleReconnect();
     };
   });
 }
@@ -222,6 +272,7 @@ function openSocket(config) {
 async function startCapture(message) {
   await stopCapture(false);
   rememberStyle(message);
+  lastStart = message;
   await openSocket(message);
   capturing = true;
 }

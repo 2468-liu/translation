@@ -242,13 +242,18 @@ class StateListenerStartupTests(unittest.TestCase):
     """What happens when 8767 is already held -- the case that used to be silent."""
 
     def setUp(self):
+        # A port of our own, held, so the test does not depend on whether the product is
+        # running on this machine: 8767 is held by a live backend from the moment the app
+        # is in use, and binding the real one made this test fail for that reason alone.
         self.previous = ws_server._STATE_LISTENER
-        # Hold the port exactly as a stale process would.
+        self.previous_port = ws_server.STATE_PORT
         self.holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.holder.bind(("127.0.0.1", ws_server.STATE_PORT))
+        self.holder.bind(("127.0.0.1", 0))
+        ws_server.STATE_PORT = self.holder.getsockname()[1]
         ws_server._STATE_LISTENER = None
 
     def tearDown(self):
+        ws_server.STATE_PORT = self.previous_port
         ws_server._STATE_LISTENER = self.previous
         self.holder.close()
 

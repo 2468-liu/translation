@@ -332,6 +332,18 @@ def _port_busy() -> bool:
         probe.close()
 
 
+def caption_running() -> bool:
+    """True while a caption window is up (it holds CAPTION_PORT).
+
+    The server asks this before forwarding a state question, so "there is no window"
+    can be said plainly instead of being guessed at with a timeout. Guessing is what
+    produced an occasional false "字幕窗没有回应" right after the backend restart a line
+    switch performs -- the socket was open, the window was not up yet, and the popup
+    turned that into an error the user could do nothing with.
+    """
+    return _port_busy()
+
+
 def _listen(commands: queue.Queue) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", CAPTION_PORT))

@@ -19,6 +19,7 @@ from .caption_window import (
     TERMINAL_PUNCT,
     ack_switch,
     arm_caption,
+    caption_running,
     clear_caption,
     hide_caption,
     note_caption,
@@ -318,7 +319,15 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 # it. The window's answer comes back as an ordinary state frame over UDP
                 # 8767 and is forwarded to this client by the listener, so it takes the
                 # same path a caption-side press does -- one path, one truth.
-                request_caption_state()
+                #
+                # And when there is nothing to ask, say that. "No caption window" is a
+                # normal state (nothing started yet, audio-only, or a backend that is
+                # still coming up after a line switch), not a fault: the popup shows the
+                # stored setting in that case instead of an error.
+                if caption_running():
+                    request_caption_state()
+                else:
+                    await send({"type": "caption-absent"})
             elif data.get("type") == "arm":
                 arm_caption()
             elif data.get("type") == "raise":

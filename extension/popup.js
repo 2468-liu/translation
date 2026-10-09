@@ -18,6 +18,7 @@ const cadenceSlider = document.getElementById("cadenceSlider");
 const cadenceValue = document.getElementById("cadenceValue");
 const cadenceReadout = document.getElementById("cadenceReadout");
 const cadenceHint = document.getElementById("cadenceHint");
+const captionStateHint = document.getElementById("captionStateHint");
 
 // Must equal server/config.py PARTIAL_INTERVAL_MS. A lower default here would mean
 // pressing start silently changes behaviour, and that mismatch has been the cause
@@ -64,13 +65,20 @@ function markChainOk(chain) {
 async function switchChain(chain) {
   if (!chain || chain === chainSelect.dataset.applied) return;
   setChainBusy(true);
+  // A line switch kills the backend, and the caption window is a child of it. So while
+  // this runs there is nothing to ask and nothing to report: the hint says so, and the
+  // question is repeated once the new backend is up (and again when the socket
+  // reconnects by itself -- see scheduleReconnect in offscreen.js).
+  captionBusy = true;
+  captionPresent = null;
+  paintCaptionState();
   status.textContent = `正在切换到 ${CHAIN_LABELS[chain] || chain}，后端会重启…`;
   try {
     const reply = await chrome.runtime.sendMessage({ type: "switch-chain", chain });
     if (reply && reply.ok) {
       chainSelect.dataset.applied = chain;
       markChainOk(reply.chain || chain);
-      status.textContent = `已切到 ${CHAIN_LABELS[reply.chain] || reply.chain}，可以开始。`;
+      status.textContent = `已切到 ${CHAIN_LABELS[reply.chain] || reply.chain}，字幕会自动回来。`;
     } else {
       // A rollback leaves the popup on the chain that is actually running, not the one
       // that was asked for. Showing the requested one would have the user clicking again
@@ -87,6 +95,9 @@ async function switchChain(chain) {
     status.textContent = `线路切换失败：${String((error && error.message) || error)}`;
   } finally {
     setChainBusy(false);
+    captionBusy = false;
+    paintCaptionState();
+    if (!audioOnly.checked) askCaptionWindowState();
   }
 }
 
@@ -162,11 +173,68 @@ chrome.storage.onChanged.addListener((changes, area) => {
   status.textContent = captionTextOnlyNote(next);
 });
 
-// The window's answer travels as the same frame the offscreen document turns into that
-// storage write. Hearing it is what separates "asked and answered" from "asked and
-// silent", and only the second one is worth telling the user about.
+// ---------------------------------------------------------------------------
+// 字幕窗的三种情形。这是整套 UI 与字幕协调的核心，规则的写法只有一条：
+//
+//   屏幕上的东西谁说了算 —— 字幕窗进程。storage 只是"下次开始时用什么"。
+//
+//   ① 窗口在跑    复选框 = 问出来的真实值；下方hint说屏幕上现在是什么
+//   ② 窗口没在跑  复选框 = storage（下次开始的设置）；hint 说明"开始后生效"，不是错误
+//   ③ 服务没连上  hint 说"本地服务未连接，重连中"；连上后自动重问一次
+//
+// 所以"当前状态"永远来自**回答**或服务端明确的 caption-absent，不用定时器猜：
+// 猜出来的那次误报（后端重启期间 socket 已开、窗口还没起）正是"一次有一次没有"的来源。
+let captionPresent = null; // null = 还没问过；true/false = 服务端说有没有窗口
+let captionLive = null;    // 有窗口时，问出来的 只有字 真值
+let captionBusy = false;   // 正在重启后端（线路切换）：期间不问、不报
+
+function paintCaptionState() {
+  if (captionBusy) {
+    captionStateHint.textContent = "正在重启后端，字幕窗会自动回来。";
+    return;
+  }
+  if (captionPresent === null) {
+    captionStateHint.textContent = "正在确认字幕窗状态…";
+    return;
+  }
+  if (!captionPresent) {
+    captionStateHint.textContent = audioOnly.checked
+      ? "仅音频模式：不会创建字幕窗。下面的设置下次开始时生效。"
+      : "字幕窗未运行 —— 下面这些是下次开始时用的设置。";
+    return;
+  }
+  captionStateHint.textContent = captionLive
+    ? "字幕窗当前：只有字（黑框和「只有字」都隐藏了）。"
+    : "字幕窗当前：黑底框，「只有字」在最左边。";
+}
+
+// The caption window answering about itself, or the server saying there is none.
 chrome.runtime.onMessage.addListener((message) => {
-  if (message && message.type === "toggle_transparent") captionAnswered = true;
+  if (!message || !message.type) return false;
+  if (message.type === "toggle_transparent") {
+    captionPresent = true;
+    captionLive = Boolean(message.value);
+    textOnly.checked = captionLive;
+    paintCaptionState();
+    return false;
+  }
+  if (message.type === "caption-absent") {
+    captionPresent = false;
+    captionLive = null;
+    paintCaptionState();
+    // One retry, not a warning: right after a line switch the socket can be open while
+    // the window is still coming up, and the honest answer then is "ask again in a
+    // moment", not an error the user cannot act on.
+    setTimeout(() => {
+      if (!captionBusy && !audioOnly.checked) askCaptionWindowState();
+    }, 1500);
+    return false;
+  }
+  if (message.type === "capture-restored") {
+    status.textContent = "本地服务已重连，字幕继续。";
+    if (!audioOnly.checked) askCaptionWindowState();
+    return false;
+  }
   return false;
 });
 
@@ -202,26 +270,18 @@ function tellCaptionWindow() {
 
 // Ask the window what it is set to, and let its answer correct this checkbox.
 //
-// On the same message bus as the style frame, so it only lands while a caption window
-// exists; when there is none, storage is the only thing that can be known and it is
-// what the next start will apply anyway.
-//
-// "No answer" is reported rather than swallowed. It is the one failure the user cannot
-// see from the outside: the window is in 只有字, this checkbox is clear, and nothing says
-// why. Asked-and-silent means the window's build is older than this ask (restart the
-// backend) or it died; not-sent at all means there is nothing to ask, which is normal.
-const CAPTION_ANSWER_MS = 1500;
-let captionAnswered = false;
-
+// Nothing is inferred from a timeout. The server answers with the window's own state
+// frame, or with caption-absent when there is no window at all -- and the second case is
+// normal, so it paints the stored setting instead of an error.
 function askCaptionWindowState() {
-  captionAnswered = false;
   chrome.runtime.sendMessage({ type: "caption-state" })
     .then((reply) => {
-      if (!reply || !reply.sent) return;
-      setTimeout(() => {
-        if (captionAnswered) return;
-        status.textContent = "字幕窗没有回应「只有字」的状态 —— 重启一次后端即可（旧版本不认这个询问）。";
-      }, CAPTION_ANSWER_MS);
+      if (!reply || !reply.sent) {
+        // No socket to the local service: state ③, not a caption fault.
+        captionPresent = false;
+        captionLive = null;
+        paintCaptionState();
+      }
     })
     .catch(() => {});
 }
@@ -243,9 +303,10 @@ async function refresh(keepMessage, failedStep) {
   textOnly.checked = Boolean(theme.captionTextOnly);
   audioOnly.checked = Boolean(theme.audioOnly);
   // Storage is what the next start reads; this checkbox has to show what is on screen
-  // now. 只有字 hides the window's own control, so there is no other place a stale value
-  // would be noticed. Skipped in audio-only mode, where no caption window exists to ask
-  // and "no answer" would be a false alarm.
+  // now. 只有字 hides the window's own control, so this is the only place a stale value
+  // would be noticed -- and the ask is what settles which of the three states applies.
+  captionPresent = null;
+  paintCaptionState();
   if (!audioOnly.checked) askCaptionWindowState();
   const px = Math.max(16, Math.min(40, Number(theme.captionFontPx) || 20));
   fontSize.value = String(px);
@@ -333,11 +394,20 @@ async function refresh(keepMessage, failedStep) {
 textOnly.addEventListener("change", () => {
   chrome.storage.local.set({ captionTextOnly: textOnly.checked });
   tellCaptionWindow();
+  // Optimistic, then corrected by the window's own report: if the window is not in the
+  // state this press asked for, its next frame says so and the checkbox follows.
+  if (captionPresent) {
+    captionLive = textOnly.checked;
+    paintCaptionState();
+  }
   status.textContent = captionTextOnlyNote(textOnly.checked);
 });
 
 audioOnly.addEventListener("change", () => {
   chrome.storage.local.set({ audioOnly: audioOnly.checked });
+  captionPresent = null;
+  paintCaptionState();
+  if (!audioOnly.checked) askCaptionWindowState();
   status.textContent = audioOnly.checked
     ? "已启用仅音频诊断，后端不会创建字幕窗。"
     : "已恢复显示原生字幕窗。";

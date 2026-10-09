@@ -112,25 +112,47 @@ class ExtensionBoundaryTests(unittest.TestCase):
         # control that is no longer on screen.
         self.assertIn("再点一下即可恢复", popup)
 
-    def test_a_window_that_never_answers_is_reported(self):
-        """The one failure the user cannot see: window in 只有字, checkbox clear, no reason.
+    def test_the_three_caption_states_are_distinct(self):
+        """在跑 / 没在跑 / 服务没连上 —— 三种情形分开说，不用定时器猜。
 
-        "Asked and silent" is a fault (an older window build, or a dead process) and is
-        said out loud; "not sent at all" is normal -- there is no caption window to ask
-        in audio-only mode -- and must not raise a false alarm.
+        猜出来的那次误报是用户实测到的「一次有一次没有」：线路切换会重启后端，socket
+        已经开着而字幕窗还没起来，超时告警就会亮。真正能回答"有没有窗口"的只有服务端
+        （它持有 CAPTION_PORT），所以由它明说 `caption-absent`。
         """
         popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+        ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
+
+        self.assertIn("captionStateHint", popup)
+        self.assertIn('message.type === "caption-absent"', popup)
+        self.assertIn("captionPresent", popup)
+        self.assertNotIn("没有回应", popup, "定时器猜出来的告警又回来了")
+        # 服务端：没有窗口就明说，别用超时假装知道
+        self.assertIn("if caption_running():", ws_server)
+        self.assertIn('await send({"type": "caption-absent"})', ws_server)
+        self.assertIn("def caption_running()", (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8"))
+
+    def test_a_line_switch_does_not_ask_or_report_while_the_backend_is_down(self):
+        """切换线路时后端要重启，字幕窗是它的子进程 —— 那段时间没有可问的对象。"""
+        popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+
+        self.assertIn("captionBusy = true;", popup)
+        self.assertIn("captionBusy = false;", popup)
+        self.assertIn("正在重启后端，字幕窗会自动回来。", popup)
+        self.assertIn("字幕会自动回来", popup)
+
+    def test_the_socket_comes_back_by_itself_after_a_line_switch(self):
+        """这就是"切换引擎一次有一次没有"：断了以后没人重连，用户得再按一次开始。"""
         offscreen = (ROOT / "extension" / "offscreen.js").read_text(encoding="utf-8")
 
-        self.assertIn("captionAnswered", popup)
-        self.assertIn('message.type === "toggle_transparent"', popup)
-        self.assertIn("没有回应", popup)
-        self.assertIn("if (!audioOnly.checked) askCaptionWindowState();", popup)
-        # sendJson has to be able to say whether the question went out at all.
-        self.assertIn(
-            "return false;\n  socket.send(JSON.stringify(payload));\n  return true;",
-            offscreen,
-        )
+        self.assertIn("function scheduleReconnect()", offscreen)
+        self.assertIn("function cancelReconnect()", offscreen)
+        self.assertIn("lastStart = message;", offscreen)
+        self.assertIn('type: "capture-restored"', offscreen)
+        # 断开的那一刻不再立刻报错：后端可能正在重启，报错会每次都亮。
+        self.assertIn("scheduleReconnect();\n    };", offscreen)
+        self.assertIn("重连超时", offscreen)
+        # 用户主动停止时不重连。
+        self.assertIn("capturing = false;\n  cancelReconnect();", offscreen)
 
     def test_get_state_asks_the_window_instead_of_keeping_a_copy(self):
         """No cache anywhere: the window is asked, and it answers for itself.

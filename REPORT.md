@@ -5631,7 +5631,78 @@ logs/popup_sync_probe.js（stub chrome 跑真 extension/popup.js，逐条断言�
 **强制广播在"没变化"时也发**）；extension 侧（`tellCaptionWindow` + `askCaptionWindowState` +
 offscreen 的 `caption-state`）；server 侧（**`request_caption_state()` 必须存在、
 `_CAPTION_TEXT_ONLY` 必须不存在**——即"没有第二份状态"这条是断言出来的）。
-`python -m pytest -q` → **380 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
+`python -m pytest -q` → **382 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
+
+### 60.9 把 UI ↔ 字幕 的协调重写成三条状态（用户要求「重新贯通」，2026-10-09 晚）
+
+用户的原话是「字幕切换引擎一次有一次没有，没有就显示这个，这个应该是 BUG，还有 UI 插件的
+同步还是没有实现，你能不能梳理逻辑，可能我设计思路有问题，你来按 UI 设计人性化思路重新来
+贯通这个逻辑」。两条都成立，而它们是**同一个设计缺陷的两面**。
+
+**第一面：那句偶发的告警是竞态。** 上一轮加的"字幕窗没有回应"用 1.5 秒超时猜的：
+线路切换会重启后端，socket 已开、字幕窗还没起来，超时必响；而按了开始之后窗口起来，
+就不再响。用户看到的就是"一次有一次"。**用定时器替对方回答，就是这个形态的错。**
+
+**第二面：socket 断了没人重连。** 切换线路时 native host 杀掉并重启后端，字幕窗是后端的
+子进程，一起没了；`offscreen.js` 的 `onclose` 只发一句 `capture-error`（而 background 的
+那条分支还被 `CAPTION_TYPES` 提前 return 掉了，连这句都没落地）。所以用户得再按一次"开始"
+—— 这就是"一次有一次没有"的另一半。采集本身在服务端（WASAPI 回环），浏览器侧没有音频图
+要重建，重连是纯收益。
+
+**最终设计（写进 STATE 的契约）**
+
+```
+规则：屏幕上的东西由字幕窗说了算；storage 只是"下次开始时用什么"。
+① 窗口在跑     复选框 = 问出来的真实值；hint 说屏幕上现在是什么
+② 窗口没在跑   复选框 = storage（下次生效）；hint 说"未运行，下面这些是设置"
+③ 服务没连上   不报错，等重连；连上后自动重问一次
+唯一能回答"有没有窗口"的是服务端（它持 CAPTION_PORT）：在跑就问窗口，没跑就回 caption-absent。
+线路切换：popup 进"重启中"不问不报；offscreen 自己重连并重发开场帧；连上后重问一次。
+```
+
+**改动**
+
+```
+ws_server          get_state → 在跑 request_caption_state()，没跑回 {"type":"caption-absent"}
+caption_window     新增 caption_running()（持 CAPTION_PORT 即真）
+offscreen.js       scheduleReconnect/cancelReconnect：1.2s 一次、最长 200s，重连后重发
+                   config/get_state/media-start/arm/style 并通知 capture-restored；
+                   onclose 不再立刻报错（用户主动停止时不重连）
+popup.js           captionPresent/captionLive/captionBusy 三态 + captionStateHint；
+                   删掉超时告警；caption-absent 只重问一次；线路切换期间不问不报
+popup.html         只有字 行下加 <p class="hint" id="captionStateHint">
+```
+
+**实测（两个新探针，都在 logs/，不入库）**
+
+```
+logs/popup_sync_probe.js（stub chrome + DOM 跑真 popup.js）
+  ✓ 打开即问状态  ✓ ①窗口答 只有字 → 复选框=真值、hint「字幕窗当前：只有字」
+  ✓ 按一下 → 发 caption-style + 写 storage  ✓ 反向 storage 变化 → 复选框跟着走
+  ✓ ②caption-absent → hint「字幕窗未运行 —— 下面这些是下次开始时用的设置」，无错误样式
+
+logs/offscreen_reconnect_probe.js（stub chrome + 可编排的 WebSocket 跑真 offscreen.js）
+  ✓ 开场帧 config/get_state/media-start/arm/style
+  ✓ 断开本身不报错  ✓ 1.2s 后自动新 socket  ✓ 开场帧重发且 config 带同样的 textOnly
+  ✓ 通知 capture-restored  ✓ 用户 stop 之后不再重连
+
+tests：新增/改写 4 条（三态分开说且**断言"没有回应"这句不再存在**、线路切换期间不问不报、
+socket 自己回来、caption_running 明说没有窗口）。附带修掉一条脆弱测试：
+StateListenerStartupTests 原来 bind 真实 8767，产品一在跑它就失败（本轮实测踩到）⇒ 改成自己占一个空闲端口。
+python -m pytest -q → 382 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）。
+```
+
+**判据（写下来，否则会再犯）**
+
+```
+1. "当前状态"只能来自**回答**，或来自权威说"没有对象"。
+   用超时替对方回答 = 制造竞态告警（本节的"一次有一次"）
+2. 一个进程被杀掉时会带走哪些东西？外围要能自己回来 ——
+   线路切换带走字幕窗和 socket，两者都必须自动恢复，否则用户要按两次"开始"
+3. 用户报"有时好有时坏"时，先找**竞态**和**没有恢复路径**这两类，
+   不要先怀疑功能没实现（功能在，是时序和恢复）
+```
+
 
 **判据（下次再看到"要点两次"）**
 
