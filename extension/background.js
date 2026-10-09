@@ -201,6 +201,9 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     language: language || "auto",
   });
   await applyCaptionStyle();
+  chrome.action.setBadgeText({ text: "ON" }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: "#1a73e8" }).catch(() => {});
+  chrome.action.setTitle({ title: "实时字幕翻译 - 正在运行" }).catch(() => {});
 }
 
 async function stop() {
@@ -215,8 +218,34 @@ async function stop() {
     await chrome.offscreen.closeDocument();
   }
   await chrome.storage.session.set({ running: false });
+  chrome.action.setBadgeText({ text: "" }).catch(() => {});
+  chrome.action.setTitle({ title: "实时字幕翻译" }).catch(() => {});
   await shutdownBackend();
 }
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === "toggle-caption") {
+    const stored = await chrome.storage.session.get(["running", "language"]);
+    if (stored.running) {
+      await stop();
+    } else {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const theme = await chrome.storage.local.get({
+        audioOnly: false,
+        apiEnabled: false,
+        apiUrl: "",
+        apiKey: "",
+        apiModel: "",
+        partialIntervalMs: 750,
+      });
+      await start({
+        tabId: tab ? tab.id : 0,
+        language: stored.language || "auto",
+        ...theme,
+      });
+    }
+  }
+});
 
 async function sendWhenReady(message) {
   let lastError = null;
