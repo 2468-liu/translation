@@ -27,9 +27,9 @@ from server.caption_window import (
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_a_mark_already_on_the_line_does_not_fire(self):
-        # The line ends a clause; the next fragment repeats that mark while growing the
-        # following clause. Membership would say boundary, set difference says no.
+    def test_a_growing_clause_keeps_its_mark_count(self):
+        # The line ended a clause; the next fragment repeats that mark while growing the
+        # following clause. The count is unchanged, so this is not a boundary.
         self.assertFalse(introduces_boundary("你有友好的饮料。", "你有友好的饮料。他"))
 
     def test_each_kind_of_terminal_mark_counts(self):
@@ -43,20 +43,32 @@ class BoundaryTests(unittest.TestCase):
         self.assertFalse(introduces_boundary("你有", "你有那"))
         self.assertTrue(introduces_boundary("你有那", "你有那。"))
 
-    def test_a_swapped_mark_does_end_the_clause(self):
-        # The line carried a comma and now carries a full stop. The comma is gone and
-        # the full stop was not on screen, so this is a boundary. Written the other way
-        # round first, and the measurement settled it: set difference fires here, and
-        # set difference is also the only variant that matches the clause count.
-        self.assertTrue(introduces_boundary("你有，", "你有。"))
+    def test_a_second_mark_of_the_same_kind_does_fire(self):
+        # This is the case the switch from sets to counts exists for. Set difference
+        # could not see it: the line already carried a full stop, so a second one added
+        # nothing new as a character, the boundary fired 13.5 times a minute against a
+        # clause rate of 17.7, and two thirds of the draws fell through to the 400ms
+        # fallback, putting first-character latency at 354ms against a 37ms baseline.
+        self.assertTrue(introduces_boundary("你有。", "你有。他。"))
 
-    def test_a_repeated_mark_is_not_a_boundary_and_the_fallback_covers_it(self):
-        # Known limitation of comparing sets rather than counts: a second full stop on
-        # the same line adds nothing new, so that clause does not paint on arrival and
-        # waits for CLAUSE_MAX_MS instead. Comparing counts instead was measured and is
-        # wrong -- 63.5 and 89.2 firings a minute against 53 and 56 clauses, because a
-        # revised clause makes the count oscillate and every swing counts.
-        self.assertFalse(introduces_boundary("你有。", "你有。他。"))
+    def test_a_swapped_mark_does_not_change_the_count(self):
+        # Known gap in counting, left as-is on purpose rather than patched now: the
+        # line carried a comma and now carries a full stop. The count is the same, so
+        # this reads as no boundary although the clause plainly ended. If the next run
+        # still leans on the fallback, this is the case to subdivide -- a replacement by
+        # a stronger mark counts as an end.
+        self.assertFalse(introduces_boundary("你有，", "你有。"))
+
+    def test_repeated_marks_are_kept_rather_than_deduplicated(self):
+        self.assertEqual(punctuation_marks("你有。他。"), ("。", "。"))
+
+    def test_block_mode_is_off_by_default(self):
+        # Three runs ended with first-character p50 at 342ms against a 37ms baseline,
+        # and the fallback still drew three times out of five. Reaching for the mode
+        # must be a decision, not a state the program starts in.
+        from server.caption_window import BLOCK_BY_PUNCT
+
+        self.assertEqual(BLOCK_BY_PUNCT, 0)
 
     def test_the_fallback_is_between_the_measured_percentiles(self):
         # Measured p25 of the clause's first-character-to-punctuation interval was 14ms
@@ -78,6 +90,7 @@ class GateAccountingTests(unittest.TestCase):
         stub._clause_t0 = 0.0
         stub._clause_pending = ""
         stub._clause_job = None
+        stub._clause_fell_back = False
         stub._block_hits = 0
         stub._block_timeouts = 0
         stub.drawn = []
@@ -159,6 +172,54 @@ class GateAccountingTests(unittest.TestCase):
         reasons = [c.kwargs["why"] for c in emit.call_args_list if c.args[1] == "block"]
         self.assertEqual(reasons, ["boundary"])
         self.assertEqual(stub._block_timeouts, 0)
+
+    def test_a_clause_gets_one_fallback_not_one_per_400ms(self):
+        # The first run drew a punctuation-less clause seven times, once every 400ms,
+        # with the text growing each time. The fallback is spent once; after that the
+        # clause waits for its punctuation no matter how long that takes.
+        import unittest.mock as mock
+
+        stub = self._window()
+        self._gate(stub, "你", 100.0)
+        with mock.patch("server.caption_window.time.monotonic", return_value=100.5), \
+             mock.patch("server.caption_window.perf.emit"):
+            from server.caption_window import _Caption
+
+            _Caption._flush_clause(stub)
+        self.assertTrue(stub._clause_fell_back)
+        self.assertEqual(len(stub.drawn), 1)
+
+        # Three more fragments over the next 1.2s, each of which used to re-arm.
+        for i, t in enumerate((100.6, 100.9, 101.3, 101.9)):
+            stub.jobs.clear()
+            self._gate(stub, "你有那招" * (i + 1), t)
+            self.assertEqual(stub.jobs, [], f"a fallback was re-armed at {t}")
+        self.assertEqual(len(stub.drawn), 1, "the clause was drawn more than once")
+
+    def test_the_fallback_does_not_arm_at_fifty_milliseconds(self):
+        # Not clearing _clause_t0 alone would compute wait = max(50, negative) = 50ms,
+        # which redraws every twentieth of a second -- faster than the fallback it
+        # replaced. The flag is what prevents the arming at all.
+        import unittest.mock as mock
+
+        stub = self._window()
+        self._gate(stub, "你", 100.0)
+        with mock.patch("server.caption_window.time.monotonic", return_value=101.0), \
+             mock.patch("server.caption_window.perf.emit"):
+            from server.caption_window import _Caption
+
+            _Caption._flush_clause(stub)
+        stub.jobs.clear()
+        self._gate(stub, "你还在等", 102.0)
+        self.assertEqual(stub.jobs, [])
+
+    def test_a_new_clause_after_a_boundary_gets_its_own_fallback(self):
+        stub = self._window()
+        self._gate(stub, "你。", 100.0)              # boundary: drawn, clause closed
+        stub.jobs.clear()
+        self._gate(stub, "你。他", 100.2)            # next clause opens
+        self.assertTrue(stub.jobs, "the next clause got no fallback at all")
+        self.assertFalse(stub._clause_fell_back)
 
     def test_a_segment_boundary_drops_the_open_clause(self):
         import unittest.mock as mock

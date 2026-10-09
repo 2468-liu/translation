@@ -86,21 +86,56 @@ TERMINAL_PUNCT = "。！？；，、：…"
 # Fallback for the quarter of clauses whose punctuation arrives more than a second
 # late. Chosen between the measured p25 of 14ms and p75 of 966ms, not tuned.
 CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
-BLOCK_BY_PUNCT = _env_int("TRANSLATION_BLOCK_BY_PUNCT", 1)
+# Off by default. Three runs on blog_3min against a matched baseline:
+#
+#                     baseline  BLK1     BLK2     BLK3
+#   draws per minute     93.7    68.1     33.9     36.1
+#   first char p50       37ms   366ms    354ms    342ms
+#   bursts of >=3         11.7     0.0      0.0      0.0
+#   frame gap p50          2ms   827ms   1224ms   1206ms
+#   fallback share          -     100%    100%      60%
+#
+# The chain of >=3 and the frame gap are real wins and they are what the flicker was
+# measured as. The first-character cost is not: 342ms is past the 200ms floor, and the
+# fallback still draws three out of five times, so the number is the fallback's 400ms
+# rather than the cost of waiting for a clause.
+#
+# Both boundary predicates were tried. Comparing sets fires too rarely -- once the line
+# has collected the handful of marks Chinese uses, almost nothing new can be introduced.
+# Comparing counts was predicted to fire 63.5 and 89.2 times a minute and it fired 14.2,
+# because the offline measurement counted each packet against the previous packet while
+# the gate counts against the last drawn line. Switching predicates was neutral, not
+# harmful, and neither reaches the 17 a minute that was registered.
+#
+# The code stays because the switch, the instrumentation and the baselines do: the next
+# attempt has a comparison to make against rather than a blank page.
+BLOCK_BY_PUNCT = _env_int("TRANSLATION_BLOCK_BY_PUNCT", 0)
 
 
-def punctuation_marks(text: str) -> frozenset:
-    """Which terminal marks the text carries."""
-    return frozenset(ch for ch in text if ch in TERMINAL_PUNCT)
+def punctuation_marks(text: str) -> tuple:
+    """The terminal marks the text carries, in order and with repeats kept.
+
+    A tuple rather than a set: whether a mark is *new* to the line is decided by how
+    many there are, and a set drops the second comma of a two-clause line.
+    """
+    return tuple(ch for ch in text if ch in TERMINAL_PUNCT)
 
 
 def introduces_boundary(shown: str, incoming: str) -> bool:
-    """True when the incoming text adds a terminal mark the line did not have.
+    """True when the incoming text carries more terminal marks than the line does.
 
-    Set difference rather than membership, because a mark that is already on screen
-    stays in every later fragment of that clause and would otherwise re-fire.
+    Counted, not compared as sets. Set difference was measured firing 13.5 times a
+    minute against a clause rate of 17.7: once the line has collected the handful of
+    marks Chinese uses, almost no later clause can introduce one that is new as a
+    character, so two thirds of the draws fell through to the 400ms fallback and
+    first-character latency sat at 354ms against a 37ms baseline.
+
+    The cost is the other direction. Measured over the same logs, counting fires 63.5
+    and 89.2 times a minute against 53 and 56 clauses -- a revised clause makes the
+    count oscillate and every swing counts. So this trades draw count for latency
+    rather than landing on the 17 a minute that was registered.
     """
-    return bool(punctuation_marks(incoming) - punctuation_marks(shown))
+    return len(punctuation_marks(incoming)) > len(punctuation_marks(shown))
 # Settle is the pause after a one-character revision before the change is drawn,
 # so a stream of single-character corrections does not flicker. It is also a
 # candidate for the swap deadline, which makes it a latency cost and not only a
@@ -277,6 +312,7 @@ class _Caption:
         self._clause_t0 = 0.0
         self._clause_pending = ""
         self._clause_job = None
+        self._clause_fell_back = False
         self._block_hits = 0
         self._block_timeouts = 0
         self._line_since = 0.0
@@ -887,11 +923,33 @@ class _Caption:
         if not self._clause_t0:
             self._clause_t0 = now
         if introduces_boundary(self.line, cleaned):
+            started = self._clause_t0 or now
             self._cancel_clause()
             self._apply_line(cleaned, "block")
             self._block_hits += 1
+            # The boundary path emitted nothing, so the run reported why=timeout for
+            # every draw that came from here -- 42 of 104 on the last run, which read as
+            # "the punctuation boundary never fires" when it fired 13.5 times a minute.
+            # A `why` that cannot see half the draws is worse than no `why`.
+            perf.emit(
+                "caption",
+                "block",
+                why="boundary",
+                chars=len(cleaned),
+                shown=len(self.line),
+                wait=round((now - started) * 1000.0, 1),
+                hits=self._block_hits,
+                timeouts=self._block_timeouts,
+            )
             return "block"
         self._clause_pending = cleaned
+        if self._clause_fell_back:
+            # This clause has already spent its one fallback and is waiting for its
+            # punctuation. Measured on the first run: a three-second clause without
+            # punctuation was drawn seven times, once every 400ms, with the text growing
+            # each time -- which is the gradual growth block mode exists to remove, and
+            # it put first-character latency at 366ms against the 37ms baseline.
+            return "block_wait"
         if self._clause_job is not None:
             self.root.after_cancel(self._clause_job)
         wait = max(50, int(round((self._clause_t0 + CLAUSE_MAX_MS / 1000.0 - now) * 1000)))
@@ -904,14 +962,19 @@ class _Caption:
             self._clause_job = None
         self._clause_t0 = 0.0
         self._clause_pending = ""
+        self._clause_fell_back = False
 
     def _flush_clause(self) -> None:
-        """The 400ms fallback: draw what has arrived even without punctuation."""
+        """The 400ms fallback, spent once per clause."""
         self._clause_job = None
         text = self._clause_pending
         started = self._clause_t0
-        self._clause_t0 = 0.0
-        self._clause_pending = ""
+        # Deliberately not clearing _clause_t0. Clearing it made the next fragment open
+        # a fresh clause, so the fallback re-armed every 400ms for as long as the
+        # punctuation stayed away. _clause_pending is kept too, so the text that finally
+        # arrives at the boundary is the whole clause rather than the part that existed
+        # when the fallback fired.
+        self._clause_fell_back = True
         if not text or not started:
             return
         why = "boundary" if introduces_boundary(self.line, text) else "timeout"
