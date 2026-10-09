@@ -86,6 +86,26 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertIn('text_only_control = tk.Checkbutton', tk_caption)
         self.assertIn('self.text_only_control.place(x=8, y=3', tk_caption)
 
+    def test_one_text_only_state_shared_by_popup_and_caption_window(self):
+        """Both controls, one state, and a click on either one has to land.
+
+        Storage alone was the wrong carrier: it is written by whichever side moved last,
+        so when the window's own control had moved it and storage had not caught up, the
+        popup's click produced no storage change, no message, and no visible effect --
+        the second press is what people did next. The frame the window obeys is sent
+        from the popup directly now, and storage is only what the next start reads.
+        """
+        popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+        offscreen = (ROOT / "extension" / "offscreen.js").read_text(encoding="utf-8")
+
+        self.assertIn("function tellCaptionWindow()", popup)
+        self.assertIn('type: "caption-style"', popup)
+        self.assertIn("tellCaptionWindow();", popup)
+        self.assertIn('message.type === "caption-style"', offscreen)
+        # And the claim that the caption's control area hides itself is gone, because it
+        # does not: it stays on the header so the state is visible where it is changed.
+        self.assertNotIn("控制区已隐藏", popup)
+
     def test_state_sync_is_exposed_and_the_position_lock_is_gone(self):
         ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
         tk_caption = _code_only(

@@ -117,6 +117,22 @@ class TextOnlyIsAViewModeTests(unittest.TestCase):
         self.assertIn("WS_EX_LAYERED", body)
         self.assertNotIn("|= WS_EX_TRANSPARENT", body)
 
+    def test_the_only_text_control_survives_text_only_mode(self):
+        """It used to be placed only when 只有字 was off, which is the one mode where it
+        matters: the control that turns 只有字 off was hidden by 只有字, so the only way
+        back was the popup -- and then two surfaces showed the same state with only one
+        of them able to change it."""
+        body = _body_source(_class_methods(SOURCE)["_apply_colors"])
+        self.assertIn("self.text_only_control.place(x=8, y=3", body)
+        self.assertNotIn("self.text_only_control.place_forget()", body)
+        # The indicator is where the state is drawn, so it cannot be keyed out with the
+        # background: on a transparent window that is an invisible checkbox.
+        self.assertIn('selectcolor="#000000"', body)
+
+    def test_one_control_state_is_mirrored_not_copied(self):
+        body = _body_source(_class_methods(SOURCE)["apply_text_only"])
+        self.assertIn("self.text_only_var.set(self.text_only)", body)
+
 
 class StateBroadcastTests(unittest.TestCase):
     def _broadcast(self, stub: _StyleStub, sock: _FakeSock) -> None:

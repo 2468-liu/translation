@@ -569,15 +569,23 @@ class _Caption:
         self.root.configure(bg=bg)
         self.canvas.configure(bg=bg)
         self.close.configure(bg=bg)
+        # The control stays on the header in both modes.
+        #
+        # It used to be place_forget()'d in 只有字 mode, which made the control that
+        # turns 只有字 off the one thing 只有字 hid: the only way back was the browser
+        # popup, and the popup's copy of the state could differ from this window's with
+        # nothing on screen to show it. Two surfaces, one state -- so both have to be
+        # able to show it and change it.
         self.text_only_control.configure(
             bg=bg,
             activebackground=bg,
-            selectcolor=bg,
+            # Not keyed out with the background: on a transparent window a keyed
+            # indicator is an invisible checkbox, and the indicator is the only place
+            # the state is drawn. Only the indicator takes this colour, so the black
+            # bar the screenshot showed (the whole widget's bg) does not come back.
+            selectcolor="#000000",
         )
-        if self.text_only:
-            self.text_only_control.place_forget()
-        else:
-            self.text_only_control.place(x=8, y=3, anchor="nw")
+        self.text_only_control.place(x=8, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:

@@ -159,9 +159,34 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !Object.prototype.hasOwnProperty.call(changes, "captionTextOnly")) return;
   const next = Boolean(changes.captionTextOnly.newValue);
   textOnly.checked = next;
-  const target = next ? "已切换为只有字，字幕框控制区已隐藏。" : "已显示字幕框控制区。";
-  status.textContent = target;
+  status.textContent = captionTextOnlyNote(next);
 });
+
+// One state, two controls: this checkbox and the caption window's own header control.
+//
+// The text is shared so the two cannot describe the same state differently. It also has
+// to stop claiming the caption's control area is hidden -- it is not any more, and that
+// claim is what made a click on the window's own control look like the wrong control.
+function captionTextOnlyNote(on) {
+  return on ? "字幕窗已切到「只有字」：无框、透明，仍可拖动。" : "字幕窗已恢复黑底框。";
+}
+
+// The live caption window, told directly.
+//
+// Writing storage alone is not enough, and that is where the second press came from:
+// storage is written by whichever side changed last, so when the caption window's own
+// control has moved the state and storage has not caught up (or the value was already
+// the one being asked for), storage.onChanged never fires, nothing is sent, and the
+// first click does nothing visible. The style frame is what the window obeys; storage
+// is only what the next start reads.
+function tellCaptionWindow() {
+  chrome.runtime.sendMessage({
+    type: "caption-style",
+    textOnly: textOnly.checked,
+    fontPx: Number(fontSize.value) || 20,
+    color: fontColor.value,
+  }).catch(() => {});
+}
 
 async function refresh(keepMessage, failedStep) {
   const stored = await chrome.storage.session.get(["running", "language"]);
@@ -264,7 +289,8 @@ async function refresh(keepMessage, failedStep) {
 
 textOnly.addEventListener("change", () => {
   chrome.storage.local.set({ captionTextOnly: textOnly.checked });
-  status.textContent = textOnly.checked ? "已切换为只有字，字幕框控制区已隐藏。" : "已显示字幕框控制区。";
+  tellCaptionWindow();
+  status.textContent = captionTextOnlyNote(textOnly.checked);
 });
 
 audioOnly.addEventListener("change", () => {
