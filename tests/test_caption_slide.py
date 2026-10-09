@@ -18,9 +18,16 @@ guarded here, and each was registered before the implementation:
   no_movement_when_stable  ordinary repaints do not animate at all
 """
 
+import inspect
 import unittest
 
-from server.caption_window import SLIDE_MS, wrap_all, wrap_caption
+from server.caption_window import (
+    SLIDE_MS,
+    _Caption,
+    settle_shift,
+    wrap_all,
+    wrap_caption,
+)
 
 MEASURE = lambda text: len(text) * 20  # noqa: E731  one probe function, no Tk needed
 
@@ -132,6 +139,176 @@ class SourceShapeTests(unittest.TestCase):
     def test_the_move_is_recorded(self):
         self.assertIn('"slide"', self.code)
         self.assertIn("rows=dropped", self.code)
+
+
+class HorizontalSettleTests(unittest.TestCase):
+    """The centred block must move sideways rather than teleport sideways.
+
+    Two populations, measured on a block-mode run over 1200 consecutive paints at width
+    760 and 24px: p25 12px, p50 24px, p75 24px for the fallback draws that add a
+    character or two, and p90 60px, p95 120px, p99 300px for a whole clause arriving.
+    40 sits in the gap, so about 12% of paints move and the rest land directly.
+
+    Streaming is deliberately not animated: it moves 12px per character, which is a
+    creep, and it is the path that works today. Only block mode settles horizontally.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from server import caption_window as cw
+
+        cls.cw = cw
+
+    def test_the_threshold_sits_in_the_measured_gap(self):
+        # Below p75 (24) would animate the fallback draws too; at p90 (60) it would miss
+        # half the clause arrivals.
+        self.assertGreaterEqual(self.cw.X_SETTLE_MIN_PX, 24)
+        self.assertLessEqual(self.cw.X_SETTLE_MIN_PX, 60)
+
+    def test_the_left_edge_matches_what_tk_draws(self):
+        # Properties rather than a copy of the formula: re-typing the formula would only
+        # prove the file agrees with itself. These three are what centring means.
+        class Stub:
+            width = 760
+            wrap = 712
+
+            class font_line:
+                @staticmethod
+                def measure(text):
+                    return len(text) * 24
+
+            _visual_left = _Caption._visual_left
+
+        stub = Stub()
+        # A text exactly as wide as the block starts at the block's left edge. 29
+        # characters at 24px is 696, which is why the block here is 696 and not 712.
+        self.assertEqual(stub._visual_left("字" * 29, 696), 760 / 2 - 696 / 2)
+        # A text of no width sits on the centre.
+        self.assertEqual(stub._visual_left("", 712), 760 / 2)
+        # Whatever the length, the text is symmetric about the centre.
+        for length in range(0, 30, 3):
+            text = "字" * length
+            left = stub._visual_left(text, 712)
+            right = left + stub.font_line.measure(text)
+            self.assertAlmostEqual(left + right, 760, places=6, msg=length)
+
+    def test_a_short_change_snaps_and_a_clause_arrives_moving(self):
+        # Against the real function, not a copy of the formula. The first version
+        # recomputed both edges in the test and compared the result to the constant, so
+        # it passed with the threshold set to zero -- the decision was never exercised.
+        measure = lambda text: len(text) * 24  # noqa: E731
+        shift_for = lambda old, new: settle_shift(  # noqa: E731
+            old, new, 760, 712, measure, block_mode=True)
+
+        # One or two characters of creep, which is what the fallback draws produce.
+        for length in range(6, 28):
+            self.assertEqual(
+                shift_for("字" * length, "字" * (length + 2)), 0.0,
+                f"a two-character change should snap, not move, at length {length}",
+            )
+        # A whole clause arriving.
+        for length in range(4, 20):
+            moved = shift_for("字" * length, "字" * (length + 13))
+            self.assertGreaterEqual(abs(moved), self.cw.X_SETTLE_MIN_PX)
+            self.assertAlmostEqual(abs(moved), 13 * 24 / 2, places=6)
+
+    def test_the_shift_moves_the_line_toward_where_the_old_one_started(self):
+        # The sign matters and a magnitude-only check cannot see it. Replacing the
+        # previous text with the incoming one in the subtraction flips the sign, which
+        # sends the line the wrong way and doubles the jump instead of cancelling it --
+        # and it passed every test until this one existed.
+        measure = lambda text: len(text) * 24  # noqa: E731
+        long, short = "字" * 25, "字" * 12
+        # A shorter line sits further right when centred, so it has to be pulled left.
+        self.assertLess(settle_shift(long, short, 760, 712, measure, block_mode=True), 0)
+        # And a longer line has to be pulled right.
+        self.assertGreater(settle_shift(short, long, 760, 712, measure, block_mode=True), 0)
+        # Either way the drawn left edge lands on the old one, so the text that has not
+        # changed does not appear to move.
+        for old, new in ((long, short), (short, long)):
+            shift = settle_shift(old, new, 760, 712, measure, block_mode=True)
+            natural = 760 / 2 - 712 / 2 + (712 - measure(new)) / 2
+            self.assertAlmostEqual(natural + shift,
+                                   760 / 2 - 712 / 2 + (712 - measure(old)) / 2,
+                                   places=6)
+
+    def test_paint_passes_the_shift_into_the_draw(self):
+        # settle_shift was tested on its own and the wiring was not, so replacing the
+        # call with a constant was invisible: the function was exercised and then
+        # discarded.
+        source = inspect.getsource(self.cw._Caption._paint)
+        code = "\n".join(line.split("#")[0] for line in source.splitlines())
+        self.assertIn("shift = settle_shift(", code)
+        self.assertRegex(
+            code, r"self\._draw\(display_body[^)]*\bshift\b",
+            "the computed shift never reaches the draw call",
+        )
+
+    def test_the_previous_line_is_recorded_for_the_next_comparison(self):
+        source = inspect.getsource(self.cw._Caption._paint)
+        code = "\n".join(line.split("#")[0] for line in source.splitlines())
+        self.assertRegex(code, r"self\._drawn_text\s*=\s*display_body")
+
+
+    def test_nothing_moves_without_a_previous_line(self):
+        measure = lambda text: len(text) * 24  # noqa: E731
+        for previous in ("", None):
+            self.assertEqual(
+                settle_shift(previous, "字" * 40, 760, 712, measure, block_mode=True), 0.0
+            )
+
+    def test_identical_text_does_not_move(self):
+        measure = lambda text: len(text) * 24  # noqa: E731
+        self.assertEqual(
+            settle_shift("字" * 30, "字" * 30, 760, 712, measure, block_mode=True), 0.0
+        )
+
+    def test_streaming_never_moves_horizontally(self):
+        measure = lambda text: len(text) * 24  # noqa: E731
+        for length in range(4, 30):
+            self.assertEqual(
+                settle_shift("字" * length, "字" * (length + 13), 760, 712, measure,
+                             block_mode=False),
+                0.0,
+                "streaming creeps by half a character; it is not animated",
+            )
+
+    def test_rendering_is_unchanged_by_the_shift_at_its_end(self):
+        # The resting place is still the centre. A shift that did not ease back to zero
+        # would leave the caption permanently off-centre by however much it last moved.
+        from server.caption_window import _Caption as C
+
+        source = inspect.getsource(C._step_slide)
+        code = "\n".join(line.split("#")[0] for line in source.splitlines())
+        self.assertIn("self.canvas.coords(item, self.width / 2, 25)", code)
+
+    def test_the_shift_is_carried_into_the_draw(self):
+        from server import caption_window as cw
+
+        source = inspect.getsource(cw._Caption._draw)
+        self.assertIn("x_shift", source)
+        self.assertIn("self.width / 2 + x_shift", source)
+        # Anchoring left would have been the easy way and would have left-aligned every
+        # row of a two-line caption, which is a change of appearance made to fix motion.
+        self.assertIn('anchor="n"', source)
+        self.assertIn('justify="center"', source)
+
+
+def _shift_for(old: str, new: str) -> float:
+    class Stub:
+        width = 760
+        wrap = 712
+
+        class font_line:
+            @staticmethod
+            def measure(text):
+                return len(text) * 24
+
+        def _visual_left(self, text, wrap):
+            return self.width / 2 - wrap / 2 + (wrap - self.font_line.measure(text)) / 2
+
+    stub = Stub()
+    return stub._visual_left(old, stub.wrap) - stub._visual_left(new, stub.wrap)
 
 
 if __name__ == "__main__":

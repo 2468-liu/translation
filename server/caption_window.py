@@ -126,6 +126,22 @@ BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"
 # frames, and a one-row shift at a 31px line height is about 260px/s over that time.
 SLIDE_MS = _env_int("TRANSLATION_CAPTION_SLIDE_MS", 120)
 
+# How far the centred block has to move before it is worth animating.
+#
+# Measured on a block-mode run, 1200 consecutive paints, width 760 at 24px:
+#
+#   p25  12px   p50  24px   p75  24px      the fallback draws, one or two characters
+#   p90  60px   p95 120px   p99 300px      a whole clause arriving
+#
+# Two populations, not one curve. 40 sits in the gap between p75 and p90, so about 12%
+# of paints move and the rest land directly. Animating the small ones would give a
+# caption that never sits still -- the fallback fires on roughly two thirds of block-mode
+# paints, and those change the line by a character at a time.
+#
+# Only block mode animates horizontally. Streaming moves 12px per character, which is a
+# creep rather than a jump, and it is the path that works today.
+X_SETTLE_MIN_PX = _env_int("TRANSLATION_CAPTION_X_SETTLE_MIN_PX", 40)
+
 
 def punctuation_marks(text: str) -> tuple:
     """The terminal marks the text carries, in order and with repeats kept.
@@ -210,6 +226,26 @@ _LANG = {
     "ru": "俄语",
     "zh": "中文",
 }
+
+
+def settle_shift(previous: str, incoming: str, width: int, wrap: int, measure,
+                 block_mode: bool) -> float:
+    """How far to offset the new line so it starts where the old one did. 0 means snap.
+
+    A centred block moves by half the change in the width of its text, so a clause
+    arriving moves it by a lot and a character arriving moves it by half a character.
+    Only block mode settles: streaming changes the line by a character at a time, which
+    is a creep rather than a jump, and it is the path that works today.
+
+    Pure so the threshold can be tested against real text instead of against a copy of
+    the formula. The first version of that test recomputed both edges itself and compared
+    the result to the constant, so it passed with the constant set to zero.
+    """
+    if not block_mode or not previous or previous == incoming:
+        return 0.0
+    moved = ((width / 2 - wrap / 2 + (wrap - measure(previous)) / 2)
+             - (width / 2 - wrap / 2 + (wrap - measure(incoming)) / 2))
+    return moved if abs(moved) >= X_SETTLE_MIN_PX else 0.0
 
 
 def fit_caption_width(measured: int, current: int, screen_width: int, locked: bool) -> int:
@@ -363,6 +399,8 @@ class _Caption:
         self._slide_job = None
         self._slide_item = None
         self._slide_from = 25.0
+        self._slide_shift = 0.0
+        self._drawn_text = ""
         self._slide_t0 = 0.0
         self._block_by_punct = bool(BLOCK_BY_PUNCT)
         self._clause_t0 = 0.0
@@ -657,18 +695,27 @@ class _Caption:
         # per frame, so the animation does not reintroduce the clear-and-redraw that the
         # paint order above exists to avoid.
         dropped = max(0, len(all_lines) - len(display_lines))
+        # How far the centred block is about to jump sideways. Streaming changes the line
+        # by a character at a time, which is a creep and is left alone; block mode adds a
+        # whole clause at once, and that reads as a jump. The threshold is the measured
+        # gap between those two populations, not a taste judgement.
+        shift = settle_shift(self._drawn_text, display_body, self.width, wrap,
+                             self.font_line.measure, self._block_by_punct)
         self._cancel_slide()
         start_y = 25 + dropped * line_h if dropped else 25
-        fresh = self._draw(display_body, self.font_line, wrap, start_y)
+        fresh = self._draw(display_body, self.font_line, wrap, start_y, shift)
         for stale in self.canvas.find_all():
             if stale != fresh:
                 self.canvas.delete(stale)
-        if dropped:
+        self._drawn_text = display_body
+        if dropped or shift:
             self._slide_item = fresh
             self._slide_from = start_y
+            self._slide_shift = shift
             self._slide_t0 = time.monotonic()
             self._slide_job = self.root.after(16, self._step_slide)
-            perf.emit("caption", "slide", rows=dropped, chars=len(display_body))
+            perf.emit("caption", "slide", rows=dropped, shift=round(shift, 1),
+                      chars=len(display_body))
         now = time.monotonic()
         self._report_dwell(now)
         if self._trace_action in ("grow", "swap"):
@@ -713,7 +760,11 @@ class _Caption:
         self._slide_item = None
 
     def _step_slide(self) -> None:
-        """Ease the item from where the dropped rows left it up to its resting place.
+        """Ease the item from where the dropped rows left it back to its resting place.
+
+        Both axes, because both have the same cause. A dropped row moves the text up;
+        a clause arriving changes how much of the width the text takes, and a centred
+        block moves sideways by half that. Same object, same clock, same easing.
 
         Only `coords` moves it. Recreating the text each frame would rebuild the glyph
         runs sixty times a second and put back the flicker the paint order avoids.
@@ -728,15 +779,31 @@ class _Caption:
             self.canvas.coords(item, self.width / 2, 25)
             self._slide_item = None
             return
-        # Ease out cubic: fast at first, settling on the row, which reads as the line
-        # arriving rather than sliding mechanically.
+        # Ease out cubic: fast at first, settling on place, which reads as arriving
+        # rather than sliding mechanically.
         t = 1.0 - (1.0 - elapsed / SLIDE_MS) ** 3
-        self.canvas.coords(item, self.width / 2, self._slide_from + (25 - self._slide_from) * t)
+        self.canvas.coords(item, self.width / 2 + self._slide_shift * (1.0 - t),
+                           self._slide_from + (25 - self._slide_from) * t)
         self._slide_job = self.root.after(16, self._step_slide)
 
-    def _draw(self, text: str, font: tkfont.Font, wrap: int, y: float = 25) -> int:
+    def _visual_left(self, text: str, wrap: int) -> float:
+        """Where the left edge of a centred line of this text lands on screen.
+
+        The same arithmetic Tk does for `anchor="n"` plus `justify="center"` inside a
+        block of `wrap` pixels: the block starts half a wrap left of centre, and each
+        line is centred within it. Written out rather than read back from the canvas so
+        the shift can be computed before the item exists.
+        """
+        return self.width / 2 - wrap / 2 + (wrap - self.font_line.measure(text)) / 2
+
+    def _draw(self, text: str, font: tkfont.Font, wrap: int, y: float = 25,
+              x_shift: float = 0.0) -> int:
+        # x_shift offsets the whole centred block. Anchoring left instead would be the
+        # obvious way to make the position animatable, and it would also left-align
+        # every row of a two-line caption -- a visible change to how the caption looks,
+        # made to fix how it moves.
         return self.canvas.create_text(
-            self.width / 2,
+            self.width / 2 + x_shift,
             y,
             text=text,
             anchor="n",

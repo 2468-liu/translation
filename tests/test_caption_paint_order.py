@@ -127,7 +127,8 @@ def _window(text: str = "你好", width: int = 760) -> object:
     # not been given, so leaving _draw unbound meant the real method never ran and the
     # canvas stayed empty -- three failures that looked like a paint-order bug and were
     # a missing binding.
-    stub._draw = lambda text, font, wrap, y=25: _Caption._draw(stub, text, font, wrap, y)
+    stub._draw = lambda text, font, wrap, y=25, x_shift=0.0: _Caption._draw(
+        stub, text, font, wrap, y, x_shift)
     # The slide state _paint touches before drawing. Mock would invent these, but a
     # Mock's ind_all() returns a truthy Mock and the animation branch would then try
     # to move an item that was never created.
@@ -135,6 +136,10 @@ def _window(text: str = "你好", width: int = 760) -> object:
     stub._slide_item = None
     stub._slide_from = 25.0
     stub._slide_t0 = 0.0
+    stub._slide_shift = 0.0
+    stub._drawn_text = ""
+    stub._block_by_punct = False
+    stub._visual_left = lambda text, wrap: 0.0
     stub._cancel_slide = lambda: None
     return stub
 
