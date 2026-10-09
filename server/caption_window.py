@@ -594,7 +594,7 @@ class _Caption:
             self.position_lock_control.place(x=80, y=3, anchor="nw")
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
-            self.position_lock_control.place_forget()
+            self.position_lock_control.place(x=80, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -877,7 +877,7 @@ class _Caption:
         self.canvas.configure(cursor=cursor)
 
     def _press(self, event) -> None:
-        if self.text_only and self.position_locked:
+        if self.position_locked:
             return
         on_x, on_y, side = self._edges(event)
         if on_x or on_y:
@@ -943,9 +943,11 @@ class _Caption:
     def apply_text_only(self, enabled: bool) -> None:
         self.text_only = bool(enabled)
         self.text_only_var.set(self.text_only)
-        if self.text_only:
-            self.position_locked = True
-            self.position_lock_var.set(True)
+        # No longer force position_locked. The two settings are independent:
+        # text_only = transparent + frameless; position_locked = disable drag.
+        # If the window is not yet visible, show() will strip the frame.
+        if self.text_only and not self.visible:
+            self.show()
         self._apply_colors()
         self._broadcast_state()
 
