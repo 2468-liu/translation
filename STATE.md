@@ -841,6 +841,22 @@ final 覆盖残句 → 可见的跳，体感是「一个人说话断点续」，
 **它比改前好**：改前屏幕永远停在残句上、final 从不上屏；现在是「先说一句半的，
 再接完整句」，语义上仍是一句话。**但那一次跳是真实存在的，别当成已消除。**
 
+### 「只有字」模式修复（10-09 晚）
+
+```
+问题 1  apply_text_only 没调 show() ⇒ _strip_frame 不跑 ⇒ 框没去掉
+问题 2  apply_text_only 强制 position_locked=True ⇒ _press 里 if text_only and position_locked 挡住拖动
+问题 3  caption 广播 state 到 UDP 8767，extension 侧完全没听这个端口
+
+修法：
+  1. apply_text_only 删强制锁定、补 show()
+  2. _press 保留 if position_locked: return（不加特例）
+  3. _apply_colors 只有字时也显示锁定 checkbox
+
+结果：只有字 = 去框+透明+默认可拖动；用户想锁再点锁定即可；两状态正交。
+扩展同步（问题 3）是另一条独立任务（需 extension 侧加 UDP 8767 监听），未在本次改动。
+```
+
 ## 待办
 
 ```
