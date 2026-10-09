@@ -4,6 +4,46 @@ from pathlib import Path
 from server.caption_window import fit_caption_width, wrap_caption
 
 
+def strip_docstrings(source: str) -> str:
+    """Source with triple-quoted blocks and `#` comments removed.
+
+    Module, class and function docstrings all use triple quotes here. Lines inside one
+    are dropped whole; a docstring sharing a line with code is truncated at its opening
+    quotes, which is enough for substring checks.
+
+    The `#` comments matter as much. The first version stripped docstrings only, and
+    then the assertion forbidding `if fitted != self.width` failed on the comment that
+    explains why it is gone -- that comment quotes the very expression it forbids, so
+    the test was reporting the explanation instead of the code. A helper that removes
+    half the prose is worse than none, because it looks like it worked.
+
+    A `#` inside a string is left alone, so a URL or a colour does not truncate a line.
+    """
+    out = []
+    in_block = False
+    for raw in source.splitlines():
+        line = raw
+        if in_block:
+            if '"""' in line:
+                line, in_block = line.split('"""', 1)[1], False
+            else:
+                continue
+        while '"""' in line:
+            head, _, rest = line.partition('"""')
+            if '"""' in rest:
+                line = head + rest.split('"""', 1)[1]
+            else:
+                line, in_block = head, True
+                break
+        hash_at = line.find("#")
+        if hash_at >= 0:
+            before = line[:hash_at]
+            if before.count('"') % 2 == 0 and before.count("'") % 2 == 0:
+                line = before
+        out.append(line)
+    return "\n".join(out)
+
+
 class CaptionLayoutTests(unittest.TestCase):
     def test_caption_wraps_to_at_most_two_lines(self):
         lines = wrap_caption("这是一个很长的实时字幕句子", 180, lambda text: len(text) * 20)
@@ -25,8 +65,45 @@ class CaptionLayoutTests(unittest.TestCase):
         self.assertEqual(lines, ["watch the next", "scene"])
 
     def test_width_never_auto_expands(self):
+        """The caption width is the user's, and the decision is deliberate.
+
+        Added in ba17911 alongside turning the behaviour off, and left as a test rather
+        than deleted so that re-adding auto-fit has to argue with it instead of
+        walking past a function that still looks like it does something.
+
+        The unused parameters stay too. Dropping them would make the signature agree
+        with the body while erasing the record that a choice was ever made.
+        """
         self.assertEqual(fit_caption_width(1800, 760, 1920, locked=True), 760)
         self.assertEqual(fit_caption_width(2400, 760, 1200, locked=False), 760)
+
+    def test_the_paint_path_does_not_measure_the_line_it_discards(self):
+        """The dead measurement is what the old caller actually cost.
+
+        Korean measures at 1.33ms per character because font.measure falls back to a
+        font search, against 0.066ms for Chinese, so a 45-character Korean caption was
+        spending up to 136ms per paint on a number nothing read.
+
+        Docstrings come off before the check. The first version of this assertion
+        failed on its own explanation: the paragraph above says "font.measure costs
+        1.33ms", the substring it forbids is in that text, and the test was reporting
+        the comment rather than the code.
+        """
+        import pathlib
+
+        source = (pathlib.Path(__file__).resolve().parents[1]
+                  / "server" / "caption_window.py").read_text(encoding="utf-8")
+        code = strip_docstrings(source)
+        body = code.split("def _fit_width", 1)[1].split("def _paint", 1)[0]
+        self.assertNotIn(
+            "font_line.measure",
+            body,
+            "_fit_width measures the whole line and returns self.width regardless",
+        )
+        # And the geometry branch that could never be taken is gone with it.
+        paint = code.split("def _paint", 1)[1].split("def _draw", 1)[0]
+        self.assertNotIn("if fitted != self.width", paint)
+        self.assertNotIn("if fitted!=self.width", paint.replace(" ", ""))
 
     def test_empty_caption_has_no_lines(self):
         self.assertEqual(wrap_caption("", 400, lambda text: len(text) * 20), [])

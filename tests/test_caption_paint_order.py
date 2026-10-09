@@ -122,7 +122,7 @@ def _window(text: str = "你好", width: int = 760) -> object:
     stub._trace_sent = 0.0
     stub._trace_recv = 0.0
     stub._report_dwell = mock.Mock()
-    stub._fit_width = lambda body, wrap: _Caption._fit_width(stub, body, wrap)
+    stub._fit_width = lambda body, wrap: stub.width
     # Both of these have to be bound by hand. mock.Mock() invents any attribute it has
     # not been given, so leaving _draw unbound meant the real method never ran and the
     # canvas stayed empty -- three failures that looked like a paint-order bug and were

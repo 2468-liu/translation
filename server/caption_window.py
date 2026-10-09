@@ -213,6 +213,28 @@ _LANG = {
 
 
 def fit_caption_width(measured: int, current: int, screen_width: int, locked: bool) -> int:
+    """Never changes the caption width. The name is the history.
+
+    It used to widen the window for long captions and was turned off in ba17911
+    ("Stabilize repeat start and caption width", 2026-10-01), which also added
+    test_width_never_auto_expands to pin the decision. The commit does not record why,
+    and the likeliest reading is that a window that changes width on every paint
+    hides the row-drop jump this repository has since been chasing -- a caption that
+    reflows instead of holding still is not a caption whose wrapping can be studied.
+
+    So it stays as it is. Two things are deliberately kept rather than deleted:
+
+      the function, so the decision stays visible at the place someone would otherwise
+        re-add the behaviour, with this paragraph attached
+      its parameters, unused, because removing them would make the signature agree with
+        the body while hiding that a deliberate decision ever existed
+
+    Its caller measured the whole line on every paint and threw the number away.
+    That is not free: font.measure costs 1.33ms per character for Korean against
+    0.066ms for Chinese, so a 45-character Korean caption spent up to 136ms measuring
+    text it then discarded -- the same shape as the 169ms blank canvas that the paint
+    order was reordered to remove. The measurement is gone; see `_paint`.
+    """
     return current
 
 
@@ -566,12 +588,20 @@ class _Caption:
             self.close.place(relx=1, x=-5, y=3, anchor="ne")
 
     def _fit_width(self, text: str, wrap: int) -> int:
-        measured = self.font_line.measure(text.replace("\n", ""))
-        return fit_caption_width(measured, self.width, self.screen_width, self.width_locked)
+        """The width the caption will be drawn at: whatever it already is.
+
+        It used to measure the line and hand the number to fit_caption_width, which
+        returned `self.width` unchanged, so the measurement was discarded on every
+        paint. Removing it is not only tidiness -- for Korean that measurement costs
+        1.33ms per character against 0.066ms for Chinese, measured up to 136ms for a
+        45-character line. Nothing else in the paint path needed it: wrap_caption
+        measures per candidate break anyway and the geometry branch below never ran.
+        """
+        return self.width
 
     def _paint(self) -> None:
         # The canvas is cleared *after* the new text exists, not before. Clearing
-        # first left it empty for the whole of _fit_width / wrap_caption / metrics,
+        # first left it empty for the whole of wrap_caption / metrics,
         # because canvas.delete("all") was the first statement in the method.
         # For Chinese that gap is about 0.5ms and was never visible; for Korean it
         # reaches 169ms, because font.measure falls back to a font search and costs
@@ -586,14 +616,10 @@ class _Caption:
             self.canvas.delete("all")
             return
         wrap = max(240, self.width - 48)
-        fitted = self._fit_width(body, wrap)
-        if fitted != self.width:
-            self.width = fitted
-            x = self.root.winfo_x()
-            center = x + self.root.winfo_width() / 2
-            left = max(0, min(round(center - self.width / 2), self.screen_width - self.width))
-            self.root.geometry(f"{self.width}x{self.height}+{left}+{self.root.winfo_y()}")
-            wrap = self.width - 48
+        # No width branch here any more. _fit_width returns self.width, so the old
+        # `if fitted != self.width` could not be taken; keeping it would have left a
+        # window-geometry path that reads as live and is not. The width is the user's,
+        # changed by dragging, and only the row count moves the window here.
         display_lines = wrap_caption(body, wrap, self.font_line.measure)
         # One pass, both answers. Asking wrap_caption again for the uncapped count would
         # measure every unit twice, and the measure is the expensive part for Korean
