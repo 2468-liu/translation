@@ -112,20 +112,24 @@ class ExtensionBoundaryTests(unittest.TestCase):
         # control that is no longer on screen.
         self.assertIn("再点一下即可恢复", popup)
 
-    def test_the_caption_state_cache_is_written_from_both_ends(self):
-        """`get_state` has to answer what the window is in, not what was last asked for.
+    def test_get_state_asks_the_window_instead_of_keeping_a_copy(self):
+        """No cache anywhere: the window is asked, and it answers for itself.
 
-        The cache used to be a local of the WebSocket handler, written only by the
-        extension's frames. Then the one place that knew what the window's own control
-        had done -- the UDP listener -- forwarded it to a client that might not be
-        connected, and forgot it.
+        There was a cache here -- first a local of the WebSocket handler, then one
+        written from both ends. Both are second sources of truth, and the stale one is
+        what showed an unticked 只有字 while the window was in it (2026-10-09: the
+        screenshot the user sent). The window is one UDP question away, so it is asked.
         """
         ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
+        caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
 
-        self.assertIn("_CAPTION_TEXT_ONLY = False", ws_server)
-        self.assertIn('_CAPTION_TEXT_ONLY = bool(value.get("textOnly"))', ws_server)
-        self.assertIn('_CAPTION_TEXT_ONLY = bool(data.get("textOnly"))', ws_server)
-        self.assertIn('"value": _CAPTION_TEXT_ONLY', ws_server)
+        self.assertIn("request_caption_state()", ws_server)
+        self.assertNotIn("_CAPTION_TEXT_ONLY", ws_server)
+        self.assertIn("def request_caption_state()", caption)
+        self.assertIn('_send("state?", None)', caption)
+        self.assertIn('kind == "state?"', caption)
+        # Forced: the asker has no other copy, so "nothing changed" is not an answer.
+        self.assertIn("self._broadcast_state(force=True)", caption)
 
     def test_state_sync_is_exposed_and_the_position_lock_is_gone(self):
         ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")

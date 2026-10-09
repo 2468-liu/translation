@@ -5570,32 +5570,39 @@ storage 可能还是旧的（WS 断着 / 刚重启过 / 帧丢过）。用户打
 ⇒ 用户点第二次。第一次点击被"没有变化"吃掉了。
 ```
 
-**改动（最终版；中间走过一次弯路，见下）**
+**改动（最终版；同一处改了三次，见下）**
 
 ```
 1. caption_window._apply_colors：「只有字」控件在只有字模式下 place_forget，与黑框一起隐藏 ——
    **这是这个模式的本意**，不是 bug。全屏下只剩字幕，才叫舒服。
-2. ws_server：`_CAPTION_TEXT_ONLY` 改成**进程一份、两端都写** —— 扩展的 config/style 写它，
-   字幕窗自己的 UDP 8767 广播也写它。它原来是 WebSocket handler 的局部变量，只被扩展写的帧
-   更新，于是 `get_state` 答的是"扩展上次要的是什么"。窗口自己的控件动过之后，唯一知道真相的
-   就是那个 UDP 监听器，而它把消息转发给一个可能没连的客户端，然后忘了。
-3. popup.js：勾选时直接发 `caption-style` 帧（不再只写 storage 等 `onChanged`），
-   打开弹窗时发 `caption-state` 让实时窗口报一次自己的状态（offscreen 转成 `get_state`）。
-   状态文案改为"黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"
+2. ws_server：**不存这份状态**（`_CAPTION_TEXT_ONLY` 已删）。`get_state` 改成
+   `request_caption_state()`，把问题转给窗口本身。
+3. caption_window：新增 `kind == "state?"` 应答 —— 收到就**强制广播一次**
+   （`_broadcast_state(force=True)`，绕过去重）。"这边没变"不等于"没人需要知道"：
+   窗口是这份状态的唯一持有者，问它就必须得到回答。
+4. popup.js：勾选时直接发 `caption-style` 帧（不再只写 storage 等 `onChanged`），
+   打开弹窗时发 `caption-state`（offscreen 转成 `get_state`）。状态文案改为
+   "黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"
 ```
 
-**走过的弯路（同一天，同一处，方向相反，必须留在原地）**
+**同一处改了三次方向（必须留在原地）**
 
 ```
-第一版（30b955a）：以为"两边都看得见"就是同步 ⇒ 把「只有字」控件改成两种模式下都留在表头，
-  并把指示框改成不透明色，好让用户"总能自己切回来"。
-它把 §60.3 那个残留黑框又请回来了一个小号版本（固定挂在视频上的对号框 + 14px 黑指示框），
-  而用户要的正是"点完只剩字幕"。同一轮里 popup 的文案还写着"控制区已隐藏"，与屏幕相反。
-回滚：控件恢复 place_forget、selectcolor 恢复跟背景同色。
-真正要修的是**状态源**，不是像素 —— 见上面第 2、3 条。
+① 30b955a：以为"两边都看得见"就是同步 ⇒ 把「只有字」控件改成两种模式下都留在表头，
+   并把指示框改成不透明色，好让用户"总能自己切回来"。
+   它把 §60.3 那个残留黑框请回来了一个小号版本（固定挂在视频上的对号框 + 14px 黑指示框），
+   而用户要的正是"点完只剩字幕"。回滚：控件恢复 place_forget、selectcolor 恢复跟背景同色。
+   ⇒ 那是改像素，不是改同步。
+② 2401866：改成"服务端缓存这份状态，两端都写"。
+   用户当场又看到一次不同步：**屏幕在只有字，插件的对勾没勾上**（他发来截图）。
+   原因：缓存只在被写的那条路上准确，进程重启/连接断过/更早的版本发的帧都能让它过期，
+   而 popup 现在会**主动采纳**这个过期值 ⇒ 症状更明显。
+   ⇒ 缓存是第二个状态源。**能问就不要存。**
+③ 本轮：删掉缓存，`get_state` → 问窗口 → 窗口强制回一帧 → 走和"框里点一下"完全相同的那条路。
+   一条路、一个权威，没有可过期的东西。
 ```
 
-**实测（两个探针都不入库：前者命中 .gitignore 的 `probe_*.py`，后者在 `logs/`）**
+**实测（三个探针都不入库：前两个命中 .gitignore 的 `probe_*.py`，第三个在 `logs/`）**
 
 ```
 scripts/probe_caption_text_only.py —— 按用户的验收流程走（灰底衬在字幕窗正下方 + 真 UDP）
@@ -5607,6 +5614,10 @@ scripts/probe_caption_text_only.py —— 按用户的验收流程走（灰底�
   logs/probe_header_textonly.png = 纯灰（黑框和控件都没了，只剩下面的字幕）
   logs/probe_header_back.png     = 对号框 + 「只有字」
 
+scripts/probe_caption_state_channel.py（真 caption 进程 python -m server.caption_window）
+  style(True) → 8767 收 1 帧 ｜ 同值再发 → 0 帧 ｜ style(False) → 1 帧
+  **state? 且状态没变 → 1 帧**（连问两次、两次都答）← 第 3 条改动的验收
+
 logs/popup_sync_probe.js（stub chrome 跑真 extension/popup.js，逐条断言）
   打开弹窗 → 发 caption-state（问状态）✓
   点击 → 发 caption-style{textOnly:true,fontPx:20,color:#ffffff} + 写 storage ✓
@@ -5614,21 +5625,23 @@ logs/popup_sync_probe.js（stub chrome 跑真 extension/popup.js，逐条断言�
   文案同时说出"隐藏了什么"和"怎么恢复" ✓
 ```
 
-**测试**：+4 条（caption 侧：控件必须随黑框一起 place_forget、指示框与背景同色、
-`apply_text_only` 把状态镜像进 `text_only_var`；extension 侧：`tellCaptionWindow` +
-`askCaptionWindowState` + offscreen 的 `caption-state` → `get_state`；server 侧：
-`_CAPTION_TEXT_ONLY` 两端都写、`get_state` 答它；转发测试里断言缓存被写入）。
-`python -m pytest -q` → **378 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
+**测试**：caption 侧（控件随黑框 place_forget、指示框与背景同色、`apply_text_only` 镜像状态、
+**强制广播在"没变化"时也发**）；extension 侧（`tellCaptionWindow` + `askCaptionWindowState` +
+offscreen 的 `caption-state`）；server 侧（**`request_caption_state()` 必须存在、
+`_CAPTION_TEXT_ONLY` 必须不存在**——即"没有第二份状态"这条是断言出来的）。
+`python -m pytest -q` → **379 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
 
 **判据（下次再看到"要点两次"）**
 
 ```
-1. 状态存在哪、哪一面是权威？→ 缓存必须被**两端**写：谁改了状态谁就写它，
-   只被"发命令的那一端"写的缓存答的是另一个问题
-2. 改状态的那条消息，有没有搭"值变了没有"的顺风车？（storage.onChanged 就是这种）
-3. 控件被它自己的模式藏掉时，**另一面**能不能报出真实状态？——
+1. 这个状态有几份副本？→ 出现第二份就先问"能不能删掉、改成问一次"。
+   缓存只在**问不到**时才成立；这里问得到（UDP 一句话，50ms 内答）
+2. 改状态的那条消息，有没有搭"值变了没有"的顺风车？（storage.onChanged、去重广播都是这种）
+   —— 状态没变不等于没人需要知道
+3. 控件被它自己的模式藏掉时，**另一面**能不能报出真实状态？
    "把控件留在屏幕上"只是让两边都被看见，两边的值照样可以不同：那是改像素，不是改同步
 ```
+
 
 
 

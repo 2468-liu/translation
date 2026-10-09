@@ -285,14 +285,12 @@ class StateListenerForwardingTests(unittest.TestCase):
         self.previous_target = ws_server._STATE_TARGET
         self.previous_listener = ws_server._STATE_LISTENER
         self.previous_port = ws_server.STATE_PORT
-        self.previous_text_only = ws_server._CAPTION_TEXT_ONLY
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
         ws_server.STATE_PORT = self.port
         ws_server._STATE_TARGET = (self.loop, self._send)
         ws_server._STATE_LISTENER = None
-        ws_server._CAPTION_TEXT_ONLY = False
         ws_server._start_state_listener()
         for _ in range(100):
             if ws_server._STATE_LISTENER is not None:
@@ -304,7 +302,6 @@ class StateListenerForwardingTests(unittest.TestCase):
         ws_server.STATE_PORT = self.previous_port
         ws_server._STATE_LISTENER = self.previous_listener
         ws_server._STATE_TARGET = self.previous_target
-        ws_server._CAPTION_TEXT_ONLY = self.previous_text_only
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(timeout=2)
         self.loop.close()
@@ -331,10 +328,6 @@ class StateListenerForwardingTests(unittest.TestCase):
             [{"type": "toggle_transparent", "value": True, "fontPx": 24}],
             "the caption window's own control has to reach the client, and carry no lock",
         )
-        # And it is remembered, so `get_state` answers what the window is in rather than
-        # what the extension last asked for. Without this the popup shows a stale value
-        # after a caption-side press, and the first press there does nothing.
-        self.assertIs(ws_server._CAPTION_TEXT_ONLY, True)
 
     def test_other_kinds_are_still_dropped(self):
         self._send_frame({"kind": "config", "value": {"partial_interval_ms": 500}})

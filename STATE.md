@@ -774,14 +774,17 @@ storage 由"最后动的一方"写入 ⇒ 值没变时 onChanged 不触发、什
 而字幕窗的表头在只有字模式下是**隐藏的**（那是这个模式的本意）⇒ 插件那一面是唯一回头路，
 它的对勾必须是**字幕窗的真实状态**，否则第一次点击花在窗口并不处于的状态上。
 
-三处：
+四处：
 1. caption 的「只有字」控件在只有字模式下 `place_forget`，与黑框一起隐藏 —— **刻意如此**。
    当天试过相反的改法（控件常驻表头）并回滚：那样视频上永远挂着一个对号框和一小块黑指示框
-2. `ws_server._CAPTION_TEXT_ONLY` 改成**进程一份、两端都写**：扩展的 config/style 写它，
-   字幕窗自己的 UDP 8767 广播也写它 ⇒ `get_state` 答"窗口现在是什么状态"，
-   而不是"扩展上次要的是什么"
-3. popup 打开时向实时字幕窗要一次状态（`caption-state` → `get_state`），
-   勾选时**直接发 `caption-style` 帧**，意图不再搭 storage 的顺风车
+2. **服务端不存这份状态**（`_CAPTION_TEXT_ONLY` 已删）。它先是 WebSocket handler 的局部变量
+   （只被扩展写的帧更新 ⇒ `get_state` 答"扩展上次要的"），改成本进程一份、两端都写之后
+   **仍然会过期** —— 用户当场看到"屏幕在只有字、插件的对勾却没勾上"。缓存就是第二个状态源，
+   **能问就不要存**：`get_state` 改成 `request_caption_state()`，把问题转给窗口
+3. caption 新增 `kind == "state?"` 应答：收到就**强制广播一次**（`force=True` 绕过去重）。
+   "这边没变"不等于"没人需要知道" —— 窗口是这份状态的唯一持有者
+4. popup 打开时问一次（`caption-state`）。勾选时**直接发 `caption-style` 帧**，意图不搭
+   storage 的顺风车
 
 实测（`scripts/probe_caption_text_only.py`，灰底衬在下 + 真 UDP，照用户流程走）：
 ```
@@ -791,15 +794,21 @@ storage 由"最后动的一方"写入 ⇒ 值没变时 onChanged 不触发、什
    有框时可拖动 drag=True
    logs/probe_header_textonly.png = 纯灰（框和控件都没了）
    logs/probe_header_back.png     = 对号框 + 「只有字」
+scripts/probe_caption_state_channel.py（真进程）：style(True)→1 帧 / 同值再发→0 帧 /
+   style(False)→1 帧 / **state? 且状态没变 → 1 帧**（连问两次两次都答）
 logs/popup_sync_probe.js（stub chrome 真跑 popup.js）：打开即问状态 / 点击发帧+写 storage /
    反向跟着走且不回发
-python -m pytest -q → 378 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+python -m pytest -q → 379 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
 ```
 
-**教训（同一天、同一处，方向改了两次）**：用户说"不同步、要按两次"时，
-我先把控件留在屏幕上让状态"看得见" —— 那修的是像素，坏的是这个模式本身。
-**抱怨"不同步"时先问：哪一面是权威、状态存在哪；把控件留在屏幕上只让两边都被看见，
-两边的值照样可以不同。** 回滚的理由必须写在原地，否则下一个人会再翻一次。
+**教训（同一天、同一处，改了三次方向）**
+```
+① 抱怨"不同步"时，我先让控件留在屏幕上（修像素）—— 坏掉的是这个模式本身
+② 改成"两端都写同一份缓存" —— 缓存照样会过期，用户第二次看到"屏幕在只有字、对勾没勾"
+③ 最终：不存。窗口是唯一权威，别人要就**问它**（UDP 一句话，50ms 内答）
+⇒ 判据：**同一个状态出现第二份副本时，先问"这一份能不能删掉、改成问一次"**；
+   缓存只在"问不到"时才成立，而这里问得到。写下来，否则下一个人会再缓存一次。
+```
 
 ## 模型定位
 
@@ -853,9 +862,9 @@ main / HEAD / gemma-audio  同指（已快进） ｜ 回退点 tag pre-merge-202
 `gemma-audio` 保留。**pytest（2026-10-07 晚）107 passed**（新增 `tests/test_translation_context.py` 8 条，
 钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）；此前 99 passed。
 `extension/` 与 Native Host 未变 ⇒ 主机无需重建（`start.ps1` 是文件调用，不在 exe 里）。
-**最近一次（2026-10-09 晚，只有字状态源改完）：378 passed / 1 skipped / 10 failed** —— 10 条全在
+**最近一次（2026-10-09 晚，只有字状态源改完、服务端不再缓存）：379 passed / 1 skipped / 10 failed** —— 10 条全在
 `test_backend_cycle.py`，全是 DSH 沙箱拒写临时目录下的 `server.pid`，与改动无关。
-（REPORT 60.6 记的是更早那次 370；`30b955a` 那次是 375；中途那版"控件常驻表头"是 377。）
+（REPORT 60.6 记的是更早那次 370；中途几版分别是 375 / 377 / 378。）
 
 ## 实验日志（一行一条）
 

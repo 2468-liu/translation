@@ -962,7 +962,7 @@ class _Caption:
         if self.line or self.visible:
             self._paint()
 
-    def _broadcast_state(self) -> None:
+    def _broadcast_state(self, force: bool = False) -> None:
         payload = {
             "kind": "state",
             "value": {
@@ -971,7 +971,7 @@ class _Caption:
                 "fontColor": self.font_color,
             },
         }
-        # Sent only when the value changed.
+        # Sent when the value changed, or when someone asked (force=True).
         #
         # The extension answers a state frame with a style frame carrying the same
         # value; that comes back here as apply_text_only, which broadcasts again. Neither
@@ -979,8 +979,13 @@ class _Caption:
         # for as long as the process lived. The first repeat is the one the extension
         # needs -- it is how a click on this window's own checkbox reaches the popup --
         # and a second identical frame carries nothing.
+        #
+        # force exists because "nothing changed" is not the same as "nobody needs to
+        # know": this window is the only holder of this state (the server keeps no copy),
+        # so a popup asking what it is set to has to be answered even when the answer is
+        # unchanged. That is the whole reason the popup's checkbox can be trusted.
         body = json.dumps(payload, ensure_ascii=False)
-        if body == self._broadcast_last:
+        if not force and body == self._broadcast_last:
             return
         try:
             _STATE_SOCK.sendto(body.encode("utf-8"), ("127.0.0.1", STATE_PORT))
@@ -1509,6 +1514,12 @@ class _Caption:
                 self.arm()
             elif kind == "clear":
                 self.clear()
+            elif kind == "state?":
+                # The server asking "what are you set to", on behalf of the popup.
+                # Forced, because the asker has no other copy: answering "nothing
+                # changed" would leave the popup's checkbox showing a value this window
+                # is not in, which is the one press the user then wastes.
+                self._broadcast_state(force=True)
             elif kind == "switch_ok":
                 # The server's confirmation that it applied the cadence, kept as state
                 # and nothing more. The readout is gone from the window and the
@@ -1912,6 +1923,17 @@ def hide_caption() -> None:
 
 def set_text_only(enabled: bool) -> None:
     _send("style", enabled)
+
+
+def request_caption_state() -> None:
+    """Ask the window to report what it is set to.
+
+    The answer is a normal `kind="state"` frame back over UDP 8767, so it travels the
+    same path as a caption-side click: the server forwards it, the extension stores it,
+    and the popup's checkbox ends up showing this window's real state. Holding a copy
+    anywhere else is what produced a checkbox that disagreed with the screen.
+    """
+    _send("state?", None)
 
 
 def set_font_size(px: int) -> None:

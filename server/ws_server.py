@@ -23,6 +23,7 @@ from .caption_window import (
     hide_caption,
     note_caption,
     raise_caption,
+    request_caption_state,
     set_font_size,
     set_font_color,
     set_text_only,
@@ -64,16 +65,16 @@ _STATE_TARGET = None
 _STATE_TARGET_LOCK = threading.Lock()
 _STATE_LISTENER = None
 
-# What the caption window's 只有字 is actually set to.
+# There is deliberately no cache of the caption window's state here.
 #
-# One cache for the process, written from both ends: the frames the extension sends
-# (config / style) and the frames the window reports about itself (UDP 8767). It used to
-# be a local of the WebSocket handler, written only by the extension's frames -- so the
-# answer to get_state was "what the extension last asked for", which is not the same
-# question. With the window's control hidden in 只有字 mode (which is the point of the
-# mode), the popup's checkbox is the only way back, and it has to be showing the truth
-# or the first press does nothing.
-_CAPTION_TEXT_ONLY = False
+# There was one, and it was a second source of truth: written only by the frames the
+# extension sent, so `get_state` answered "what was last asked for" rather than "what
+# the window is in". A popup opened after a caption-side change then showed the opposite
+# of the screen, and the user's next press was spent on a state the window was not in
+# (seen 2026-10-09: 只有字 on screen, checkbox clear). Writing it from both ends narrowed
+# the window but did not remove the class -- a cache can always be stale, and the thing
+# itself is one UDP question away. So `get_state` asks the window (see the branch in
+# handle) and the answer arrives as an ordinary state frame.
 
 
 def _set_state_target(loop, send) -> None:
@@ -148,7 +149,7 @@ def _listen_caption_state() -> None:
     might not be connected, then forgot it. A popup opened after a caption-side click
     read a stale value, and the first press therefore did nothing.
     """
-    global _STATE_LISTENER, _CAPTION_TEXT_ONLY
+    global _STATE_LISTENER
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("127.0.0.1", STATE_PORT))
@@ -179,8 +180,6 @@ def _listen_caption_state() -> None:
         if kind != "state":
             continue
         value = message.get("value") or {}
-        if "textOnly" in value:
-            _CAPTION_TEXT_ONLY = bool(value.get("textOnly"))
         payload = {"type": "toggle_transparent", "value": bool(value.get("textOnly", False))}
         if "fontPx" in value:
             payload["fontPx"] = int(value.get("fontPx"))
@@ -200,7 +199,7 @@ def _listen_caption_state() -> None:
 
 
 async def handle(ws, asr: AsrEngine | None) -> None:
-    global _CURRENT_SESSION, _CAPTION_TEXT_ONLY
+    global _CURRENT_SESSION
     session = Session(asr)
     _CURRENT_SESSION = session
     caption_enabled = True
@@ -292,8 +291,6 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 if data.get("partial_interval_ms"):
                     _switch_partial_interval(int(data["partial_interval_ms"]))
                 _apply_caption_controls(data)
-                if "textOnly" in data:
-                    _CAPTION_TEXT_ONLY = bool(data.get("textOnly"))
                 if session.api_error:
                     notice = {"type": "status", "level": "warn", "message": session.api_error}
                 elif session.api:
@@ -309,20 +306,19 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 hide_caption()
             elif data.get("type") == "style":
                 _apply_caption_controls(data)
-                if "textOnly" in data:
-                    _CAPTION_TEXT_ONLY = bool(data.get("textOnly"))
             elif data.get("type") == "toggle_transparent":
-                _CAPTION_TEXT_ONLY = bool(data.get("value"))
-                _apply_caption_controls({"type": "style", "textOnly": _CAPTION_TEXT_ONLY})
-                await send({"type": "toggle_transparent", "value": _CAPTION_TEXT_ONLY})
+                asked = bool(data.get("value"))
+                _apply_caption_controls({"type": "style", "textOnly": asked})
+                await send({"type": "toggle_transparent", "value": asked})
             elif data.get("type") == "get_state":
-                # The window's own state, not "what the extension last asked for".
-                # A popup that reads it gets the same value the window is in, which is
-                # what makes one press enough to bring the black frame back.
-                await send({
-                    "type": "toggle_transparent",
-                    "value": _CAPTION_TEXT_ONLY,
-                })
+                # Relay the question to the window; it answers for itself.
+                #
+                # Not answered from a copy here. A copy is a second source of truth, and
+                # the stale one is what showed an unticked 只有字 while the window was in
+                # it. The window's answer comes back as an ordinary state frame over UDP
+                # 8767 and is forwarded to this client by the listener, so it takes the
+                # same path a caption-side press does -- one path, one truth.
+                request_caption_state()
             elif data.get("type") == "arm":
                 arm_caption()
             elif data.get("type") == "raise":

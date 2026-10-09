@@ -177,6 +177,24 @@ class StateBroadcastTests(unittest.TestCase):
         self.assertEqual(sock.attempts, 2)
         self.assertEqual(len(sock.sent), 1)
 
+    def test_a_forced_broadcast_answers_even_when_nothing_changed(self):
+        """The window is the only holder of this state: the server keeps no copy.
+
+        So "nothing changed here" is not an answer to "what are you set to" -- the popup
+        that asked has no other copy to fall back on, and its checkbox is the only way
+        back into 只有字 once the header has hidden itself.
+        """
+        sock = _FakeSock()
+        stub = _StyleStub()
+
+        self._broadcast(stub, sock)                 # first frame: sent
+        self._broadcast(stub, sock)                 # unchanged: suppressed
+        with mock.patch.object(caption_window, "_STATE_SOCK", sock):
+            _Caption._broadcast_state(stub, True)   # asked: sent anyway
+
+        self.assertEqual(sock.attempts, 2)
+        self.assertEqual([item[0]["value"]["textOnly"] for item in sock.sent], [True, True])
+
 
 if __name__ == "__main__":
     unittest.main()
