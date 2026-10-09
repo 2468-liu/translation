@@ -350,7 +350,9 @@ def _listen(commands: queue.Queue) -> None:
             kind=kind,
             net=perf.wall_ms(sent_at) if isinstance(sent_at, (int, float)) else -1.0,
         )
-        commands.put((kind, message.get("value"), sent_at, recv_at))
+        commands.put(
+            (kind, message.get("value"), sent_at, recv_at, bool(message.get("final")))
+        )
 
 
 def _enable_dpi() -> float:
@@ -1166,16 +1168,46 @@ class _Caption:
         self._defer_text = ""
         self._defer_chars = 0
 
-    def _punct_gate(self, cleaned: str) -> str:
+    def _punct_gate(self, cleaned: str, is_final: bool = False) -> str:
         """Block mode: draw a clause when its punctuation arrives, not before.
 
         Returns the action so callers keep their usual vocabulary. Nothing is drawn
         until a boundary or the fallback fires, which is what makes mid-clause
         revisions impossible rather than merely uncommon: there is no draw to revise.
+
+        The exception is the final, and it is the exception that matters most. The
+        boundary test asks whether the incoming text carries more terminal marks than the
+        line does, and on a final it can never be true: the sentence's own fragments
+        brought its punctuation first, so the final arrives with the same count and is
+        declined. Measured, that test held 0 times out of 49 finals, and with the
+        fallback already spent, the final was never drawn at all -- half the finals never
+        reached the screen, and the line settled on a mid-sentence fragment. A final is
+        the complete version of the sentence, so it is drawn whatever the marks say.
+
+        No sentence-identity check is needed for this. `promote` -- the case where an
+        end event arrives before its own translation finishes -- sends the final when
+        that job completes, not when the next sentence starts, and `pipeline.defer` was
+        zero across the run, so the next sentence's translation is never queued behind
+        this one. What is on screen when the final lands is this sentence's own text.
         """
         now = time.monotonic()
         if not self._clause_t0:
             self._clause_t0 = now
+        if is_final and cleaned != self.line:
+            self._cancel_clause()
+            self._apply_line(cleaned, "final")
+            self._block_hits += 1
+            perf.emit(
+                "caption",
+                "block",
+                why="final",
+                chars=len(cleaned),
+                shown=len(self.line),
+                wait=round((now - (self._clause_t0 or now)) * 1000.0, 1),
+                hits=self._block_hits,
+                timeouts=self._block_timeouts,
+            )
+            return "final"
         if introduces_boundary(self.line, cleaned):
             started = self._clause_t0 or now
             self._cancel_clause()
@@ -1246,13 +1278,13 @@ class _Caption:
             timeouts=self._block_timeouts,
         )
 
-    def set_text(self, text: str) -> str:
+    def set_text(self, text: str, is_final: bool = False) -> str:
         cleaned = _collapse_repeats((text or "").strip())
         if not cleaned:
             return "empty"
         self.have_translation = True
         if self._block_by_punct:
-            return self._punct_gate(cleaned)
+            return self._punct_gate(cleaned, is_final)
         previous = self._pending
 
         # B1: diff pre-check — if new text just extends current line, append directly
@@ -1422,7 +1454,7 @@ class _Caption:
     def _pump(self) -> None:
         while True:
             try:
-                kind, value, sent_at, recv_at = _COMMANDS.get_nowait()
+                kind, value, sent_at, recv_at, is_final = _COMMANDS.get_nowait()
             except queue.Empty:
                 break
             lag = perf.wall_ms(recv_at) if isinstance(recv_at, (int, float)) else -1.0
@@ -1433,7 +1465,7 @@ class _Caption:
                 self._trace_sent = sent_wall
                 self._trace_recv = recv_at if isinstance(recv_at, (int, float)) else 0.0
                 self._trace_action = ""
-                action = self.set_text(value or "")
+                action = self.set_text(value or "", is_final)
                 if action in ("empty", "drop"):
                     # Nothing will be drawn for this packet; stop attributing
                     # a later repaint to it.
@@ -1451,6 +1483,7 @@ class _Caption:
                     net=perf.wall_ms(sent_wall) if sent_wall else -1.0,
                     pump=lag,
                     depth=_COMMANDS.qsize(),
+                    final=1 if is_final else 0,
                     chars=len(value or ""),
                 )
             elif kind == "asr":
@@ -1831,18 +1864,28 @@ def clamped_font_px(px, current=None):
     return size
 
 
-def _send(kind: str, value) -> None:
+def _send(kind: str, value, final: bool = False) -> None:
     try:
         # Wall clock inside the packet: the caption window compares its own
         # receipt and paint times against it, so both sides join on one clock.
+        #
+        # `final` rides along because the boundary test cannot recognise a final on its
+        # own and that is what costs half the coverage. Measured: the test "the incoming
+        # text carries more terminal marks than the line does" held 0 times out of 49
+        # finals, because the streaming fragments of a sentence bring its punctuation
+        # first and the final arrives with the same count. The caption window had no way
+        # to know which packet was the final -- the flag was dropped here, at the only
+        # place the two processes meet.
         sent_at = time.time()
         payload = json.dumps(
-            {"kind": kind, "value": value, "sentAt": sent_at}, ensure_ascii=False
+            {"kind": kind, "value": value, "sentAt": sent_at, "final": bool(final)},
+            ensure_ascii=False,
         ).encode("utf-8")
         _SOCK.sendto(payload, ("127.0.0.1", CAPTION_PORT))
     except OSError:
         return
-    perf.emit("caption", "send", kind=kind, bytes=len(payload), sent_at=sent_at)
+    perf.emit("caption", "send", kind=kind, bytes=len(payload), sent_at=sent_at,
+              final=1 if final else 0)
 
 
 def update_caption(payload: dict) -> None:
@@ -1850,7 +1893,7 @@ def update_caption(payload: dict) -> None:
     if kind == "segment_start":
         _send("segment", "")
     elif kind == "translation":
-        _send("text", payload.get("text") or "")
+        _send("text", payload.get("text") or "", final=bool(payload.get("final")))
     elif kind == "capture-error":
         _send("text", payload.get("error") or payload.get("message") or "")
     elif kind == "status" and payload.get("level") == "warn":
