@@ -17,6 +17,7 @@ itself -- is checked against a stub window.
 """
 
 import unittest
+import unittest.mock
 
 from server.caption_window import (
     CLAUSE_MAX_MS,
@@ -62,13 +63,26 @@ class BoundaryTests(unittest.TestCase):
     def test_repeated_marks_are_kept_rather_than_deduplicated(self):
         self.assertEqual(punctuation_marks("你有。他。"), ("。", "。"))
 
-    def test_block_mode_is_off_by_default(self):
-        # Three runs ended with first-character p50 at 342ms against a 37ms baseline,
-        # and the fallback still drew three times out of five. Reaching for the mode
-        # must be a decision, not a state the program starts in.
-        from server.caption_window import BLOCK_BY_PUNCT
+    def test_block_mode_follows_the_recogniser(self):
+        # whisper streams; qwen3 is the backend whose output was reported to rewrite
+        # what it already showed. A second switch next to this one could disagree with
+        # it, and a week of this repository's logs is what two disagreeing switches
+        # cost.
+        import importlib
+        import os
 
-        self.assertEqual(BLOCK_BY_PUNCT, 0)
+        import server.caption_window as cw
+
+        for backend, expected in (("whisper", False), ("qwen3", True)):
+            with unittest.mock.patch.dict(os.environ, {"TRANSLATION_ASR_BACKEND": backend}):
+                # config has to be reloaded too: caption_window reads ASR_BACKEND at
+                # import time, so reloading only the window reuses the cached value and
+                # the test passes or fails for the wrong reason.
+                importlib.reload(importlib.import_module("server.config"))
+                reloaded = importlib.reload(cw)
+                self.assertIs(reloaded.BLOCK_BY_PUNCT, expected, backend)
+        importlib.reload(importlib.import_module("server.config"))
+        importlib.reload(cw)
 
     def test_the_fallback_is_between_the_measured_percentiles(self):
         # Measured p25 of the clause's first-character-to-punctuation interval was 14ms

@@ -17,7 +17,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 
 from . import perf
-from .config import _env_int
+from .config import ASR_BACKEND, _env_int
 from .translate import CHAR_RUN_MAX, CLAUSE_RUN_MAX, collapse_caption_repeats
 
 try:
@@ -109,7 +109,16 @@ CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
 #
 # The code stays because the switch, the instrumentation and the baselines do: the next
 # attempt has a comparison to make against rather than a blank page.
-BLOCK_BY_PUNCT = _env_int("TRANSLATION_BLOCK_BY_PUNCT", 0)
+# Derived from the recogniser rather than read from its own switch. Streaming is the
+# shipped behaviour; block mode is the response to Qwen3-ASR rewriting what it already
+# showed, which is why it belongs to that backend and not to a second dial that could
+# disagree with the first.
+#
+# Derived, not measured per backend: the block arm's cost (first-character p50 342ms
+# against a 37ms baseline) was measured on the whisper material, and the premise that
+# qwen3 needs block mode at all is the reported flicker rather than a measurement -- the
+# two arms are indistinguishable on every display-side metric that was recorded.
+BLOCK_BY_PUNCT = ASR_BACKEND == "qwen3"
 
 
 def punctuation_marks(text: str) -> tuple:
