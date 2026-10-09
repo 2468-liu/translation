@@ -406,6 +406,44 @@ if ($trCount -eq 0) {
     throw "no translations in this run; the translation model was not serving."
 }
 
+# How far playback actually got, against how far it should have gone.
+#
+# The two checks above cannot see an interrupted playback: blog_video_test.py catches the
+# closed socket, prints "play stopped at Ns", and exits 0 with a manifest full of
+# translations. So a run that covered 34 seconds of a 180-second clip went on to print a
+# whole set of numbers -- including "coverage 5/5 (100%)" and "audio_end >1000ms 0/5 (0%)",
+# both of which read as excellent and both of which are artefacts of stopping early.
+#
+# Three of six replays died this way (11.0s, 48.6s, 34.4s, same message each time), and
+# every one of them produced numbers. A truncated run that scores perfectly is worse than
+# a run that fails, because it has nothing left to make anyone suspicious.
+#
+# duration_sec is the clip; the furthest audio_sec in the events is how far playback
+# reached. 80% rather than 100% so a slow start or a trailing silence is not a failure.
+$manifest = Get-Content "logs\blog_3min_test.json" -Raw | ConvertFrom-Json
+$clipSec = [double]$manifest.duration_sec
+$playedSec = 0.0
+foreach ($e in $manifest.events) {
+    if ($null -ne $e.audio_sec -and [double]$e.audio_sec -gt $playedSec) {
+        $playedSec = [double]$e.audio_sec
+    }
+}
+if ($clipSec -gt 0 -and $playedSec -lt 0.8 * $clipSec) {
+    throw @"
+回放只走到 $($playedSec.ToString('0.0'))s / $($clipSec.ToString('0.0'))s，判 VOID，不出数。
+
+  上面那两道守卫抓不到这个：blog_video_test.py 捕获断开的 socket，打印
+  "play stopped at Ns"，然后 exit 0，并留下一份有译文的 manifest。所以一次只播了
+  34 秒 / 180 秒的运行照样会打出一整套指标，其中包含 coverage 5/5 (100%) 和
+  audio_end >1000ms 0/5 (0%) —— 两个都看着很好，两个都是提前停止的产物。
+
+  六次回放里三次这样断过（11.0s / 48.6s / 34.4s，同一条信息）。**残缺运行拿满分比
+  运行失败更糟，因为它不留任何可疑的地方。**
+
+  成因未定位（掐断的是到字幕窗口那条 WebSocket）。这一条只负责不让它出数。
+"@
+}
+
 # Record the run only once it has completed, and mark its logs as pending so the
 # NEXT invocation knows which name to archive them under.
 #

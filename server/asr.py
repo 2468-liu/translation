@@ -172,6 +172,25 @@ def _wav_bytes(audio: np.ndarray) -> bytes:
 # constant has to be named rather than written as a 44 in the middle of an expression.
 WAV_HEADER_BYTES = 44
 
+# How much of a dropped ASR response the truncation event carries. It exists because the
+# decision the event informs -- raise the cap or not -- is unreadable without it: a long
+# utterance that legitimately exceeds 128 tokens and a repetition loop that ran to the cap
+# are identical in chars= and tokens=, because both stop there.
+#
+# 80 characters of head is enough to see a phrase repeating four times, and the tail is
+# what a reader would have been shown if the response had been kept. Bounded because these
+# are the only ASR outputs ever written to a log, and an unbounded one would put arbitrary
+# speech in a file that gets committed alongside the code.
+#
+# A numeric repetition score was tried here and removed: it shingled the text and counted
+# repeats, which scored a legitimately long transcription that quoted itself at 0.75 --
+# indistinguishable from a 0.89 repetition loop. It measures lexical repetition, and a
+# speaker repeating a phrase is not a recogniser failing. The text is the instrument; a
+# number beside it that cannot separate the two cases would be worse than nothing,
+# because it would look like the separation had been made.
+HEAD_CHARS = 80
+TAIL_CHARS = 40
+
 
 def usage_tokens(body: dict) -> int:
     """completion_tokens, or -1 when the server left usage out.
@@ -266,11 +285,24 @@ class Qwen3AsrEngine:
         # than the cap, and dropping those would throw away real speech.
         if choice.get("finish_reason") == "length":
             truncated = usage_tokens(body)
+            # The text, bounded, because the decision this event exists to inform cannot
+            # be made without it.
+            #
+            # The 128 cap trades one failure for another: dropping whole costs a final
+            # transcript. Measured on lecture_mix: 5 of these against whisper's 0, which is
+            # why Qwen3 emits 23 finals where whisper emits 25 and coverage reads 91%
+            # against 96%. Raising the cap removes the drop but returns a longer text --
+            # and the whole reason the drop exists is that the text repeats until it
+            # fills the context. So the experiment is only readable if each truncation
+            # shows what the text actually was.
+            head = raw[:HEAD_CHARS].replace("\n", " ")
+            tail = raw[-TAIL_CHARS:].replace("\n", " ")
             perf.emit("asr", "truncated", chars=len(raw), tokens=truncated,
                       audio_ms=int(len(wav) * 1000 / (SAMPLE_RATE * 2)) - WAV_HEADER_BYTES,
-                      cap=config.QWEN3_ASR_MAX_TOKENS)
+                      cap=config.QWEN3_ASR_MAX_TOKENS,
+                      head=head, tail=tail)
             print(f"ASR truncated at {truncated} tokens (cap "
-                  f"{config.QWEN3_ASR_MAX_TOKENS}); dropped")
+                  f"{config.QWEN3_ASR_MAX_TOKENS}); dropped; head={head!r}")
             return "", language, 0.0
 
         text, detected, confidence = parse_qwen3_asr(raw)

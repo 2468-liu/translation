@@ -408,17 +408,34 @@ meeting_6min   REPORT 27 = 83/140    本轮 A = 91/140 与 89/140   ❌ 不复�
 
 ## 队列
 
-**2026-10-08 夜间（22:45–00:40）结案的三件事，顺序不要弄反：**
+**2026-10-09（08:00–09:00）结案的：先修工具，再读数据。**
 
 | # | 做什么 | 判断标准 / 结论 |
 |---|---|---|
-| **48-a** | `e2e_first_tr_to_paint` 硬编码了 `blog_3min_timing.json`，而四个臂都跑 lecture_mix | **已确认为仪器缺陷。** 四臂 n 全是 16 = blog_3min 的行数（lecture_mix 17 段）。用本次素材重算 p50 = 52/47/55/47ms ⇒ **B 从来没慢过**。⚠ **manifest 的 `wav` 也记错了素材**，谁写的**未定位**；已撤回那个「看起来修了指标」的 perf_compare 改动 |
-| **48-b** | 阅读地板 `N` 的判定规则**先写后看**（REPORT 46） | **失败条件触发 ⇒ 不建。** B 驻留 ≥12字档 p25 2281ms vs A 2227ms；规则算出的 N=2200ms 被 500 上限截断，而实测最小驻留 800ms ⇒ **地板会是空操作**。`HOLD_ABS_MIN_MS=600` 同类 |
-| **48-c** | B 在出货 build 上的基线（`mix-B750-253` / `mix-A750-253`，同一代码 `6d1b838`，lecture_mix） | **B 不再输，但也没赢。** asr p50 180 vs 822（4.6×）；audio_end p50 548 vs 690；e2e p50 47 vs 52；dwell/hold 完全一致。**落后的只有 coverage 91% vs 96%**，尾也更重（e2e p99 2433 vs 2033）。状态 `INDETERMINATE` |
+| **49-a** | manifest 的 `wav` 生产端（`blog_video_test.py:469` 记 `WAV_PATH` 常量，而跑的是 `_sample_wav()`） | **已修。** 现在同时记 `wav` 与 `timing`，两者不一致就拒绝出数——**从 `wav` 推导抓不住说谎的 `wav`**，谎称 blog_3min 会解析到一个真实存在的文件 |
+| **49-b** | `perf_compare` 只处理裸 list，而 `build_timing.py` 产出 dict | **已修。** 喂 dict 会抛 TypeError ⇒ **这条路径从来没被真正执行过**，唯一被读过的文件正好是唯一能被读懂的那个形状 |
+| **51** | coverage 差 5 个点的归因（用户给的顺序，先数 `asr by kind`/`enqueue end`） | **路径 B 证伪**（VAD 切分逐位相同，31/31、25/25、11/11）；**路径 A 也不是**（14 条 drop 全是 `kind=partial`，丢的是中间帧）。真链：截断 A 0 / B 5 → `asr_finals` 25 / 23 → coverage 96% / 91% |
+| **53-a** | 同一配置连跑两次测散布 | **可复现**：coverage 21/23、asr by kind 137/11、window 207.1s。**不可复现**：`audio_end_to_paint` p50 548↔705、>1000ms 29%↔38%；e2e、dwell 同类 |
+| **53-b** | 抬上限前先把判据做成能读的 | `asr.truncated` 现在带**有界的 `head`/`tail`**。**数字式的重复度分数试过并撤掉**：给「引述自己」的长转写打 0.75、给重复循环打 0.89，分不开 |
 
-**仍然不要做的（没变）：** 不建阅读地板（48-b 的失败条件）、不调 `hold`（结构上够不着）、
-不动 `partial_interval_ms`（#19 已证）、不动 `_is_char_edit` 的 0.72（第二个变量）、
-**不引用 `e2e_first_tr_to_paint` 直到 manifest 的 `wav` 修好**。
+**⚠ 53-a 撤掉了 48-c 的部分结论**：`audio_end_to_paint` 的 A/B 差值
+（690 对 548）**落在同配置连跑的散布之内，作废**。`2.47 的 600 对 2.53 的 548` 同理。
+
+**所以 A 与 B 唯一站得住的差异只剩 coverage 一项**（96% 对 91%），机制已定位
+（128-token 上限，5 次截断 ⇒ 2 个 utterance ⇒ 少 2 条终稿，1:1）。
+**B 的判决仍是 `INDETERMINATE`——不是因为说不清，是因为要判的那一项需要重复测量。**
+
+**仍然不要做的：** 不建阅读地板（48-b 失败条件已触发，地板是空操作）、不调 `hold`
+（结构上够不着）、不动 `partial_interval_ms`（#19 已证）、不动 `_is_char_edit` 的 0.72、
+**不引用单次运行的 `audio_end_to_paint` / `e2e_first_to_paint` 差值**、
+**不再调 128 上限**（REPORT 54：治不了，病在识别侧而不是上限太紧）。
+
+### 队列（2026-10-09）
+
+| # | 做什么 | 判断标准 |
+|---|---|---|
+| ~~1~~ | ~~`TRANSLATION_QWEN3_ASR_MAX_TOKENS` 128 → 256~~ | **已做，四步判据全部走完（REPORT 54）。** 守卫放行（206.9s）→ truncated 4 条（不是 0）→ coverage 21/23（第三次逐位相同）→ `head`/`tail` 确认重复填满。**上限不是太紧**：抬上去没改任何一项，只把丢弃的垃圾从 193 字符变成 363 |
+| **1'** | **为什么这 2 个 utterance 让语言判定出错**（`language Chinese` 出现在 ja/en 素材上） | 下一件真事。现有日志**不记每个 utterance 检出的语言**（只有 truncated 的 `head` 里有）⇒ 先补这个字段 |
 
 ## 队列
 
