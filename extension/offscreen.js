@@ -176,14 +176,9 @@ function openSocket(config) {
               chrome.storage.local.set({ captionTextOnly: nextValue });
             }
           }).catch(() => {});
-          if (Object.prototype.hasOwnProperty.call(payload, "positionLocked")) {
-            chrome.storage.local.get(["captionPositionLocked"]).then((stored) => {
-              const nextLock = Boolean(payload.positionLocked);
-              if (stored.captionPositionLocked !== nextLock) {
-                chrome.storage.local.set({ captionPositionLocked: nextLock });
-              }
-            }).catch(() => {});
-          }
+          // Echoed back so the server has the applied value. The caption window no
+          // longer broadcasts an identical state frame (it compares before sending),
+          // so this no longer bounces between the two forever.
           desiredStyle = { type: "style", textOnly: nextValue };
           if (payload.fontPx != null && payload.fontPx !== "") desiredStyle.fontPx = clampFont(payload.fontPx);
           if (typeof payload.fontColor === "string") desiredStyle.color = payload.fontColor;

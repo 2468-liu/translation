@@ -64,7 +64,7 @@ class CadenceHasExactlyOneControlPathTests(unittest.TestCase):
     extension's frame reached _switch_partial_interval while the caption window's
     UDP frame also did, and a control reachable from two places is a control whose
     state nobody can predict. The listener itself stays, because kind == "state"
-    still carries the position lock and transparency.
+    still carries 只有字 and the font from the window's own controls.
     """
 
     def setUp(self):
@@ -103,7 +103,24 @@ class CadenceHasExactlyOneControlPathTests(unittest.TestCase):
         self.assertIn('if kind != "state":', listener)
         self.assertIn("STATE_PORT", listener)
         self.assertIn("run_coroutine_threadsafe", listener,
-                      "the loop parameter is still used by the state branch")
+                      "the state branch still hands the frame to the client's loop")
+
+    def test_one_state_listener_serves_the_whole_process(self):
+        """It used to be started per connection, and the second bind always failed.
+
+        UDP has no SO_REUSEADDR here: the second thread's bind raised WSAEADDRINUSE and
+        the thread died with the traceback on stderr, while the frames kept going to the
+        closed connection's loop. So after the first reconnect a click on the caption
+        window's control stopped reaching the popup and nothing reported it. The listener
+        takes no loop/send now -- it reads whichever connection registered last.
+        """
+        self.assertNotIn("def _listen_caption_state(loop", self.ws_server)
+        self.assertIn("def _set_state_target(loop, send)", self.ws_server)
+        self.assertIn("_start_state_listener()", self.ws_server)
+        self.assertIn("if _STATE_LISTENER is not None:", self.ws_server)
+        listener = self._listener_body(self.ws_server)
+        self.assertIn("_STATE_TARGET", listener)
+        self.assertNotIn("async def handle", listener)
 
     def test_the_websocket_path_is_the_one_that_remains(self):
         self.assertIn("_switch_partial_interval", self.ws_server)
@@ -114,7 +131,7 @@ class CadenceHasExactlyOneControlPathTests(unittest.TestCase):
                      "def switch_partial_interval", "_paint_switch_state"):
             self.assertNotIn(gone, self.caption, f"{gone} still in the caption window")
 
-    def test_caption_window_still_sends_over_udp_for_the_position_lock(self):
+    def test_caption_window_still_sends_over_udp_for_its_own_state(self):
         # Removing the switch's sendto must not have removed the listener's other
         # use of the same socket.
         self.assertIn("_STATE_SOCK.sendto(", self.caption)

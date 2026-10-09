@@ -58,6 +58,29 @@ def style_font_color(data: dict):
 
 STATE_PORT = 8767
 
+# Module state for the single caption-state listener: the live connection's sender, and
+# the thread itself. See _listen_caption_state for why it is not per connection.
+_STATE_TARGET = None
+_STATE_TARGET_LOCK = threading.Lock()
+_STATE_LISTENER = None
+
+
+def _set_state_target(loop, send) -> None:
+    """Point the single state listener at the connection that is live now."""
+    global _STATE_TARGET
+    with _STATE_TARGET_LOCK:
+        _STATE_TARGET = (loop, send)
+    _start_state_listener()
+
+
+def _start_state_listener() -> None:
+    global _STATE_LISTENER
+    if _STATE_LISTENER is not None:
+        return
+    _STATE_LISTENER = threading.Thread(target=_listen_caption_state, daemon=True)
+    _STATE_LISTENER.start()
+
+
 # The session serving the current connection. Held so the caption window's switch
 # can reach it: the window is a separate process and cannot hold a reference.
 _CURRENT_SESSION = None
@@ -96,7 +119,15 @@ def _apply_caption_controls(data: dict) -> None:
         set_font_color(color)
 
 
-def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
+def _listen_caption_state() -> None:
+    """Forward the caption window's own state frames to the live WebSocket client.
+
+    Started once per process, not once per connection. Two listeners cannot share the
+    UDP port -- the second bind raises WSAEADDRINUSE, that thread dies with the
+    traceback on stderr, and the frames keep being handed to the *closed* connection's
+    loop. After the first reconnect a click on the caption window's control therefore
+    stopped reaching the popup, and nothing said so.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", STATE_PORT))
     while True:
@@ -111,22 +142,27 @@ def _listen_caption_state(loop: asyncio.AbstractEventLoop, send) -> None:
         # window's own 250/750 buttons. Those buttons are gone -- the control is
         # in the extension, which reaches _switch_partial_interval through the
         # WebSocket config frame instead. The listener stays because kind ==
-        # "state" still carries the window's position lock and transparency, and
-        # removing it would take those with it.
+        # "state" still carries the window's own 只有字 / font, and removing it
+        # would take those with it.
         if kind != "state":
             continue
         value = message.get("value") or {}
         payload = {"type": "toggle_transparent", "value": bool(value.get("textOnly", False))}
-        if "positionLocked" in value:
-            payload["positionLocked"] = bool(value.get("positionLocked"))
         if "fontPx" in value:
             payload["fontPx"] = int(value.get("fontPx"))
         if "fontColor" in value:
             payload["fontColor"] = value.get("fontColor")
+        with _STATE_TARGET_LOCK:
+            target = _STATE_TARGET
+        if target is None:
+            continue
+        loop, send = target
         try:
             asyncio.run_coroutine_threadsafe(send(payload), loop)
         except RuntimeError:
-            break
+            # The connection that registered this target is gone; the next one replaces
+            # it. Dropping the frame is correct -- there is no client to tell.
+            continue
 
 
 async def handle(ws, asr: AsrEngine | None) -> None:
@@ -135,7 +171,6 @@ async def handle(ws, asr: AsrEngine | None) -> None:
     _CURRENT_SESSION = session
     caption_enabled = True
     caption_text_only = False
-    caption_position_locked = True
     loopback_stop = asyncio.Event()
     loopback_task = None
 
@@ -166,12 +201,10 @@ async def handle(ws, asr: AsrEngine | None) -> None:
             update_caption(payload)
         await ws.send(json.dumps(payload, ensure_ascii=False))
 
-    state_listener = threading.Thread(
-        target=_listen_caption_state,
-        args=(asyncio.get_running_loop(), send),
-        daemon=True,
-    )
-    state_listener.start()
+    # The caption window's own controls report here over UDP; the frames are forwarded
+    # to whichever connection is live. Registered before anything is sent so a click
+    # during startup is not lost.
+    _set_state_target(asyncio.get_running_loop(), send)
 
     print("client connected")
     worker = asyncio.create_task(session.worker(send))
@@ -228,8 +261,6 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 _apply_caption_controls(data)
                 if "textOnly" in data:
                     caption_text_only = bool(data.get("textOnly"))
-                if "positionLocked" in data:
-                    caption_position_locked = bool(data.get("positionLocked"))
                 if session.api_error:
                     notice = {"type": "status", "level": "warn", "message": session.api_error}
                 elif session.api:
@@ -247,8 +278,6 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 _apply_caption_controls(data)
                 if "textOnly" in data:
                     caption_text_only = bool(data.get("textOnly"))
-                if "positionLocked" in data:
-                    caption_position_locked = bool(data.get("positionLocked"))
             elif data.get("type") == "toggle_transparent":
                 caption_text_only = bool(data.get("value"))
                 _apply_caption_controls({"type": "style", "textOnly": caption_text_only})
@@ -257,7 +286,6 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 await send({
                     "type": "toggle_transparent",
                     "value": caption_text_only,
-                    "positionLocked": caption_position_locked,
                 })
             elif data.get("type") == "arm":
                 arm_caption()

@@ -381,7 +381,8 @@ class _Caption:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.text_only = False
-        self.position_locked = True
+        # Last state frame actually put on the wire, so an identical one is not repeated.
+        self._broadcast_last = ""
         self.visible = False
         self.closed = False
         self.have_translation = False
@@ -477,23 +478,6 @@ class _Caption:
             padx=2,
             pady=0,
         )
-        self.position_lock_var = tk.BooleanVar(value=self.position_locked)
-        self.position_lock_control = tk.Checkbutton(
-            self.root,
-            text="锁定",
-            variable=self.position_lock_var,
-            command=lambda: self.apply_position_lock(bool(self.position_lock_var.get())),
-            fg="#ffffff",
-            bg="#000000",
-            activeforeground="#ffffff",
-            activebackground="#000000",
-            selectcolor="#000000",
-            font=("Microsoft YaHei", 9),
-            bd=0,
-            highlightthickness=0,
-            padx=2,
-            pady=0,
-        )
 
         # The ms readout that used to sit here is gone, along with show_cadence.
         #
@@ -550,9 +534,10 @@ class _Caption:
         exstyle = get_long(hwnd, GWL_EXSTYLE)
         extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
         if self.text_only:
+            # Layered is what makes -transparentcolor take effect, and it also has to be
+            # re-applied when 只有字 is switched on for a window that is already up --
+            # hence the call from apply_text_only, not just from show().
             extra |= WS_EX_LAYERED
-            if self.position_locked:
-                extra |= WS_EX_TRANSPARENT
         set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
         user32.SetWindowPos(
             hwnd,
@@ -591,10 +576,8 @@ class _Caption:
         )
         if self.text_only:
             self.text_only_control.place_forget()
-            self.position_lock_control.place(x=80, y=3, anchor="nw")
         else:
             self.text_only_control.place(x=8, y=3, anchor="nw")
-            self.position_lock_control.place(x=80, y=3, anchor="nw")
         if self.text_only:
             self.root.attributes("-transparentcolor", _KEY)
         else:
@@ -616,20 +599,13 @@ class _Caption:
         exstyle = get_long(hwnd, GWL_EXSTYLE)
         if self.text_only:
             exstyle |= WS_EX_LAYERED | WS_EX_NOACTIVATE
-            if self.position_locked:
-                exstyle |= WS_EX_TRANSPARENT
-            else:
-                exstyle &= ~WS_EX_TRANSPARENT
         else:
-            exstyle &= ~WS_EX_TRANSPARENT
             exstyle |= WS_EX_NOACTIVATE
+        # WS_EX_TRANSPARENT is click-through, and the only thing that ever set it was the
+        # position lock. The lock is gone (2026-10-09), so nothing sets it now; it is
+        # still cleared here so a window that once had it cannot come back undraggable.
+        exstyle &= ~WS_EX_TRANSPARENT
         set_long(hwnd, GWL_EXSTYLE, exstyle)
-
-    def apply_position_lock(self, enabled: bool) -> None:
-        self.position_locked = bool(enabled)
-        self.position_lock_var.set(self.position_locked)
-        self._set_input_mode()
-        self._broadcast_state()
 
     def _show_close(self) -> None:
         if self.visible:
@@ -877,8 +853,6 @@ class _Caption:
         self.canvas.configure(cursor=cursor)
 
     def _press(self, event) -> None:
-        if self.position_locked:
-            return
         on_x, on_y, side = self._edges(event)
         if on_x or on_y:
             self._begin_resize(event, side)
@@ -943,10 +917,17 @@ class _Caption:
     def apply_text_only(self, enabled: bool) -> None:
         self.text_only = bool(enabled)
         self.text_only_var.set(self.text_only)
-        # No longer force position_locked. The two settings are independent:
-        # text_only = transparent + frameless; position_locked = disable drag.
-        # If the window is not yet visible, show() will strip the frame.
-        if self.text_only and not self.visible:
+        # 只有字 is a view mode -- transparent, frameless, and still draggable. There is
+        # no lock to pair it with any more: 锁定 and its checkbox were removed on
+        # 2026-10-09 because they turned 只有字 into a state you could not drag out of.
+        #
+        # The frame has to be stripped on this path as well as on show(). A window that
+        # is already on screen never runs show() again, and the transparency that
+        # actually removes the black bar comes from WS_EX_LAYERED, which only
+        # _strip_frame sets -- without this the bar just turns near-black (#010203).
+        if self.visible:
+            self._strip_frame()
+        elif self.text_only:
             self.show()
         self._apply_colors()
         self._broadcast_state()
@@ -977,18 +958,28 @@ class _Caption:
             "kind": "state",
             "value": {
                 "textOnly": bool(self.text_only),
-                "positionLocked": bool(self.position_locked),
                 "fontPx": int(self.font_px),
                 "fontColor": self.font_color,
             },
         }
+        # Sent only when the value changed.
+        #
+        # The extension answers a state frame with a style frame carrying the same
+        # value; that comes back here as apply_text_only, which broadcasts again. Neither
+        # side compared before sending, so the pair echoed on a WebSocket+UDP round trip
+        # for as long as the process lived. The first repeat is the one the extension
+        # needs -- it is how a click on this window's own checkbox reaches the popup --
+        # and a second identical frame carries nothing.
+        body = json.dumps(payload, ensure_ascii=False)
+        if body == self._broadcast_last:
+            return
         try:
-            _STATE_SOCK.sendto(
-                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                ("127.0.0.1", STATE_PORT),
-            )
+            _STATE_SOCK.sendto(body.encode("utf-8"), ("127.0.0.1", STATE_PORT))
         except OSError:
             return
+        # Recorded only after a successful send, so a dropped packet is retried by the
+        # next caller instead of being remembered as delivered.
+        self._broadcast_last = body
 
     def arm(self) -> None:
         # A new capture may show the next non-empty line. Do not reveal an empty bar.

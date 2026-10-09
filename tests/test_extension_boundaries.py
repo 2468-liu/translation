@@ -6,6 +6,27 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _code_only(source: str) -> str:
+    """The source with comments and docstrings removed.
+
+    The prose explaining a removal names the thing that was removed, so a bare
+    assertNotIn over the whole file fails on its own explanation. REPORT 37 records
+    hitting this with `kind == "config"`; the position-lock test hit it again with
+    锁定. Assertions about what the code does run on the code.
+    """
+    kept = []
+    in_doc = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.count('"""') % 2 == 1:
+            in_doc = not in_doc
+            continue
+        if in_doc or stripped.startswith("#"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 class ExtensionBoundaryTests(unittest.TestCase):
     def test_extension_has_no_webpage_injection_permissions(self):
         manifest = json.loads((ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))
@@ -65,14 +86,26 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertIn('text_only_control = tk.Checkbutton', tk_caption)
         self.assertIn('self.text_only_control.place(x=8, y=3', tk_caption)
 
-    def test_state_sync_and_lock_controls_are_exposed(self):
+    def test_state_sync_is_exposed_and_the_position_lock_is_gone(self):
         ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
-        tk_caption = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
+        tk_caption = _code_only(
+            (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
+        )
+        offscreen = (ROOT / "extension" / "offscreen.js").read_text(encoding="utf-8")
 
         self.assertIn('"toggle_transparent"', ws_server)
         self.assertIn('"get_state"', ws_server)
-        self.assertIn('position_locked', tk_caption)
-        self.assertIn('apply_position_lock', tk_caption)
+        # 锁定 left on 2026-10-09. It was a second checkbox in the caption window's
+        # header, and it made 只有字 undraggable -- a view mode that had to be undone
+        # from the popup. Nothing may reintroduce it under the same name.
+        self.assertNotIn("position_locked", tk_caption)
+        self.assertNotIn("apply_position_lock", tk_caption)
+        self.assertNotIn("锁定", tk_caption)
+        self.assertNotIn("positionLocked", ws_server)
+        self.assertNotIn("positionLocked", offscreen)
+        # Click-through is the bit that actually stopped the drag, so the only thing
+        # allowed to mention it is the line that clears it.
+        self.assertNotIn("|= WS_EX_TRANSPARENT", tk_caption)
 
 
 if __name__ == "__main__":
