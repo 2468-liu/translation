@@ -457,9 +457,20 @@ class _Caption:
         return fit_caption_width(measured, self.width, self.screen_width, self.width_locked)
 
     def _paint(self) -> None:
-        self.canvas.delete("all")
+        # The canvas is cleared *after* the new text exists, not before. Clearing
+        # first left it empty for the whole of _fit_width / wrap_caption / metrics,
+        # because canvas.delete("all") was the first statement in the method.
+        # For Chinese that gap is about 0.5ms and was never visible; for Korean it
+        # reaches 169ms, because font.measure falls back to a font search and costs
+        # 1.33ms per character against 0.066ms for Chinese, and wrap_caption measures
+        # at every candidate break. 169ms is ten frames at 60Hz of blank canvas.
+        #
+        # The empty-body path below still clears first: segment changes set self.line
+        # to "" and rely on the text being taken off the screen, so deleting there is
+        # the point rather than an accident of ordering.
         body = self.line or ("实时字幕" if self.visible else "")
         if not body:
+            self.canvas.delete("all")
             return
         wrap = max(240, self.width - 48)
         fitted = self._fit_width(body, wrap)
@@ -485,7 +496,12 @@ class _Caption:
                 self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
             else:
                 self.root.geometry(f"{self.width}x{self.height}")
-        self._draw(display_body, self.font_line, wrap)
+        # Draw first, then drop what the draw replaced. Ordering it this way is what
+        # keeps the canvas non-empty across the paint.
+        fresh = self._draw(display_body, self.font_line, wrap)
+        for stale in self.canvas.find_all():
+            if stale != fresh:
+                self.canvas.delete(stale)
         now = time.monotonic()
         self._report_dwell(now)
         if self._trace_action in ("grow", "swap"):
@@ -520,10 +536,10 @@ class _Caption:
             self._trace_recv = 0.0
             self._trace_action = ""
 
-    def _draw(self, text: str, font: tkfont.Font, wrap: int) -> None:
+    def _draw(self, text: str, font: tkfont.Font, wrap: int) -> int:
         x = self.width / 2
         y = 25
-        self.canvas.create_text(
+        return self.canvas.create_text(
             x,
             y,
             text=text,
