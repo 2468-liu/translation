@@ -12,10 +12,13 @@ These tests pin both halves: that the switch reaches the live session, and that
 the extension's frame is what carries it.
 """
 
+import asyncio
 import contextlib
 import io
+import json
 from pathlib import Path
 import socket
+import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -260,6 +263,77 @@ class StateListenerStartupTests(unittest.TestCase):
                       "a bind failure has to be reported, not left on stderr")
         self.assertIsNone(ws_server._STATE_LISTENER,
                           "a later connection must be able to try again")
+
+
+def _free_udp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class StateListenerForwardingTests(unittest.TestCase):
+    """The frame really arrives: UDP -> whichever connection is live.
+
+    Source-string tests cannot tell a listener that forwards from one that binds the
+    port and dies, which is exactly what the two-listener version did -- the difference
+    was a traceback on stderr and a control that silently stopped working.
+    """
+
+    def setUp(self):
+        self.received = []
+        self.port = _free_udp_port()
+        self.previous_target = ws_server._STATE_TARGET
+        self.previous_listener = ws_server._STATE_LISTENER
+        self.previous_port = ws_server.STATE_PORT
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.thread.start()
+        ws_server.STATE_PORT = self.port
+        ws_server._STATE_TARGET = (self.loop, self._send)
+        ws_server._STATE_LISTENER = None
+        ws_server._start_state_listener()
+        for _ in range(100):
+            if ws_server._STATE_LISTENER is not None:
+                break
+            time.sleep(0.01)
+        time.sleep(0.05)  # let the thread reach recvfrom
+
+    def tearDown(self):
+        ws_server.STATE_PORT = self.previous_port
+        ws_server._STATE_LISTENER = self.previous_listener
+        ws_server._STATE_TARGET = self.previous_target
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=2)
+        self.loop.close()
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    async def _send(self, payload) -> None:
+        self.received.append(payload)
+
+    def _send_frame(self, frame: dict) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(json.dumps(frame).encode("utf-8"), ("127.0.0.1", self.port))
+
+    def test_a_state_frame_reaches_the_live_sender(self):
+        self._send_frame({"kind": "state", "value": {"textOnly": True, "fontPx": 24}})
+        for _ in range(100):
+            if self.received:
+                break
+            time.sleep(0.01)
+        self.assertEqual(
+            self.received,
+            [{"type": "toggle_transparent", "value": True, "fontPx": 24}],
+            "the caption window's own control has to reach the client, and carry no lock",
+        )
+
+    def test_other_kinds_are_still_dropped(self):
+        self._send_frame({"kind": "config", "value": {"partial_interval_ms": 500}})
+        time.sleep(0.2)
+        self.assertEqual(self.received, [],
+                         "the cadence has one path and it is the WebSocket")
 
 
 if __name__ == "__main__":
