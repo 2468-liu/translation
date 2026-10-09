@@ -16,6 +16,7 @@ from . import perf
 from . import config
 from .asr import AsrEngine, build_asr
 from .caption_window import (
+    TERMINAL_PUNCT,
     ack_switch,
     arm_caption,
     clear_caption,
@@ -142,12 +143,23 @@ async def handle(ws, asr: AsrEngine | None) -> None:
         if payload.get("type") in ("translation", "segment_start"):
             # Server-side reference point: pair it with the caption window's
             # `caption.paint since_send` line via the shared wall clock.
+            #
+            # `punct` is how many terminal marks the text carries, and it is here
+            # because the question it answers is "if the caption only drew text that
+            # brought a mark with it, how long would the first draw wait". Measured
+            # offline on the qwen3 arm, 78% of clauses carry their punctuation inside
+            # 400ms with a median of 37ms, while only 22% of the individual packets do
+            # -- one clause arrives as six or seven packets and only the last carries
+            # the mark. Those two numbers are the same fact at two granularities, and
+            # this field is what settles it on a live run instead of offline.
+            text = str(payload.get("text") or "")
             perf.emit(
                 "ws",
                 "send",
                 type=payload.get("type"),
                 final=payload.get("final", False),
-                chars=len(str(payload.get("text") or "")),
+                chars=len(text),
+                punct=sum(1 for ch in text if ch in TERMINAL_PUNCT),
                 sent_at=perf.wall(),
             )
         if caption_enabled:
