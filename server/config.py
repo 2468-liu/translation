@@ -237,14 +237,25 @@ CHAINS = {
         "measured": "on lecture_mix at partial 750, llama 2.53.0, same code for both arms. "
                     "Engine: asr p50 180ms against 822ms (4.6x), 15.8% of wall clock against "
                     "56.8%. audio_end_to_paint p50 548ms against 690ms, over 1000ms 7/24 "
-                    "against 8/25. e2e_first_tr_to_paint p50 47ms against 52ms once scored "
-                    "on the run's own sample. Against it: coverage 21/23 against 23/24, and "
-                    "e2e p99 2433ms against 2031ms. dwell_gap and hold_wait identical "
+                    "against 8/25. e2e_first_tr_to_paint p50 47ms against 52ms. Against it: "
+                    "coverage 21/23 against 23/24, and e2e p99 2433ms against 2031ms -- the "
+                    "tail, which the old reading hid by scoring against another clip's "
+                    "timeline (it reported p99=max=996ms). dwell_gap and hold_wait identical "
                     "(1580 vs 1620, 986 vs 986)",
-        "caveat": "5 of 149 calls repeated until the context filled, 30-33s each; capped at "
-                  "128 tokens and dropped whole, trigger still unknown. Single run per arm, "
-                  "synthetic material, and the coverage gap is the one user-facing number B "
-                  "loses -- so the comparison does not decide adoption either way",
+        "caveat": "128 tokens, whole response dropped on finish_reason=length, and on lecture_mix "
+                  "that fires 5 times against whisper's 0 -- which is why B produces 23 finals "
+                  "where A produces 25 from identical VAD segmentation, and why coverage "
+                  "reads 91% against 96%. So the cap's original worry is now measured rather "
+                  "than hypothetical, and it costs finals here. Raising it is the single "
+                  "variable that would test it (TRANSLATION_QWEN3_ASR_MAX_TOKENS). "
+                  "Separately: 5 of 149 calls repeated until the context filled, 30-33s "
+                  "each, trigger still unknown. Single run per arm, synthetic material. "
+                  "Unmeasured display-layer hypothesis, unrelated to the cap: whisper's ASR "
+                  "is slow enough that translation idles and each emission is short, so "
+                  "streaming output buys latency; Qwen3 leaves translation busy and emits "
+                  "densely, so the same policy reads as flicker and should be block-wise. "
+                  "The log records no per-paint delta, so that is not measurable yet -- "
+                  "REPORT 50",
     },
     "gemma-e2e": {
         "label": "音频直出（一个模型同时听和译）",

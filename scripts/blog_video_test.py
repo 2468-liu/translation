@@ -465,8 +465,32 @@ def main() -> None:
         _video()
     print(f"audio {_sample_wav()} {duration:.1f}s", flush=True)
     result = asyncio.run(_play(timing))
-    result["video"] = str(MP4_PATH)
-    result["wav"] = str(WAV_PATH)
+    # Provenance has to be what ran, not what the constants default to.
+    #
+    # These two lines recorded WAV_PATH and MP4_PATH -- module constants pointing at
+    # blog_3min -- while the run itself played _sample_wav(), which reads
+    # TRANSLATION_SAMPLE_WAV. So every run on any other clip recorded a manifest naming
+    # blog_3min.wav, and the line above printed the real one into stdout where nobody
+    # reconciled the two.
+    #
+    # The cost was not a cosmetic field. scripts/perf_compare.py scores
+    # e2e_first_tr_to_paint against samples/blog_3min_timing.json, so the Qwen3 A/B ran
+    # entirely on lecture_mix and had its translations matched against another clip's
+    # segment starts. That produced p50 434ms against a real 47ms -- a plausible,
+    # correctly-shaped, wrong number, written down as the reason not to adopt the engine.
+    result["wav"] = str(_sample_wav())
+    # And the timeline it was scored against, which is the field that was silently wrong
+    # downstream. Recording both means a future disagreement between them is detectable.
+    # That is the whole point: deriving the timeline from `wav` cannot catch a manifest
+    # that lies about `wav`, because a lie naming blog_3min resolves to a real file and
+    # the original error reproduces itself silently. Two fields that have to agree catch
+    # what one field cannot.
+    result["timing"] = str(_sample_timing())
+    # The video belongs to the clip it was cut from, so it is only meaningful for that
+    # clip. Claiming blog_3min's mp4 for a lecture_mix run would put a second wrong field
+    # next to the one just fixed.
+    same_clip = Path(result["wav"]).resolve() == WAV_PATH.resolve()
+    result["video"] = str(MP4_PATH) if same_clip else None
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     RESULT_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(

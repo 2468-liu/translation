@@ -181,6 +181,29 @@ def signature(text: str) -> str:
     return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
 
 
+def _segments(timing: object) -> list[dict]:
+    """Reference segments as a list, from either timeline shape.
+
+    Two shapes exist. A bare list is the older hand-made one; build_timing.py wraps the
+    list in a header carrying audio_total and covered_span, so built timelines are a dict.
+
+    Handling only the list meant this function could never have consumed any built
+    timeline, which is why hardcoding blog_3min_timing.json went unnoticed for as long as
+    it did: the only file it ever read was the one shape it understood. Pointed at
+    lecture_mix_timing.json it iterates the dict's keys and dies on row["start"] -- a
+    crash, which is at least the honest failure. Scored against blog_3min's list it ran
+    cleanly and returned 434ms for an engine whose real figure is 47ms.
+    """
+    if isinstance(timing, list):
+        return timing
+    if isinstance(timing, dict):
+        for key in ("segments", "rows", "utterances"):
+            value = timing.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
 def first_translation_wall(events: list[dict], audio_sec: float) -> float | None:
     for event in events:
         if event.get("type") != "translation":
@@ -341,9 +364,57 @@ def main(argv: list[str]) -> int:
     if test_path and test_path.exists() and caption:
         payload = json.loads(test_path.read_text(encoding="utf-8"))
         events = payload.get("events") or []
-        timing = json.loads(
-            (ROOT / "samples" / "blog_3min_timing.json").read_text(encoding="utf-8")
-        )
+        # The reference timeline must be the clip this run replayed. It used to be
+        # hardcoded to samples/blog_3min_timing.json, and the Qwen3 A/B ran entirely on
+        # lecture_mix -- so the translations were matched against another clip's segment
+        # starts. The tell was in the output the whole time: n was 16 in all four arms,
+        # which is blog_3min's row count and not lecture_mix's 17.
+        #
+        # That produced e2e_first_tr_to_paint p50 434ms for Qwen3 where the correct
+        # timeline gives 47ms, and a whole finding about the engine was written on it.
+        #
+        # The wrongness was invisible because it was not a missing value: blog_3min's 16
+        # starts fall inside lecture_mix's 180 seconds, so it matched, produced a normal
+        # n, and returned a normal number of milliseconds.
+        #
+        # Derived from the manifest rather than passed in, because the earlier failure
+        # was a correct argument about the wrong sample -- a default is exactly the thing
+        # that gets forgotten. And it only became possible after blog_video_test.py was
+        # fixed to record _sample_wav() instead of the WAV_PATH constant; deriving this
+        # from the old manifests would reproduce the original error, so an unrecognised
+        # wav is reported and the metric is skipped.
+        wav = Path(str(payload.get("wav") or ""))
+        timing_path = wav.with_suffix("").parent / (wav.stem + "_timing.json") if wav.stem else None
+        declared = str(payload.get("timing") or "")
+
+        def _refuse(why: str) -> None:
+            print(
+                f"!! {name}: e2e_first_tr_to_paint is NOT reported -- {why}\n"
+                f"   wav={payload.get('wav')!r} timing={declared or None!r}\n"
+                f"   Scoring one clip's translations against another clip's segments returns a "
+                f"plausible, correctly-shaped number, which is worse than returning nothing."
+            )
+
+        if timing_path is None or not timing_path.exists():
+            _refuse("no reference timeline can be derived from this manifest's wav")
+            timing = []
+        elif declared and Path(declared).resolve() != timing_path.resolve():
+            # The producer records both fields, so they have to agree. A manifest where
+            # they disagree is one whose wav is not what ran -- which deriving from wav
+            # alone cannot detect, because a lie naming blog_3min resolves to a real file
+            # and the original error reproduces silently.
+            _refuse("the manifest's wav and timing name different clips")
+            timing = []
+        elif not declared:
+            print(
+                f"   note: {name}'s manifest predates the provenance fix and carries no "
+                f"timing field, so its wav cannot be cross-checked. Manifests written "
+                f"before blog_video_test.py recorded _sample_wav() name blog_3min.wav "
+                f"whatever clip they played."
+            )
+            timing = _segments(json.loads(timing_path.read_text(encoding="utf-8")))
+        else:
+            timing = _segments(json.loads(timing_path.read_text(encoding="utf-8")))
         paint_walls = sorted(r[0] for r in caption if r[1] == "caption.paint")
         lags: list[float] = []
         for row in timing:
