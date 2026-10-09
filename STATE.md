@@ -760,27 +760,46 @@ audio_end_to_paint 1367→194ms     一半是口径位移（改前量"兜底那�
    —— 原来它只往 stderr 丢 traceback，症状是"点了没反应"
 ```
 
-**下半场（10-09 晚，30b955a）：两个「只有字」共用一个状态。**
+**下半场（10-09 晚）：只有字 连表头一起隐藏；同步靠状态源，不靠把控件留在屏幕上。**
 
-用户报：扩展里的「只有字」与字幕窗里的「只有字」不同步 ⇒ 要按两次。三处：
+用户定义的验收（照做，别自作主张改）：
+```
+框里点「只有字」→ 黑框和「只有字」三个字一起消失（全屏下只剩字幕，舒服）
+插件的对勾同时勾上（这叫同步）
+插件里点一下 → 黑框回来，对号框和「只有字」重新出现（一次点击，不是两次）
+```
 
-1. caption 的「只有字」控件两种模式下都留在表头（原来 text_only 时 place_forget，
-   于是"关掉只有字"的控件正是被只有字藏掉的那一个）；指示框改 `selectcolor="#000000"`，
-   否则透明窗口上勾选框整个看不见（key 掉背景 = 连状态一起 key 掉）
-2. popup 勾选时**除了写 storage 还直接发一个 `caption-style` 帧**：只写 storage 时，
-   若字幕窗自己的控件已经把状态改成目标值、storage 还没跟上，`storage.onChanged`
-   不触发 ⇒ 什么都不发 ⇒ 第一次点按看不出变化（"按两次"的来源）
-3. 实测（连跑两次一致）：
-   scripts/probe_caption_text_only.py（灰底衬在下 + 真 UDP 8766/8767）
-     有框      layered=False  非背景 99.9%   控件在 var=False
-     只有字    layered=True   非背景  1.3%   控件在 var=True   ← 扩展改它，窗口控件跟着走
-     一次点按   text_only=False var=False 8767 收到 1 帧 [False]  ← 不需要第二次
-     _press 之后 drag=True
-   logs/probe_header_textonly.png：黑框 + 白勾 + 「只有字」均可读
-   logs/popup_sync_probe.js（stub chrome 跑 extension/popup.js）
-     点击 → 发 caption-style{textOnly:true,fontPx:20,color:#ffffff} + 写 storage
-     反向：storage 变化 → 复选框跟着走，且不再回发（无回声）
-   python -m pytest -q → 377 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+**「按两次」的成因**：扩展勾选框只写 storage，转发靠 `storage.onChanged`；
+storage 由"最后动的一方"写入 ⇒ 值没变时 onChanged 不触发、什么都不发。
+而字幕窗的表头在只有字模式下是**隐藏的**（那是这个模式的本意）⇒ 插件那一面是唯一回头路，
+它的对勾必须是**字幕窗的真实状态**，否则第一次点击花在窗口并不处于的状态上。
+
+三处：
+1. caption 的「只有字」控件在只有字模式下 `place_forget`，与黑框一起隐藏 —— **刻意如此**。
+   当天试过相反的改法（控件常驻表头）并回滚：那样视频上永远挂着一个对号框和一小块黑指示框
+2. `ws_server._CAPTION_TEXT_ONLY` 改成**进程一份、两端都写**：扩展的 config/style 写它，
+   字幕窗自己的 UDP 8767 广播也写它 ⇒ `get_state` 答"窗口现在是什么状态"，
+   而不是"扩展上次要的是什么"
+3. popup 打开时向实时字幕窗要一次状态（`caption-state` → `get_state`），
+   勾选时**直接发 `caption-style` 帧**，意图不再搭 storage 的顺风车
+
+实测（`scripts/probe_caption_text_only.py`，灰底衬在下 + 真 UDP，照用户流程走）：
+```
+1. 有框            非背景 99.7%  控件在    var=False
+2. 框里点只有字     非背景  2.7%  控件隐藏  var=True   恰好汇报 1 帧 [True]
+3. 插件点一下       非背景 99.7%  控件回来  var=False  ← 一次点击
+   有框时可拖动 drag=True
+   logs/probe_header_textonly.png = 纯灰（框和控件都没了）
+   logs/probe_header_back.png     = 对号框 + 「只有字」
+logs/popup_sync_probe.js（stub chrome 真跑 popup.js）：打开即问状态 / 点击发帧+写 storage /
+   反向跟着走且不回发
+python -m pytest -q → 378 passed / 1 skipped / 10 failed（10 条仍是沙箱拒写临时目录）
+```
+
+**教训（同一天、同一处，方向改了两次）**：用户说"不同步、要按两次"时，
+我先把控件留在屏幕上让状态"看得见" —— 那修的是像素，坏的是这个模式本身。
+**抱怨"不同步"时先问：哪一面是权威、状态存在哪；把控件留在屏幕上只让两边都被看见，
+两边的值照样可以不同。** 回滚的理由必须写在原地，否则下一个人会再翻一次。
 
 ## 模型定位
 
@@ -834,9 +853,9 @@ main / HEAD / gemma-audio  同指（已快进） ｜ 回退点 tag pre-merge-202
 `gemma-audio` 保留。**pytest（2026-10-07 晚）107 passed**（新增 `tests/test_translation_context.py` 8 条，
 钉住"上下文真进提示词"与"ctx=0 逐字节等于改动前"）；此前 99 passed。
 `extension/` 与 Native Host 未变 ⇒ 主机无需重建（`start.ps1` 是文件调用，不在 exe 里）。
-**最近一次（2026-10-09 晚，下半场 `30b955a` 之后）：377 passed / 1 skipped / 10 failed** —— 10 条全在
+**最近一次（2026-10-09 晚，只有字状态源改完）：378 passed / 1 skipped / 10 failed** —— 10 条全在
 `test_backend_cycle.py`，全是 DSH 沙箱拒写临时目录下的 `server.pid`，与改动无关。
-（REPORT 60.6 记的是更早那次 370 passed / 1 skipped / 10 failed。）
+（REPORT 60.6 记的是更早那次 370；`30b955a` 那次是 375；中途那版"控件常驻表头"是 377。）
 
 ## 实验日志（一行一条）
 

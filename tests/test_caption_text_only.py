@@ -117,17 +117,21 @@ class TextOnlyIsAViewModeTests(unittest.TestCase):
         self.assertIn("WS_EX_LAYERED", body)
         self.assertNotIn("|= WS_EX_TRANSPARENT", body)
 
-    def test_the_only_text_control_survives_text_only_mode(self):
-        """It used to be placed only when 只有字 was off, which is the one mode where it
-        matters: the control that turns 只有字 off was hidden by 只有字, so the only way
-        back was the popup -- and then two surfaces showed the same state with only one
-        of them able to change it."""
+    def test_the_header_control_hides_with_the_bar(self):
+        """Hiding it is the point of the mode: nothing on the video but the text.
+
+        Tried the other way for half a day (the control always on the header) and it
+        leaves a checkbox plus a black indicator square on the video forever, which is
+        what made 只有字 comfortable over fullscreen in the first place. The cost is
+        real -- the only way back is the popup -- and it is paid on the other surface:
+        the popup asks the window for its state instead of trusting storage.
+        """
         body = _body_source(_class_methods(SOURCE)["_apply_colors"])
+        self.assertIn("self.text_only_control.place_forget()", body)
         self.assertIn("self.text_only_control.place(x=8, y=3", body)
-        self.assertNotIn("self.text_only_control.place_forget()", body)
-        # The indicator is where the state is drawn, so it cannot be keyed out with the
-        # background: on a transparent window that is an invisible checkbox.
-        self.assertIn('selectcolor="#000000"', body)
+        # The indicator goes back to being keyed with the background: while it is hidden
+        # it must not be the only thing drawn, so no second colour is needed.
+        self.assertIn("selectcolor=bg", body)
 
     def test_one_control_state_is_mirrored_not_copied(self):
         body = _body_source(_class_methods(SOURCE)["apply_text_only"])

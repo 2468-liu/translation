@@ -164,11 +164,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // One state, two controls: this checkbox and the caption window's own header control.
 //
-// The text is shared so the two cannot describe the same state differently. It also has
-// to stop claiming the caption's control area is hidden -- it is not any more, and that
-// claim is what made a click on the window's own control look like the wrong control.
+// 只有字 hides the caption window's header -- its own control included -- because that is
+// the whole point of the mode: nothing on the video but the text. So this checkbox is
+// the way back, and it has to be telling the truth or the first press is spent on a
+// state the window is not in. Hence the ask in refresh() below, and the note that says
+// where to press to get the frame back instead of pretending a control is still there.
 function captionTextOnlyNote(on) {
-  return on ? "字幕窗已切到「只有字」：无框、透明，仍可拖动。" : "字幕窗已恢复黑底框。";
+  return on
+    ? "字幕窗已切到「只有字」：黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"
+    : "字幕窗已恢复黑底框和「只有字」控制。";
 }
 
 // The live caption window, told directly.
@@ -188,6 +192,15 @@ function tellCaptionWindow() {
   }).catch(() => {});
 }
 
+// Ask the window what it is set to, and let its answer correct this checkbox.
+//
+// On the same message bus as the style frame, so it only lands while a caption window
+// exists; when there is none, storage is the only thing that can be known and it is
+// what the next start will apply anyway.
+function askCaptionWindowState() {
+  chrome.runtime.sendMessage({ type: "caption-state" }).catch(() => {});
+}
+
 async function refresh(keepMessage, failedStep) {
   const stored = await chrome.storage.session.get(["running", "language"]);
   const theme = await chrome.storage.local.get({
@@ -203,6 +216,10 @@ async function refresh(keepMessage, failedStep) {
   });
   paintCadence(theme.partialIntervalMs);
   textOnly.checked = Boolean(theme.captionTextOnly);
+  // Ask the live window to correct that. Storage is what the next start reads; this
+  // checkbox has to show what is on screen now, and 只有字 hides the window's own
+  // control so there is no other place a stale value could be noticed.
+  askCaptionWindowState();
   audioOnly.checked = Boolean(theme.audioOnly);
   const px = Math.max(16, Math.min(40, Number(theme.captionFontPx) || 20));
   fontSize.value = String(px);

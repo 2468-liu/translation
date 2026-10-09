@@ -5546,69 +5546,89 @@ python -m pytest -q  ->  370 passed, 1 skipped, 10 failed
 **「报出通道不存在」之前先 grep 收端。** 上一轮把 caption→扩展 记成「完全没有」，实际 `offscreen.js` 里就有 `toggle_transparent` 分支，`ws_server` 里就有转发。**结论写进 STATE
 之后，下一个人不会再去查它** —— 这正是 §5 第十三条说的下游冻结：这条错记录会让「重连之后不同步」这个真 bug 一直没人看。
 
-### 60.8 两个「只有字」共用一个状态（30b955a）
+### 60.8 两个「只有字」共用一个状态：同步靠状态源，不靠把控件留在屏幕上
 
-用户报的是：「扩展里的只有字和框里的只要字要同步，不然要按两次。」这是 §60.3–§60.5 修完之后**仍然存在**的一半：透明和拖动修好了，但**两个控件各有一份状态**。
+用户报的是：「扩展里的只有字和框里的只要字要同步，不然要按两次。」这是 §60.3–§60.5 修完之后**仍然存在**的一半：透明和拖动修好了，但**状态有两个来源**。
 
-**「按两次」的机制**（三条都成立才出现）：
+**用户定义的验收（照做，不许自作主张改）**
+
+```
+框里点「只有字」→ 黑框和「只有字」三个字一起消失（全屏下只剩字幕，舒服）
+插件的对勾同时勾上 —— 这叫同步
+插件里点一下 → 黑框回来，对号框和「只有字」重新出现（一次点击，不是两次）
+```
+
+**「按两次」的机制**
 
 ```
 扩展勾选框 → 只写 chrome.storage.local.captionTextOnly → 靠 background 的 storage.onChanged
    转发 caption-style → offscreen → WS style 帧 → ws_server → UDP 8766 → caption
 ⇒ storage 的值**没变**时 onChanged 不触发，这条路上什么都不发。
-而 storage 由"最后动的一方"写入：caption 自己的控件勾过之后，它的状态是新的、
+而 storage 由"最后动的一方"写入：caption 自己的控件勾过之后，窗口的状态是新的、
 storage 可能还是旧的（WS 断着 / 刚重启过 / 帧丢过）。用户打开弹窗看到旧值，
 点一下正好把 storage 改成**它已经是**的那个值 ⇒ 一次点击什么也不发、屏幕上什么也不动
 ⇒ 用户点第二次。第一次点击被"没有变化"吃掉了。
 ```
 
-**三处改动**
+**改动（最终版；中间走过一次弯路，见下）**
 
 ```
-1. caption_window._apply_colors：「只有字」控件两种模式下都留在表头。
-   原来 text_only 时 place_forget ⇒ 关掉只有字的控件正是被只有字藏掉的那一个，
-   回头路只有浏览器弹窗：屏幕上唯一能改它的地方，正好在它改完之后消失。
-2. caption_window._apply_colors：selectcolor 由 _KEY 改成 #000000。
-   指示框是唯一画状态的地方；透明窗口上把它与背景一起 key 掉 = 一个看不见的勾选框。
-   只有指示框吃这个色 ⇒ §60.3 那种整条黑底不会回来（截图可证）。
-3. popup.js：勾选时除了写 storage（下次启动读它），**直接发一个 caption-style 帧**
-   （`tellCaptionWindow()`）—— 意图不再搭 storage 的顺风车。状态文案里
-   "字幕框控制区已隐藏"随之删掉：它已经不隐藏了，那句话本身就是错的。
+1. caption_window._apply_colors：「只有字」控件在只有字模式下 place_forget，与黑框一起隐藏 ——
+   **这是这个模式的本意**，不是 bug。全屏下只剩字幕，才叫舒服。
+2. ws_server：`_CAPTION_TEXT_ONLY` 改成**进程一份、两端都写** —— 扩展的 config/style 写它，
+   字幕窗自己的 UDP 8767 广播也写它。它原来是 WebSocket handler 的局部变量，只被扩展写的帧
+   更新，于是 `get_state` 答的是"扩展上次要的是什么"。窗口自己的控件动过之后，唯一知道真相的
+   就是那个 UDP 监听器，而它把消息转发给一个可能没连的客户端，然后忘了。
+3. popup.js：勾选时直接发 `caption-style` 帧（不再只写 storage 等 `onChanged`），
+   打开弹窗时发 `caption-state` 让实时窗口报一次自己的状态（offscreen 转成 `get_state`）。
+   状态文案改为"黑框和「只有字」都隐藏了。在这个插件里再点一下即可恢复。"
 ```
 
-**实测（两个探针，都不入库：前者命中 .gitignore 的 `probe_*.py`，后者在 `logs/`）**
+**走过的弯路（同一天，同一处，方向相反，必须留在原地）**
 
 ```
-scripts/probe_caption_text_only.py（灰底衬在字幕窗正下方 + 真 UDP 8766/8767；连跑两次一致）
-  有框      layered=False  click_through=False  非背景 99.9%  控件在 var=False
-  只有字    layered=True   click_through=False  非背景  1.3%  控件在 var=True
-            ← 扩展方向改它，窗口里那个控件的变量跟着走，不需要第二次
-  一次点按   text_only=False  var=False  8767 收到 1 帧 [False]
-            ← 窗口方向：一次点按 = 状态变一次 + 汇报一次
-  _press 之后 drag=True
-  logs/probe_header_textonly.png：黑框 + 白勾 + 「只有字」三样都可读
-  （灰底上抓的表头；控件 bg=_KEY 所以只剩指示框那 14px 是黑的）
+第一版（30b955a）：以为"两边都看得见"就是同步 ⇒ 把「只有字」控件改成两种模式下都留在表头，
+  并把指示框改成不透明色，好让用户"总能自己切回来"。
+它把 §60.3 那个残留黑框又请回来了一个小号版本（固定挂在视频上的对号框 + 14px 黑指示框），
+  而用户要的正是"点完只剩字幕"。同一轮里 popup 的文案还写着"控制区已隐藏"，与屏幕相反。
+回滚：控件恢复 place_forget、selectcolor 恢复跟背景同色。
+真正要修的是**状态源**，不是像素 —— 见上面第 2、3 条。
+```
+
+**实测（两个探针都不入库：前者命中 .gitignore 的 `probe_*.py`，后者在 `logs/`）**
+
+```
+scripts/probe_caption_text_only.py —— 按用户的验收流程走（灰底衬在字幕窗正下方 + 真 UDP）
+  1. 有框           非背景 99.7%  控件在    var=False
+  2. 框里点只有字    非背景  2.7%  控件**隐藏**  var=True   恰好汇报 1 帧 [True]
+                    ← 这一帧就是插件对勾勾上的依据，一次点击、一次汇报
+  3. 插件点一下      非背景 99.7%  控件**回来**  var=False  ← 一次点击
+     有框时可拖动 drag=True
+  logs/probe_header_textonly.png = 纯灰（黑框和控件都没了，只剩下面的字幕）
+  logs/probe_header_back.png     = 对号框 + 「只有字」
 
 logs/popup_sync_probe.js（stub chrome 跑真 extension/popup.js，逐条断言）
+  打开弹窗 → 发 caption-state（问状态）✓
   点击 → 发 caption-style{textOnly:true,fontPx:20,color:#ffffff} + 写 storage ✓
-  反向 → storage.onChanged 让复选框跟着走（checked=false）✓
-  且不再回发（caption-style 帧总数 = 1，没有回声）✓
-  状态行不再出现"隐藏"字样 ✓
+  反向 → storage.onChanged 让复选框跟着走（checked=false）✓，且不回发（无回声）✓
+  文案同时说出"隐藏了什么"和"怎么恢复" ✓
 ```
 
-**测试**：+3 条（caption 侧控件不得 place_forget、指示框不得被 key 掉、`apply_text_only`
-必须把状态镜像进 `text_only_var`；popup 侧 `tellCaptionWindow` + `caption-style`），
-外加 §60.6 的既有 10 条。`python -m pytest -q` → **377 passed / 1 skipped / 10 failed**
-（10 条仍是沙箱拒写临时目录）。
+**测试**：+4 条（caption 侧：控件必须随黑框一起 place_forget、指示框与背景同色、
+`apply_text_only` 把状态镜像进 `text_only_var`；extension 侧：`tellCaptionWindow` +
+`askCaptionWindowState` + offscreen 的 `caption-state` → `get_state`；server 侧：
+`_CAPTION_TEXT_ONLY` 两端都写、`get_state` 答它；转发测试里断言缓存被写入）。
+`python -m pytest -q` → **378 passed / 1 skipped / 10 failed**（10 条仍是沙箱拒写临时目录）。
 
-**判据（下次再看到"要点两次"，按这个顺序查）**
+**判据（下次再看到"要点两次"）**
 
 ```
-1. 两个控件是不是各存一份状态？→ 只允许 storage 一份 + 字幕窗一份镜像，
-   且改它的那条消息不能搭"值有没有变"的顺风车
-2. 屏幕上有没有一个控件被它自己的模式藏掉？（藏掉 = 改不回来）
-3. 状态的指示（勾、字、颜色）有没有跟背景一起被 key 掉 / 被透明吃掉？
-   —— 看不见的控件等于没有控件，而它看起来还在响应
+1. 状态存在哪、哪一面是权威？→ 缓存必须被**两端**写：谁改了状态谁就写它，
+   只被"发命令的那一端"写的缓存答的是另一个问题
+2. 改状态的那条消息，有没有搭"值变了没有"的顺风车？（storage.onChanged 就是这种）
+3. 控件被它自己的模式藏掉时，**另一面**能不能报出真实状态？——
+   "把控件留在屏幕上"只是让两边都被看见，两边的值照样可以不同：那是改像素，不是改同步
 ```
+
 
 

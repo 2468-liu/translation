@@ -87,13 +87,14 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertIn('self.text_only_control.place(x=8, y=3', tk_caption)
 
     def test_one_text_only_state_shared_by_popup_and_caption_window(self):
-        """Both controls, one state, and a click on either one has to land.
+        """Both controls, one state, and a press on either one has to land.
 
-        Storage alone was the wrong carrier: it is written by whichever side moved last,
-        so when the window's own control had moved it and storage had not caught up, the
-        popup's click produced no storage change, no message, and no visible effect --
-        the second press is what people did next. The frame the window obeys is sent
-        from the popup directly now, and storage is only what the next start reads.
+        只有字 hides the caption window's header, its own control included, so the popup
+        is the only way back -- and it therefore has to be showing the window's real
+        state, or the first press is spent on a state the window is not in. Two things
+        carry that: the popup sends the style frame itself (storage.onChanged does not
+        fire when the value did not change), and it asks the window what it is set to
+        when it opens (durable storage only records what the next start will read).
         """
         popup = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
         offscreen = (ROOT / "extension" / "offscreen.js").read_text(encoding="utf-8")
@@ -101,10 +102,30 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertIn("function tellCaptionWindow()", popup)
         self.assertIn('type: "caption-style"', popup)
         self.assertIn("tellCaptionWindow();", popup)
+        self.assertIn("function askCaptionWindowState()", popup)
+        self.assertIn("askCaptionWindowState();", popup)
+        self.assertIn('type: "caption-state"', popup)
         self.assertIn('message.type === "caption-style"', offscreen)
-        # And the claim that the caption's control area hides itself is gone, because it
-        # does not: it stays on the header so the state is visible where it is changed.
-        self.assertNotIn("控制区已隐藏", popup)
+        self.assertIn('message.type === "caption-state"', offscreen)
+        self.assertIn('sendJson({ type: "get_state" })', offscreen)
+        # And the note says where to press to get the frame back, rather than claiming a
+        # control that is no longer on screen.
+        self.assertIn("再点一下即可恢复", popup)
+
+    def test_the_caption_state_cache_is_written_from_both_ends(self):
+        """`get_state` has to answer what the window is in, not what was last asked for.
+
+        The cache used to be a local of the WebSocket handler, written only by the
+        extension's frames. Then the one place that knew what the window's own control
+        had done -- the UDP listener -- forwarded it to a client that might not be
+        connected, and forgot it.
+        """
+        ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")
+
+        self.assertIn("_CAPTION_TEXT_ONLY = False", ws_server)
+        self.assertIn('_CAPTION_TEXT_ONLY = bool(value.get("textOnly"))', ws_server)
+        self.assertIn('_CAPTION_TEXT_ONLY = bool(data.get("textOnly"))', ws_server)
+        self.assertIn('"value": _CAPTION_TEXT_ONLY', ws_server)
 
     def test_state_sync_is_exposed_and_the_position_lock_is_gone(self):
         ws_server = (ROOT / "server" / "ws_server.py").read_text(encoding="utf-8")

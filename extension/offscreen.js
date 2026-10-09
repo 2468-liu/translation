@@ -50,6 +50,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  // "What is the caption window set to right now?", asked by the popup when it opens.
+  //
+  // The popup cannot read storage for this: storage is only what the last start will
+  // read, and the window's own control (which is hidden in 只有字 mode, by design) can
+  // move the state without storage hearing about it. The answer comes back as a
+  // toggle_transparent frame and is written to storage here, so the popup's checkbox
+  // ends up showing the window's real state -- that is what makes the first press work.
+  if (message.type === "caption-state") {
+    sendJson({ type: "get_state" });
+    sendResponse({ ok: true });
+    return false;
+  }
   if (message.type === "hide-caption") {
     sendJson({ type: "hide" });
     sendResponse({ ok: true });
