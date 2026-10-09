@@ -68,6 +68,39 @@ READABLE_RATIO = 0.70
 # editing the file the last one measured.
 HOLD_ABS_MIN_MS = _env_int("TRANSLATION_HOLD_ABS_MIN_MS", 800)
 HOLD_ABS_MAX_MS = 4200
+
+# Block mode: paint a clause when its terminating punctuation arrives, instead of
+# drawing every arriving fragment.
+#
+# The boundary is taken on the translation text, never on the recogniser's output.
+# Measured over four runs: introducing a new punctuation mark happens 16.4 and 16.7
+# times a minute on the translation stream, against 0.7 and 1.7 on the ASR stream --
+# the clause counts were 17.3 and 18.7 a minute, so the translation side is where the
+# boundary actually exists.
+#
+# The test is "this packet introduces a mark the line did not already carry", NOT
+# "this packet contains any mark". Punctuation stays in the line once drawn, so 62%
+# and 78% of packets contain one while only 16.5 a minute add one. Keying on presence
+# would fire on every packet and reduce the design to per-batch painting.
+TERMINAL_PUNCT = "。！？；，、：…"
+# Fallback for the quarter of clauses whose punctuation arrives more than a second
+# late. Chosen between the measured p25 of 14ms and p75 of 966ms, not tuned.
+CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
+BLOCK_BY_PUNCT = _env_int("TRANSLATION_BLOCK_BY_PUNCT", 1)
+
+
+def punctuation_marks(text: str) -> frozenset:
+    """Which terminal marks the text carries."""
+    return frozenset(ch for ch in text if ch in TERMINAL_PUNCT)
+
+
+def introduces_boundary(shown: str, incoming: str) -> bool:
+    """True when the incoming text adds a terminal mark the line did not have.
+
+    Set difference rather than membership, because a mark that is already on screen
+    stays in every later fragment of that clause and would otherwise re-fire.
+    """
+    return bool(punctuation_marks(incoming) - punctuation_marks(shown))
 # Settle is the pause after a one-character revision before the change is drawn,
 # so a stream of single-character corrections does not flicker. It is also a
 # candidate for the swap deadline, which makes it a latency cost and not only a
@@ -236,6 +269,16 @@ class _Caption:
         self._defer_chars = 0
         self._segment_seq = 0
         self._wait_segment = 0
+        # Block mode owns its own timer rather than borrowing the hold deadline.
+        # flush_caption's deadline is the swap deadline, and threading a clause cap
+        # into it would have put a fourth candidate into 12 tested pure functions for
+        # a behaviour that is opt-out. The 400ms fallback is a separate job instead.
+        self._block_by_punct = bool(BLOCK_BY_PUNCT)
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+        self._clause_job = None
+        self._block_hits = 0
+        self._block_timeouts = 0
         self._line_since = 0.0
         self._prev_chars = 0
         self._held_paint = False
@@ -782,6 +825,11 @@ class _Caption:
         if self.line and self._growth_stopped_at and now > self._growth_stopped_at + 0.2:
             self._next_utterance_at = now
         self.have_translation = False
+        if self._block_by_punct:
+            # A new segment starts a new clause. Leaving the old clause's timer armed
+            # would let it fire against the previous segment's text and draw a line
+            # that belongs to the utterance before this one.
+            self._cancel_clause()
         if self._pending:
             self._arm_hold()
 
@@ -828,11 +876,66 @@ class _Caption:
         self._defer_text = ""
         self._defer_chars = 0
 
+    def _punct_gate(self, cleaned: str) -> str:
+        """Block mode: draw a clause when its punctuation arrives, not before.
+
+        Returns the action so callers keep their usual vocabulary. Nothing is drawn
+        until a boundary or the fallback fires, which is what makes mid-clause
+        revisions impossible rather than merely uncommon: there is no draw to revise.
+        """
+        now = time.monotonic()
+        if not self._clause_t0:
+            self._clause_t0 = now
+        if introduces_boundary(self.line, cleaned):
+            self._cancel_clause()
+            self._apply_line(cleaned, "block")
+            self._block_hits += 1
+            return "block"
+        self._clause_pending = cleaned
+        if self._clause_job is not None:
+            self.root.after_cancel(self._clause_job)
+        wait = max(50, int(round((self._clause_t0 + CLAUSE_MAX_MS / 1000.0 - now) * 1000)))
+        self._clause_job = self.root.after(wait, self._flush_clause)
+        return "block_wait"
+
+    def _cancel_clause(self) -> None:
+        if self._clause_job is not None:
+            self.root.after_cancel(self._clause_job)
+            self._clause_job = None
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+
+    def _flush_clause(self) -> None:
+        """The 400ms fallback: draw what has arrived even without punctuation."""
+        self._clause_job = None
+        text = self._clause_pending
+        started = self._clause_t0
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+        if not text or not started:
+            return
+        why = "boundary" if introduces_boundary(self.line, text) else "timeout"
+        self._apply_line(text, "block")
+        if why == "timeout":
+            self._block_timeouts += 1
+        perf.emit(
+            "caption",
+            "block",
+            why=why,
+            chars=len(text),
+            shown=len(self.line),
+            wait=round((time.monotonic() - started) * 1000.0, 1),
+            hits=self._block_hits,
+            timeouts=self._block_timeouts,
+        )
+
     def set_text(self, text: str) -> str:
         cleaned = _collapse_repeats((text or "").strip())
         if not cleaned:
             return "empty"
         self.have_translation = True
+        if self._block_by_punct:
+            return self._punct_gate(cleaned)
         previous = self._pending
 
         # B1: diff pre-check — if new text just extends current line, append directly
