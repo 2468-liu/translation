@@ -290,21 +290,28 @@ class QtCaptionWindow(QWidget):
         self.update()
 
     def apply_dismiss_timeout(self, ms: int) -> None:
-        clamped = max(0, min(30000, int(ms)))
-        if clamped == self.dismiss_ms:
+        try:
+            val = int(ms)
+        except (TypeError, ValueError):
             return
-        self.dismiss_ms = clamped
+        self.dismiss_ms = max(0, min(30000, val))
+        self._dismiss_timer.stop()
+        if self.line and self.visible and self.dismiss_ms > 0:
+            self._dismiss_timer.start(self.dismiss_ms)
         self._broadcast_state()
 
     def _on_dismiss_timeout(self) -> None:
+        self._dismiss_timer.stop()
+        if self._pending:
+            return
         self.line = ""
-        self._pending = ""
-        self._clause_pending = ""
         self._drawn_text = ""
         if self.text_only:
             self.visible = False
             self.hide()
         else:
+            # 有黑框模式：黑框保持在屏幕上，仅清除字幕文字，防止窗体反复隐藏/重新弹出产生闪烁
+            self.visible = True
             self.update()
         self._broadcast_state()
 
@@ -345,6 +352,13 @@ class QtCaptionWindow(QWidget):
     def hide(self) -> None:
         self.visible = False
         self.closed = True
+        self.line = ""
+        self.status = ""
+        self._pending = ""
+        self._drawn_text = ""
+        self._dismiss_timer.stop()
+        self._hold_timer.stop()
+        self._clause_timer.stop()
         super().hide()
         self._broadcast_state()
 
@@ -358,10 +372,19 @@ class QtCaptionWindow(QWidget):
         self._pending = ""
         self._clause_pending = ""
         self._drawn_text = ""
-        self.update()
+        self._dismiss_timer.stop()
+        self._hold_timer.stop()
+        if self.text_only:
+            self.visible = False
+            self.hide()
+        else:
+            self.visible = True
+            self.update()
+        self._broadcast_state()
 
     def begin_segment(self) -> None:
         now = time.monotonic()
+        self._dismiss_timer.stop()
         if self._last_segment_at > 0:
             gap = now - self._last_segment_at
             self._gaps.append(gap)
@@ -379,7 +402,7 @@ class QtCaptionWindow(QWidget):
             self._paint()
 
     def _paint(self) -> None:
-        body = self.line or ("实时字幕" if self.visible else "")
+        body = self.line
         if not body:
             self.update()
             return
@@ -410,21 +433,21 @@ class QtCaptionWindow(QWidget):
 
         rect = self.rect()
 
-        # 1. Background
-        if not self.text_only:
+        # 1. Background (only in normal box mode and when visible)
+        if not self.text_only and self.visible:
             painter.setPen(QPen(QColor(255, 255, 255, 28), 1.0))
             painter.setBrush(QColor(16, 16, 20, 225))
             painter.drawRoundedRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5), 10.0, 10.0)
 
         # Header positioning
         self.header_widget.setGeometry(0, 0, rect.width(), 26)
-        if not self.text_only and self._is_hovered:
+        if not self.text_only and self.visible and self._is_hovered:
             self.header_widget.show()
         else:
             self.header_widget.hide()
 
-        # 2. Subtitle Text
-        body = self.line or ("实时字幕" if self.visible else "")
+        # 2. Subtitle Text - only draw when text is present
+        body = self.line
         if not body:
             return
 

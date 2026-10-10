@@ -82,6 +82,42 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertEqual(self.window.line, "")
         # Black box stays visible, text cleared
         self.assertTrue(self.window.isVisible())
+        self.assertTrue(self.window.visible)
+
+    def test_clear_in_text_only_and_boxed_modes(self):
+        # 1. In text only mode: clear hides window
+        self.window.text_only = True
+        self.window.show()
+        self.window.line = "Some speech text"
+        self.window.clear()
+        self.assertEqual(self.window.line, "")
+        self.assertFalse(self.window.visible)
+        self.assertFalse(self.window.isVisible())
+
+        # 2. In boxed mode: clear leaves box visible, text empty
+        self.window.text_only = False
+        self.window.show()
+        self.window.line = "Some speech text"
+        self.window.clear()
+        self.assertEqual(self.window.line, "")
+        self.assertTrue(self.window.visible)
+        self.assertTrue(self.window.isVisible())
+
+    def test_begin_segment_cancels_dismiss_timer(self):
+        self.window.show()
+        self.window.line = "Active text"
+        self.window._dismiss_timer.start(5000)
+        self.assertTrue(self.window._dismiss_timer.isActive())
+
+        self.window.begin_segment()
+        self.assertFalse(self.window._dismiss_timer.isActive())
+
+    def test_apply_dismiss_timeout_rearmer(self):
+        self.window.show()
+        self.window.line = "Active text"
+        self.window.apply_dismiss_timeout(6000)
+        self.assertEqual(self.window.dismiss_ms, 6000)
+        self.assertTrue(self.window._dismiss_timer.isActive())
 
     def test_set_text_lifecycle(self):
         # 1. First line
@@ -114,3 +150,4 @@ class QtCaptionWindowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
