@@ -1622,6 +1622,14 @@ def _main() -> None:
     app.root.mainloop()
 
 
+def _qt_available() -> bool:
+    try:
+        import PyQt6.QtWidgets  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def start_caption() -> None:
     if _port_busy():
         return
@@ -1637,8 +1645,11 @@ def start_caption() -> None:
     # The caption window is a second process. Appending to one shared file from
     # two processes collides on Windows, so it gets its own.
     env.setdefault("TRANSLATION_PERF_LOG", str(root / "logs" / "perf_caption.log"))
+    backend = os.environ.get("TRANSLATION_CAPTION_BACKEND", "").strip().lower()
+    use_qt = backend == "qt" or (backend != "tk" and _qt_available())
+    module_name = "server.qt_caption_window" if use_qt else "server.caption_window"
     subprocess.Popen(
-        [sys.executable, "-m", "server.caption_window"],
+        [sys.executable, "-m", module_name],
         cwd=root,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

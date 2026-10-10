@@ -127,6 +127,23 @@ _LANG_NAME = {
     "th": "泰语",
     "id": "印尼语",
     "ar": "阿拉伯语",
+    "zh": "中文",
+    "tr": "土耳其语",
+    "hi": "印地语",
+    "nl": "荷兰语",
+    "pl": "波兰语",
+    "sv": "瑞典语",
+    "cs": "捷克语",
+    "hu": "匈牙利语",
+    "ro": "罗马尼亚语",
+    "uk": "乌克兰语",
+    "el": "希腊语",
+    "he": "希伯来语",
+    "ms": "马来语",
+    "fa": "波斯语",
+    "ur": "乌尔都语",
+    "ta": "泰米尔语",
+    "hr": "克罗地亚语",
 }
 
 # The Gemma translator is an instruct model, so it gets a role-separated prompt
