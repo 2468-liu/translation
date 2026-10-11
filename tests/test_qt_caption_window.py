@@ -122,7 +122,7 @@ class QtCaptionWindowTests(unittest.TestCase):
     def test_set_text_lifecycle(self):
         # 1. First line
         res = self.window.set_text("Hello world", is_final=False)
-        self.assertEqual(res, "first")
+        self.assertEqual(res, "grow")
         self.assertEqual(self.window.line, "Hello world")
 
         # 2. Growth
@@ -132,20 +132,40 @@ class QtCaptionWindowTests(unittest.TestCase):
 
         # 3. Same
         res = self.window.set_text("Hello world, welcome", is_final=False)
-        self.assertEqual(res, "same")
+        self.assertEqual(res, "drop")
 
     def test_command_dispatcher(self):
         self.window._handle_command("text", "New speech text", 0.0, 0.0, False)
         self.assertEqual(self.window.line, "New speech text")
 
-        self.window._handle_command("status", "英语", 0.0, 0.0, False)
-        self.assertEqual(self.window.status, "英语")
+        self.window._handle_command("status", "en", 0.0, 0.0, False)
+        self.assertEqual(self.window.status, "英语 → 中文")
 
         self.window._handle_command("clear", None, 0.0, 0.0, False)
         self.assertEqual(self.window.line, "")
 
         self.window._handle_command("text_only", True, 0.0, 0.0, False)
         self.assertTrue(self.window.text_only)
+
+    def test_block_mode_punct_boundary(self):
+        self.window._block_by_punct = True
+        # Without punctuation: returns block_wait, does not display immediately
+        res = self.window.set_text("你好世界", is_final=False)
+        self.assertEqual(res, "block_wait")
+        self.assertEqual(self.window.line, "")
+
+        # With punctuation: boundary detected, applies line
+        res = self.window.set_text("你好世界，这是测试。", is_final=False)
+        self.assertEqual(res, "block")
+        self.assertEqual(self.window.line, "你好世界，这是测试。")
+        self.assertTrue(self.window.visible)
+
+    def test_block_mode_final_draws(self):
+        self.window._block_by_punct = True
+        res = self.window.set_text("最终完整句子", is_final=True)
+        self.assertEqual(res, "final")
+        self.assertEqual(self.window.line, "最终完整句子")
+        self.assertTrue(self.window.visible)
 
 
 if __name__ == "__main__":

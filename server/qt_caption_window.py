@@ -2,6 +2,7 @@
 
 Provides true alpha-channel translucent rendering, anti-aliased font rendering with
 crisp drop shadow, smooth resizing, draggable positioning, and differentiated auto-dismiss.
+Aligns 100% with server.caption_window timing, block-mode punct gate, and state machine.
 """
 
 from __future__ import annotations
@@ -38,10 +39,13 @@ from PyQt6.QtWidgets import (
 from . import perf
 from .caption_window import (
     CAPTION_PORT,
+    CLAUSE_MAX_MS,
     HOLD_ABS_MAX_MS,
     HOLD_ABS_MIN_MS,
     SETTLE_MS,
     STATE_PORT,
+    _collapse_repeats,
+    caption_action,
     classify_caption,
     clamped_font_px,
     flush_caption,
@@ -69,6 +73,17 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
+
+_LANG = {
+    "en": "英语",
+    "ja": "日语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "zh": "中文",
+}
 
 
 class QtCaptionWindow(QWidget):
@@ -242,18 +257,13 @@ class QtCaptionWindow(QWidget):
         exstyle = get_long(hwnd, GWL_EXSTYLE)
         extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
         set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
-        user32.SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-        )
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+        if self.visible:
+            flags |= SWP_SHOWWINDOW
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
 
     def _pin(self) -> None:
-        if ctypes and self.isVisible():
+        if ctypes and self.visible and self.isVisible():
             ctypes.windll.user32.SetWindowPos(
                 self.hwnd(),
                 HWND_TOPMOST,
@@ -363,7 +373,8 @@ class QtCaptionWindow(QWidget):
         self._broadcast_state()
 
     def set_status(self, lang: str) -> None:
-        self.status = lang or ""
+        name = _LANG.get(lang or "", "")
+        self.status = f"{name} → 中文" if name and name != "中文" else ""
         self.status_label.setText(self.status)
         self.update()
 
@@ -374,6 +385,7 @@ class QtCaptionWindow(QWidget):
         self._drawn_text = ""
         self._dismiss_timer.stop()
         self._hold_timer.stop()
+        self._clause_timer.stop()
         if self.text_only:
             self.visible = False
             self.hide()
@@ -521,69 +533,78 @@ class QtCaptionWindow(QWidget):
 
     # State Machine & Timing logic
     def set_text(self, text: str, is_final: bool = False) -> str:
-        if not text:
-            return ""
+        cleaned = _collapse_repeats((text or "").strip())
+        if not cleaned:
+            return "empty"
         if self.closed:
             self.closed = False
-        if not self.visible:
-            self.show()
 
         if self._block_by_punct:
-            text = self._punct_gate(text, is_final)
-            if not text:
-                return ""
+            return self._punct_gate(cleaned, is_final)
 
-        if not self.line:
-            self._apply_line(text, action="first")
-            self._arm_hold()
-            return "first"
+        # Prefix fast-path
+        if self.line and cleaned.startswith(self.line):
+            appended = cleaned[len(self.line):]
+            if appended:
+                self.line = cleaned
+                self._apply_line(self.line, "grow")
+                return "grow"
 
-        kind = classify_caption(self.line, text)
-        if kind in ("same", "stale"):
-            if is_final and self.dismiss_ms > 0:
-                self._dismiss_timer.start(self.dismiss_ms)
-            return kind
-
-        if kind in ("grow", "replace"):
-            self._apply_line(text, action=kind)
-            self._arm_hold()
-            return kind
-
-        # kind == "swap"
-        now = time.monotonic()
-        deadline = self._swap_deadline()
-        if now >= deadline:
-            self._apply_line(text, action="swap")
-            self._arm_hold()
-            return "swap"
-
-        self._pending = text
+        action, line, pending, anchor, settle, _deadline = step_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            cleaned,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        if action == "drop":
+            return action
+        self._pending = pending
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            self._apply_line(line, action)
         self._arm_hold()
-        return "deferred"
+        return action
 
     def _punct_gate(self, cleaned: str, is_final: bool = False) -> str:
-        if is_final:
-            self._clause_timer.stop()
-            self._clause_pending = ""
-            self._clause_fell_back = False
-            return cleaned
-        if introduces_boundary(self._drawn_text, cleaned):
-            self._clause_timer.stop()
-            self._clause_pending = ""
-            self._clause_fell_back = False
-            return cleaned
+        now = time.monotonic()
+        if not self._clause_t0:
+            self._clause_t0 = now
+        if is_final and cleaned != self.line:
+            self._cancel_clause()
+            self._apply_line(cleaned, "final")
+            return "final"
+        if introduces_boundary(self.line, cleaned):
+            self._cancel_clause()
+            self._apply_line(cleaned, "block")
+            return "block"
         self._clause_pending = cleaned
-        if not self._clause_timer.isActive():
-            self._clause_t0 = time.monotonic()
-            self._clause_timer.start(400)
-        return ""
+        if self._clause_fell_back:
+            return "block_wait"
+        self._clause_timer.stop()
+        wait = max(50, int(round((self._clause_t0 + CLAUSE_MAX_MS / 1000.0 - now) * 1000)))
+        self._clause_timer.start(wait)
+        return "block_wait"
+
+    def _cancel_clause(self) -> None:
+        self._clause_timer.stop()
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+        self._clause_fell_back = False
 
     def _flush_clause(self) -> None:
-        pending = self._clause_pending
-        self._clause_pending = ""
+        text = self._clause_pending
+        started = self._clause_t0
         self._clause_fell_back = True
-        if pending:
-            self.set_text(pending, is_final=False)
+        if not text or not started:
+            return
+        self._apply_line(text, "block")
 
     def _swap_deadline(self) -> float:
         drawn_at = self._line_since if self._line_since > 0.0 else time.monotonic()
@@ -598,27 +619,54 @@ class QtCaptionWindow(QWidget):
         )
 
     def _arm_hold(self) -> None:
-        if self.dismiss_ms > 0:
-            self._dismiss_timer.start(self.dismiss_ms)
+        self._hold_timer.stop()
         if not self._pending:
-            self._hold_timer.stop()
             return
-        deadline = self._swap_deadline()
-        rem_ms = max(10, int((deadline - time.monotonic()) * 1000.0))
-        self._hold_timer.start(rem_ms)
+        wait = int(round((self._swap_deadline() - time.monotonic()) * 1000))
+        self._hold_timer.start(max(50, wait))
 
     def _flush_pending(self) -> None:
-        pending = self._pending
-        self._pending = ""
-        if pending:
-            self._apply_line(pending, action="flush")
+        action, line, pending, anchor, settle, _deadline = flush_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        self._pending = pending
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            self._apply_line(line, action)
+        if action == "wait" or self._pending:
             self._arm_hold()
 
     def _apply_line(self, text: str, action: str = "") -> None:
-        self.line = text
+        self._dismiss_timer.stop()
+        if action:
+            self._trace_action = action
+        self.line = (text or "").strip()
         self._growth_stopped_at = time.monotonic()
         self._line_since = time.monotonic()
-        self._paint()
+
+        act = caption_action(self.closed, self.line, self.visible)
+        if act == "withdraw":
+            self.visible = False
+            self.hide()
+            return
+        if act == "stay":
+            return
+        if act == "paint":
+            self._paint()
+        else:
+            self.show()
+
+        if self.line and self.dismiss_ms > 0:
+            self._dismiss_timer.start(self.dismiss_ms)
 
     def _handle_command(self, kind: str, value, sent_at: float, recv_at: float, final: bool):
         if kind == "text":
@@ -669,12 +717,14 @@ def main():
     try:
         sock.bind(("127.0.0.1", CAPTION_PORT))
     except OSError:
-        print(f"Caption port {CAPTION_PORT} already in use.")
+        print(f"Caption port {CAPTION_PORT} already in use.", flush=True)
         return
 
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     window = QtCaptionWindow()
-    window.show()
+    # Window starts withdrawn/hidden, exactly matching Tkinter root.withdraw()
+    print("caption window ready", flush=True)
 
     listener_thread = threading.Thread(target=_qt_udp_listener, args=(window, sock), daemon=True)
     listener_thread.start()
