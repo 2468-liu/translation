@@ -48,9 +48,54 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+EXIT_OK = 0
+EXIT_TESTS_FAILED = 1
+EXIT_CANNOT_RUN = 2
+
+
 def _tail(text: str, lines: int) -> str:
     kept = text.rstrip().splitlines()[-lines:]
     return "\n".join(kept)
+
+
+def _can_import(module: str) -> bool:
+    done = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return done.returncode == 0
+
+
+def interpreter_problem() -> str:
+    """Why this interpreter cannot run the suite, or "" when it can.
+
+    This exists because the first version of the hook got it wrong, and the way
+    it got it wrong is the whole reason it is here. Windows had a `python` on
+    PATH without pytest installed, the hook picked it, and the suite could not
+    start -- and the script reported that as
+
+        check: FAILED -- commit refused.
+        ... No module named pytest
+
+    which reads exactly like a red suite. It blocked commits that had nothing
+    wrong with them, on the authority of a verdict that was not a verdict. That
+    is this repository's own failure mode wearing a different hat: a number
+    that looks like a legitimate result and is not one. A person who trusts it
+    learns to distrust all of it, and a gate nobody trusts is a gate nobody runs.
+
+    So "could not run" gets its own exit code and its own wording, and never
+    borrows the language of a test result.
+    """
+    if _can_import("pytest"):
+        return ""
+    return (
+        f"this interpreter has no pytest: {sys.executable}\n"
+        "  the suite never ran, so nothing below is a test result\n"
+        "  set TRANSLATION_PYTHON to the environment that has it, e.g.\n"
+        '    TRANSLATION_PYTHON="D:\\minanconda\\envs\\pytorch\\python.exe"'
+    )
 
 
 def run_tests() -> tuple[bool, str, float]:
@@ -80,15 +125,22 @@ def run_tests() -> tuple[bool, str, float]:
 def main() -> int:
     if os.environ.get("SKIP_CHECK") == "1":
         print("check: skipped by SKIP_CHECK=1")
-        return 0
+        return EXIT_OK
+
+    problem = interpreter_problem()
+    if problem:
+        print("check: COULD NOT RUN -- commit refused, and this is not a test failure.")
+        print()
+        print(problem)
+        return EXIT_CANNOT_RUN
 
     ok, tail, elapsed = run_tests()
     if ok:
         print(f"check: tests passed in {elapsed:.0f}s")
-        return 0
+        return EXIT_OK
 
     print()
-    print("check: FAILED -- commit refused.")
+    print(f"check: FAILED -- commit refused. ({elapsed:.0f}s)")
     print()
     print(tail)
     print()
@@ -96,7 +148,7 @@ def main() -> int:
     print("  SKIP_CHECK=1 git commit -m ...   (or git commit --no-verify)")
     print("Otherwise fix them first: a gate that is red for unrelated reasons")
     print("gets bypassed, and a bypassed gate is the same as no gate.")
-    return 1
+    return EXIT_TESTS_FAILED
 
 
 if __name__ == "__main__":
