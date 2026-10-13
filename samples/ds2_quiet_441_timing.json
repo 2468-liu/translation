@@ -1,0 +1,50 @@
+{
+ "src": "奇异博士2 (2022) 院线版 126:31",
+ "ref": "D:/jianpianDownload/奇异博士2.srt (双语, 99.8% 时间覆盖)",
+ "shape": "quiet",
+ "why": "isolated 2.1s line, gaps 4.0s/2.9s",
+ "wav": "ds2_quiet_441.wav",
+ "sha256": "68982cff42010d1fc4d0129316fa987d0c58834fd1577995f31279debf44634b",
+ "segments": [
+  {
+   "start": 442.44,
+   "end": 445.04,
+   "text": "但我必须做出牺牲\nBut I have to make sacrifices."
+  },
+  {
+   "start": 445.31,
+   "end": 446.94,
+   "text": "为了保护你\nTo protect you,"
+  },
+  {
+   "start": 447.7,
+   "end": 449.05,
+   "text": "我很抱歉\nI'm sorry."
+  },
+  {
+   "start": 453.0,
+   "end": 455.07,
+   "text": "我们之间永远不会有结果的\nIt was gonna workout between us."
+  },
+  {
+   "start": 457.92,
+   "end": 458.99,
+   "text": "为什么\nWhy not?"
+  },
+  {
+   "start": 459.07,
+   "end": 460.6,
+   "text": "因为 斯蒂芬\nBecause Stephen."
+  },
+  {
+   "start": 460.86,
+   "end": 463.09,
+   "text": "你总是想做主刀的那一个\nYou have to be the one holding the knife."
+  },
+  {
+   "start": 463.86,
+   "end": 467.43,
+   "text": "为此 我很敬佩你 但我无法为此爱上你\nAnd I always respected you for it, but I couldn't love you for it."
+  }
+ ]
+}

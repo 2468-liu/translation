@@ -1,0 +1,85 @@
+{
+ "src": "奇异博士2 (2022) 院线版 126:31",
+ "ref": "D:/jianpianDownload/奇异博士2.srt (双语, 99.8% 时间覆盖)",
+ "shape": "dense",
+ "why": "15 cues in 25s",
+ "wav": "ds2_dense_855.wav",
+ "sha256": "412192308252af2a20e607de78ac48a93607aede9688c772bfe9eb81c4e3e7f5",
+ "segments": [
+  {
+   "start": 859.67,
+   "end": 862.42,
+   "text": "关于多元宇宙 你们有哪些经验\nHow much experience you guys have with Multiverse?"
+  },
+  {
+   "start": 862.42,
+   "end": 866.63,
+   "text": "对于多元宇宙 我们最近的经验是和蜘蛛侠有关的一件事\nWe have the experience of the Multiverse most recently was an incident with Spider Man."
+  },
+  {
+   "start": 866.72,
+   "end": 867.49,
+   "text": "什么侠\nWhat man?"
+  },
+  {
+   "start": 867.49,
+   "end": 868.33,
+   "text": "蜘蛛侠\nSpider Man."
+  },
+  {
+   "start": 868.33,
+   "end": 869.95,
+   "text": "他具有蜘蛛的能力\nHe has the powers of a spider."
+  },
+  {
+   "start": 869.95,
+   "end": 870.81,
+   "text": "因此得名\nHence the name."
+  },
+  {
+   "start": 870.81,
+   "end": 871.83,
+   "text": "好恶心\nGross."
+  },
+  {
+   "start": 871.92,
+   "end": 872.95,
+   "text": "他长得像不像蜘蛛\nDoes he look like a spider?"
+  },
+  {
+   "start": 872.96,
+   "end": 874.06,
+   "text": "不 不 更像是个人\nNo, no, more like a man."
+  },
+  {
+   "start": 874.07,
+   "end": 875.29,
+   "text": "能爬墙 能吐丝\nClimbs walls, shoots webs."
+  },
+  {
+   "start": 875.3,
+   "end": 875.92,
+   "text": "是的 没错\nYeah. Bingo."
+  },
+  {
+   "start": 875.93,
+   "end": 876.84,
+   "text": "从屁股吐出来吗\nOut his butt?"
+  },
+  {
+   "start": 876.85,
+   "end": 878.31,
+   "text": "不是\nNo."
+  },
+  {
+   "start": 878.31,
+   "end": 879.79,
+   "text": "也许吧 我不知道\nMaybe, I don't know."
+  },
+  {
+   "start": 879.79,
+   "end": 881.21,
+   "text": "说实话 希望不是\nHonestly, I hope not."
+  }
+ ]
+}
