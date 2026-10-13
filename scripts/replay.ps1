@@ -35,6 +35,31 @@ $Python = "D:\minanconda\envs\pytorch\python.exe"
 # session, and every silenced WMI call here used to read as a passing check.
 . (Join-Path $PSScriptRoot "probes.ps1")
 
+# Write JSON without a byte order mark.
+#
+# Set-Content -Encoding utf8 is UTF-8 *with* BOM on PowerShell 5.1, which is the
+# shell this project runs in. Every run.*.meta written that way carried EF BB BF,
+# and strict UTF-8 JSON parsing rejects it outright -- json.loads raises
+# "Unexpected UTF-8 BOM" on all 119 of them, while PowerShell's own
+# ConvertFrom-Json strips it and reads them fine. That split is why this went
+# unnoticed: the only reader so far has been PowerShell.
+#
+# The manifest writer in install_native_host.ps1 hit the same thing and already
+# settled on this call, so it is reused rather than reinvented. Note that
+# -Encoding utf8NoBOM is not an option here: that parameter arrived in
+# PowerShell 6, and this script has to run on 5.1.
+function Write-JsonNoBom {
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)][string] $Json,
+        [Parameter(Mandatory, Position = 0)][string] $Path
+    )
+    [System.IO.File]::WriteAllText(
+        $Path,
+        ($Json -join [Environment]::NewLine),
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+}
+
 if (-not (Test-Path $Python)) { throw "python not found: $Python" }
 
 Write-Host "stopping server and caption window (llama-server on 8080 stays up)"
@@ -635,8 +660,8 @@ try {
     # uses: "we could not read it" and "it was zero" are different facts.
     gpu = if ($null -ne $GpuProbe) { $GpuProbe } else { $null }
     gpu_readable = [bool]($null -ne $GpuProbe)
-} | ConvertTo-Json | Set-Content -Encoding utf8 "logs\run.$Name.meta"
-@{ name = $Name } | ConvertTo-Json | Set-Content -Encoding utf8 $Pending
+} | ConvertTo-Json | Write-JsonNoBom "logs\run.$Name.meta"
+@{ name = $Name } | ConvertTo-Json | Write-JsonNoBom $Pending
 
 Write-Host ""
 & $Python scripts\perf_compare.py $Name logs\perf.log logs\perf_caption.log logs\blog_3min_test.json --code $stamp
