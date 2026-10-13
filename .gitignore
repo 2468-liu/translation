@@ -46,3 +46,13 @@ logs/asr_cost/
 # and both are kept out of the record so nobody reads them as instruments.
 scripts/probe_*.py
 probe_*.py
+
+# Run metadata archived after the BOM incident of 2026-10-13. Kept out of logs/ on
+# purpose: a recursive scan of logs/ counts whatever it finds as a live run, and a
+# second copy of every meta under logs/_archive/ doubled that count to 238 -- half
+# of them unparseable, which reads as "could not judge" rather than "duplicate".
+# That is the same shape as the loopback contamination in REPORT 23: one directory
+# holding two populations, with nothing on the face of it saying which is which.
+# Not committed either -- logs/ as a whole is not tracked, and an archive of it
+# should not become the one tracked part.
+scripts/_archive/metas-*/
