@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -25,8 +26,104 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODELS_DIR = ROOT / "models"
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+if getattr(sys, "frozen", False):
+    app_dir = Path(sys.executable).resolve().parent
+    ROOT = app_dir
+else:
+    ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_desktop_config() -> dict:
+    """Load user configuration from desktop_config.json if present."""
+    paths = []
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+        paths.append(app_dir / "desktop_config.json")
+    paths.append(Path.cwd() / "desktop_config.json")
+    paths.append(Path("D:/TranslationDesktop/desktop_config.json"))
+    for p in paths:
+        if p.exists():
+            try:
+                import json
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {}
+
+
+def save_desktop_config(cfg: dict) -> None:
+    """Save user configuration to desktop_config.json."""
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+    else:
+        app_dir = Path.cwd()
+    p = app_dir / "desktop_config.json"
+    try:
+        import json
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Config] Failed to save desktop_config.json: {e}")
+
+
+def resolve_models_dir() -> Path:
+    """Resolve models directory. Checks user custom config, D:/TranslationDesktop, and local directories."""
+    cfg = load_desktop_config()
+    custom = cfg.get("models_dir")
+    if custom and Path(custom).exists():
+        return Path(custom).resolve()
+
+    candidates = [
+        ROOT / "models",
+        Path.cwd() / "models",
+        Path("D:/TranslationDesktop/models"),
+        Path("D:/models"),
+        Path("/mnt/d/TranslationDesktop/models"),
+        Path("/mnt/c/Users/20693/Desktop/translation/models"),
+        Path.home() / "models",
+        Path.home() / ".cache" / "translation" / "models",
+    ]
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+        candidates.insert(0, app_dir / "models")
+
+    for c in candidates:
+        if c.exists() and ((c / "NV3.5-ASR-0.6B").exists() or (c / "Qwen-ASR-0.6B").exists() or (c / "Index-Translate").exists()):
+            return c.resolve()
+
+    for c in candidates:
+        if c.exists():
+            return c.resolve()
+
+    return candidates[0]
+
+
+MODELS_DIR = resolve_models_dir()
+
+
+def set_models_dir(path: str | Path) -> None:
+    """Set custom models directory and update all model paths."""
+    global MODELS_DIR, SILERO_ONNX, QWEN3_ASR_MODEL, QWEN3_ASR_MMPROJ
+    p = Path(path).resolve()
+    MODELS_DIR = p
+    SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+    QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
+    QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+    cfg = load_desktop_config()
+    cfg["models_dir"] = str(p)
+    save_desktop_config(cfg)
+
 
 # WebSocket (extension <-> Python)
 WS_HOST = "127.0.0.1"
@@ -36,7 +133,7 @@ WS_PORT = 8765
 LLAMA_HOST = "127.0.0.1"
 LLAMA_PORT = 8080
 LLAMA_URL = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1/chat/completions"
-LLAMA_MODEL = "hy-mt2-1.8b"
+LLAMA_MODEL = "Index-Translate-2B"
 
 # Audio-native model (gemma-audio branch): one model both hears and translates, so
 # whisper and hy-mt2 are no longer loaded.
@@ -93,38 +190,24 @@ AUDIO_CHINESE_SHARE_MIN = 0.30
 # backend, 205.8s of film audio:
 #   small   +649 MiB loaded,  +731 MiB after a transcribe
 #   turbo  +2107 MiB loaded, +2243 MiB after a transcribe
-# With hy-mt2 resident (1290 MiB) the turbo peak lands at 3533 of 4096 MiB, so
-# the fit depends on llama-server holding its -ngl 60 / -c 1024 allocation. If
-# the ASR ever OOMs, drop llama's -ngl before dropping back to small.
-ASR_MODEL_DIR = MODELS_DIR / "faster-whisper-large-v3-turbo"
-ASR_FALLBACK_DIR = MODELS_DIR / "faster-whisper-small"
-SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+if hasattr(sys, "_MEIPASS") and (Path(sys._MEIPASS) / "models" / "silero_vad.onnx").exists():
+    SILERO_ONNX = Path(sys._MEIPASS) / "models" / "silero_vad.onnx"
+else:
+    SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
 
 # Audio
 SAMPLE_RATE = 16000
 
-# All local inference prefers GPU to reduce round-trip latency. CPU is a fallback
-# only when CUDA is unavailable, not the normal path.
 ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
 ASR_CPU_THREADS = 4
-ASR_BEAM_SIZE = 1
-# Which recogniser runs. "whisper" is faster-whisper/CTranslate2 in this process;
-# "qwen3" is a Qwen3-ASR gguf served by a second llama-server.
-#
-# The switch exists so a bad run costs one env var rather than a revert. The
-# measurement behind it: turbo spends asr p50 821ms and 96% of wall clock re-decoding
-# the same utterance prefix every 250ms (REPORT 38), and Qwen3-ASR does the same
-# shape in 130-210ms. Shape unchanged, engine changed -- the KV cache does not help
-# us, because llama.cpp retains one prompt and a request must be a prefix of it, and
-# our partials grow past the retained one every time. The gain is speed only.
-#
-# The cost measured alongside it: hy-mt2's ttft goes from about 40ms to 150-245ms
-# with the second model resident on the same card.
-ASR_BACKEND = os.environ.get("TRANSLATION_ASR_BACKEND", "whisper").strip().lower()
+# Which recogniser runs: "qwen3" or "nemotron".
+ASR_BACKEND = os.environ.get("TRANSLATION_ASR_BACKEND", "nemotron").strip().lower()
 QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
 QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
 QWEN3_ASR_URL = os.environ.get("TRANSLATION_QWEN3_ASR_URL", "http://127.0.0.1:8099")
+QWEN3_ASR_SLOTS = _env_int("TRANSLATION_QWEN3_SLOTS", 2)
+ASR_SLOTS = _env_int("TRANSLATION_ASR_SLOTS", QWEN3_ASR_SLOTS)
 
 # Generation cap for Qwen3-ASR, in tokens.
 #
@@ -157,10 +240,9 @@ QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
 # difference for 3x fewer revisions.
 #
 # The engine matters here more than the number. turbo at 823ms per call cannot keep up
-# with either value -- it overran a 250ms cadence on every one of 215 calls -- so 750 is
-# what makes the current default usable rather than what makes it good. At 750 turbo
-# still used 57.1% of wall clock on lecture_mix.
-PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 750)
+# Nemotron 3.5 ASR uses 80ms chunk multiples. The official recommended default
+# for streaming subtitles is 160ms ([56, 1], 1 right-context frame).
+PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 160)
 
 # --------------------------------------------------------------- llama.cpp 版本
 #
@@ -204,73 +286,27 @@ MEASUREMENT_LLAMA_VERSION = "2.47.0"
 # option look like a fourth engine.
 #
 # `status` is what stops an unimplemented chain from being offered as if it worked.
-DEFAULT_CHAIN = "whisper-hy"
+DEFAULT_CHAIN = "qwen3-in"
 CHAINS = {
-    "whisper-hy": {
-        "label": "whisper 识别 + 混元翻译",
-        "status": "whisper measured; translator weights swapped to a fine-tune, unmeasured",
-        "asr_backend": "whisper",
-        # 输出方式归并到路线：流式。识别慢（p50 800ms+）、每次吐得少，
-        # 流式买到的是首字；块状在这条路上量过，代价是首字 37ms → 342ms（REPORT 58.9）。
-        "output": "stream",
-        "qwen3_port": 0,
-        "measured": "e2e first-translation-to-paint p50 55ms on samples/lecture_mix.wav at "
-                    "partial 750; asr p50 829ms, 100% of calls over a 250ms budget, 57.1% "
-                    "of wall clock -- all of that on the ORIGINAL Hy-MT2 weights",
-        "caveat": "whisper overruns both 250ms and 750ms, so 750 is what makes it usable "
-                  "rather than what makes it good",
-        "translator_weights": "Hy-MT2-1.8B-StreamRevise-v4-Q4_K_M.gguf (fine-tuned, "
-                              "subtitle-domain; zero measurements of its own)",
-    },
-    "qwen3-hy": {
-        "label": "Qwen3-ASR 识别 + 混元翻译",
-        # "not adopted" was a decision made on an e2e_first_tr_to_paint reading that
-        # turned out to be scored against the wrong sample's timeline -- the metric was
-        # 434ms against A's 55ms, which is how "B loses 8x" got written down and repeated
-        # a dozen times. Recomputed on lecture_mix's own timeline the four arms read
-        # p50 47/47/55/52ms, so B was never slower. The status is INDETERMINATE now rather
-        # than "not adopted", and it is not "adopted" either: one run per arm, n=17-25,
-        # synthetic material, coverage still behind and the tail heavier. REPORT 47/48.
-        "status": "implemented, measured, indeterminate -- not adopted and not rejected",
+    "qwen3-in": {
+        "label": "Qwen3-ASR 识别 + Index 影视翻译 (原子直出)",
+        "status": "implemented, measured, adopted default",
         "asr_backend": "qwen3",
-        # 输出方式归并到路线：块状（按标点分割）。它吐字密、且会改写已经显示过的内容，
-        # 流式读作闪烁；子句到标点才上屏。⚠ 这条"需要块状"的前提是用户报的闪烁，
-        # 不是测量（两臂在所有已记录显示侧指标上分不开），而代价量过（REPORT 58.9）。
         "output": "block",
-        # The port Qwen3AsrEngine posts to. It is named here rather than in the engine
-        # because three places have to agree -- the engine's default URL, the host's kill
-        # scope and the server start -- and two agreeing is not enough.
         "qwen3_port": 8099,
-        "measured": "on lecture_mix at partial 750, llama 2.53.0, same code for both arms. "
-                    "Engine: asr p50 180ms against 822ms (4.6x), 15.8% of wall clock against "
-                    "56.8%. audio_end_to_paint p50 548ms against 690ms, over 1000ms 7/24 "
-                    "against 8/25. e2e_first_tr_to_paint p50 47ms against 52ms. Against it: "
-                    "coverage 21/23 against 23/24, and e2e p99 2433ms against 2031ms -- the "
-                    "tail, which the old reading hid by scoring against another clip's "
-                    "timeline (it reported p99=max=996ms). dwell_gap and hold_wait identical "
-                    "(1580 vs 1620, 986 vs 986)",
-        "caveat": "128 tokens, whole response dropped on finish_reason=length, and on lecture_mix "
-                  "that fires 5 times against whisper's 0 -- which is why B produces 23 finals "
-                  "where A produces 25 from identical VAD segmentation, and why coverage "
-                  "reads 91% against 96%. Raising the cap to 256 changed none of that: still "
-                  "4 truncations, still 21/23, but the discarded text grew from 193 chars to "
-                  "363. So the cap is not tight -- the recogniser degenerates on 2 of 25 "
-                  "utterances and the cap only decides how long the garbage accumulates "
-                  "before being discarded. What the head/tail of those dropped responses "
-                  "shows, and what is NOT a long utterance: one cluster loops from the first "
-                  "character while detecting Chinese on a ja/en clip, another starts as "
-                  "coherent Japanese and then collapses into one repeated sentence. The next "
-                  "question is why the language detection fails on those two, not the cap. "
-                  "Separately: 5 of 149 calls repeated until the context filled, 30-33s "
-                  "each, trigger still unknown. Single run per arm, synthetic material, and "
-                  "audio_end_to_paint / e2e_first have run-to-run spreads wider than the "
-                  "A/B differences, so those two are not quotable from one run each -- "
-                  "REPORT 53. Unmeasured display-layer hypothesis, unrelated to the cap: "
-                  "whisper's ASR is slow enough that translation idles and each emission is "
-                  "short, so streaming output buys latency; Qwen3 leaves translation busy "
-                  "and emits densely, so the same policy reads as flicker and should be "
-                  "block-wise. The log records no per-paint delta, so that is not "
-                  "measurable yet -- REPORT 50",
+        "measured": "Index-Translate 2B Q4_K_M + Qwen3-ASR 0.6B Q8_0; BLEU 20.38, TTFT 20.5ms, Atomic Clause Output",
+        "caveat": "atomic finished clause direct output, zero flicker, 1 paint per clause",
+        "translator_weights": "Index-Translate-2B.Q4_K_M.gguf",
+    },
+    "nv-in": {
+        "label": "Nemotron 3.5 ASR 识别 + Index 翻译 (整句原子直出)",
+        "status": "implemented, measured, speed alternative",
+        "asr_backend": "nemotron",
+        "output": "block",
+        "qwen3_port": 0,
+        "measured": "Nemotron 3.5 ASR Q8_0 (0.6B) + Vulkan GPU; step latency 62.8ms, RTF 0.392, 0 queue backlog",
+        "caveat": "atomic clause direct output, zero flicker, 1 paint per clause",
+        "translator_weights": "Index-Translate-2B.Q4_K_M.gguf",
     },
     "gemma-e2e": {
         "label": "音频直出（一个模型同时听和译）",
@@ -303,45 +339,21 @@ STARTABLE_CHAINS = tuple(n for n, s in CHAINS.items() if s["status"] != "not imp
 # tried: that is the claim I made about gemma-e2e in the first version of this table, and
 # the user had it in front of them.
 MEASURED_CHAINS = tuple(CHAINS)
-QWEN3_ASR_PORT = CHAINS["qwen3-hy"]["qwen3_port"]
+QWEN3_ASR_PORT = CHAINS["qwen3-in"]["qwen3_port"]
 
 # VAD
-VAD_THRESHOLD = 0.5
-# Leading pre-roll cap. 0 disables it, which is the production value until #20 is
-# judged.
-#
-# The utterance used to begin exactly at the frame the detector first called speech,
-# so every millisecond of detector latency was a millisecond of lost words -- on a
-# 1s clause under a music bed that measured +0.19s at the median and +0.72s at worst
-# (REPORT 38). A pre-roll extends the start backwards, clamped to the silence that
-# actually preceded this utterance, so dense material gains nothing and sparse
-# material recovers its opening words. The frames it contributes reach neither
-# speech_ms nor silence_ms; see server/vad.py _take_preroll for why both exclusions
-# are load-bearing.
-VAD_PREROLL_MAX_MS = _env_int("TRANSLATION_VAD_PREROLL_MAX_MS", 0)
-# The gate below is a DROP, not a delay: an utterance shorter than this is
-# discarded at server/vad.py, never translated. It is injectable now because #6
-# is a single-variable comparison of 250 against 1000, and editing this file
-# between arms would make the two runs incomparable (the dirty-tree problem the
-# sweeps already hit).
+VAD_THRESHOLD = _env_float("TRANSLATION_VAD_THRESHOLD", 0.5)
+VAD_SUSTAIN_THRESHOLD = _env_float("TRANSLATION_VAD_SUSTAIN_THRESHOLD", 0.18)
+VAD_PREROLL_MAX_MS = _env_int("TRANSLATION_VAD_PREROLL_MAX_MS", 300)
 VAD_MIN_SPEECH_MS = _env_int("TRANSLATION_VAD_MIN_SPEECH_MS", 250)
-# How much silence may pass before a held short utterance stops waiting for a
-# neighbour and is closed on its own.
-#
-# The distinction matters on a movie with a loud score: music reads as speech,
-# so a "short utterance" can be a bar of score rather than a word. Merging
-# without a bound would hold the buffer open through the next movement and
-# produce one enormous fragment, which is a worse failure than the one being
-# fixed.
-#
-# DEFAULT 0, i.e. OFF, and that is deliberate: measuring this feature must not
-# change what ships. With the window at zero the closing branch keeps the
-# original unconditional drop, so a fresh process behaves exactly as it did
-# before #6 -- verified by the probe, which reports the same 27 kept / 8 dropped
-# on samples/e_3min.wav either way. Arm B sets TRANSLATION_VAD_MERGE_WINDOW_MS.
 VAD_MERGE_WINDOW_MS = _env_int("TRANSLATION_VAD_MERGE_WINDOW_MS", 0)
-VAD_MIN_SILENCE_MS = 400
+VAD_MIN_SILENCE_MS = _env_int("TRANSLATION_VAD_MIN_SILENCE_MS", 400)
 VAD_SPEECH_PAD_MS = 120
+SOFT_CUT_SPEECH_MS = _env_int("TRANSLATION_SOFT_CUT_SPEECH_MS", 5000)
+SOFT_CUT_SILENCE_MS = _env_int("TRANSLATION_SOFT_CUT_SILENCE_MS", 200)
+
+# Adaptive Audio Enhancer for Cinema & Dynamic Dialogue
+AUDIO_ENHANCE_ENABLED = os.environ.get("TRANSLATION_AUDIO_ENHANCE", "1").strip().lower() not in ("0", "false", "no")
 
 # VAD, retuned for the audio-native model.
 #
@@ -365,9 +377,11 @@ GEMMA_VAD_SPEECH_PAD_MS = 200
 GEMMA_SOFT_CUT_SPEECH_MS = 12_000
 GEMMA_SOFT_CUT_SILENCE_MS = 700
 
-# Translation
-TRANSLATE_TEMPERATURE = 0.2
-TRANSLATE_MAX_TOKENS = 256
+# Translation: Index-Translate / Hy-MT2 StreamRevise recommends greedy decoding (temperature=0.0)
+# to prevent subtitles flickering across incremental partial updates.
+TRANSLATE_TEMPERATURE = _env_float("TRANSLATION_TEMPERATURE", 0.0)
+TRANSLATE_MAX_TOKENS = _env_int("TRANSLATION_MAX_TOKENS", 256)
+TRANSLATION_SLOTS = _env_int("TRANSLATION_SLOTS", 3)
 CONTEXT_SENTENCES = 2
 
 # ---------------------------------------------------------------- audio capture
@@ -404,16 +418,13 @@ LOOPBACK_ENABLED = AUDIO_SOURCE != "socket"
 LOOPBACK_TARGET_PEAK = float(os.environ.get("TRANSLATION_LOOPBACK_TARGET_PEAK", "0.20"))
 LOOPBACK_GAIN_MIN = float(os.environ.get("TRANSLATION_LOOPBACK_GAIN_MIN", "0.5"))
 LOOPBACK_GAIN_MAX = float(os.environ.get("TRANSLATION_LOOPBACK_GAIN_MAX", "40.0"))
+LOOPBACK_PREVOLUME = os.environ.get("TRANSLATION_LOOPBACK_PREVOLUME", "1").strip().lower() not in ("0", "false", "no")
 
-# Which text-to-text translator serves the whisper path.
+# Which text-to-text translator serves the whisper/nemotron/qwen path.
 #
-# "hy-mt2" is the pinned default and the backend every latency number in
-# REPORT.md was measured on. "gemma4" swaps in the same Gemma 4 E2B weights the
-# audio-native branch uses, but as a text-only translator -- no --mmproj, so it
-# never sees audio and whisper still does the recognising. That distinction is
-# the whole point of the switch: the audio-native branch and this one share
-# weights and nothing else.
-MT_BACKEND = os.environ.get("TRANSLATION_MT_BACKEND", "hy-mt2").strip().lower()
+# "index-translate" is the adopted default (Index-Translate-2B.Q4_K_M.gguf).
+# "hy-mt2" serves as legacy fallback. "gemma4" swaps in Gemma 4 E2B weights.
+MT_BACKEND = os.environ.get("TRANSLATION_MT_BACKEND", "index-translate").strip().lower()
 
 
 # 输出方式（流式 / 块状）是**路线的属性**：一条路线一处声明（上面 CHAINS 里的 output），
@@ -432,8 +443,10 @@ def running_chain() -> str:
         return declared
     if MT_BACKEND == "gemma4":
         return "gemma-e2e"
+    if ASR_BACKEND in ("nemotron", "nv"):
+        return "nv-in"
     if ASR_BACKEND == "qwen3":
-        return "qwen3-hy"
+        return "qwen3-in"
     return DEFAULT_CHAIN
 
 

@@ -79,8 +79,8 @@ class BoundaryTests(unittest.TestCase):
         for chain, spec in config.CHAINS.items():
             self.assertIn("output", spec, f"{chain} 没有声明输出方式")
             self.assertIn(spec["output"], ("stream", "block"), chain)
-        self.assertEqual(config.CHAINS["qwen3-hy"]["output"], "block")
-        self.assertEqual(config.CHAINS["whisper-hy"]["output"], "stream")
+        self.assertEqual(config.CHAINS["qwen3-in"]["output"], "block")
+        self.assertEqual(config.CHAINS["nv-in"]["output"], "block")
         self.assertEqual(config.CHAINS["gemma-e2e"]["output"], "stream")
         # 显示层只读结论，不再自己比较识别器的名字。
         source = (ROOT / "server" / "caption_window.py").read_text(encoding="utf-8")
@@ -96,11 +96,10 @@ class BoundaryTests(unittest.TestCase):
 
         cases = (
             # (declared running chain, asr backend, expected BLOCK_BY_PUNCT)
-            ("qwen3-hy", "qwen3", True),
-            ("whisper-hy", "whisper", False),
-            # 回退之后导出的就是观测值，所以这里声明什么就是什么；
-            # "请求 qwen3 但实际 whisper" 由 start.ps1 在导出前改掉，不由这里猜。
-            ("qwen3-hy", "whisper", True),
+            ("qwen3-in", "qwen3", True),
+            ("nv-in", "nemotron", True),
+            # 声明优先：环境声明的 chain_running 直接决定输出模式
+            ("qwen3-in", "nemotron", True),
             ("gemma-e2e", "", False),
         )
         try:
@@ -108,7 +107,7 @@ class BoundaryTests(unittest.TestCase):
                 with unittest.mock.patch.dict(os.environ, {
                     "TRANSLATION_CHAIN_RUNNING": chain,
                     "TRANSLATION_ASR_BACKEND": backend,
-                    "TRANSLATION_MT_BACKEND": "hy-mt2",
+                    "TRANSLATION_MT_BACKEND": "Index-Translate-2B",
                 }):
                     importlib.reload(importlib.import_module("server.config"))
                     reloaded = importlib.reload(cw)
@@ -119,16 +118,12 @@ class BoundaryTests(unittest.TestCase):
             importlib.reload(cw)
 
     def test_block_mode_follows_the_recogniser(self):
-        # whisper streams; qwen3 is the backend whose output was reported to rewrite
-        # what it already showed. A second switch next to this one could disagree with
-        # it, and a week of this repository's logs is what two disagreeing switches
-        # cost.
         import importlib
         import os
 
         import server.caption_window as cw
 
-        for backend, expected in (("whisper", False), ("qwen3", True)):
+        for backend, expected in (("nemotron", True), ("qwen3", True)):
             with unittest.mock.patch.dict(os.environ, {"TRANSLATION_ASR_BACKEND": backend}):
                 # config has to be reloaded too: caption_window reads ASR_BACKEND at
                 # import time, so reloading only the window reuses the cached value and

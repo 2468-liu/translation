@@ -82,7 +82,7 @@ class RollbackTests(unittest.TestCase):
         """It needs two switches rather than one -- a Gemma4 translator on 8082 and no
         recogniser at all -- so accepting it here is not the same as accepting a name."""
         with (
-            patch.object(nh, "read_chain", return_value="whisper-hy"),
+            patch.object(nh, "read_chain", return_value="nv-in"),
             patch.object(nh, "write_chain", return_value=None),
             patch.object(nh, "kill_everything", return_value=[]),
             patch.object(nh, "start_backend", return_value={"ok": True, "ready": True}),
@@ -94,7 +94,7 @@ class RollbackTests(unittest.TestCase):
     def test_a_failed_start_restores_the_previous_chain(self):
         calls: list[str] = []
         with (
-            patch.object(nh, "read_chain", return_value="whisper-hy"),
+            patch.object(nh, "read_chain", return_value="nv-in"),
             patch.object(nh, "write_chain", side_effect=lambda c: calls.append(c)),
             patch.object(nh, "kill_everything", return_value=[]),
             patch.object(nh, "start_backend", side_effect=[
@@ -102,24 +102,24 @@ class RollbackTests(unittest.TestCase):
                 {"ok": True, "ready": True, "owned": True},
             ]),
         ):
-            reply = nh.restart_chain("qwen3-hy")
+            reply = nh.restart_chain("qwen3-in")
 
         self.assertFalse(reply["ok"])
         self.assertTrue(reply["rolled_back"])
-        self.assertEqual(reply["chain"], "whisper-hy")
+        self.assertEqual(reply["chain"], "nv-in")
         # Written twice: the chain being tried, then the one that worked.
-        self.assertEqual(calls, ["qwen3-hy", "whisper-hy"])
+        self.assertEqual(calls, ["qwen3-in", "nv-in"])
 
     def test_a_rollback_that_also_fails_says_so(self):
         """Reported as a plain failure without the rolled_back flag, so the popup cannot
         put the dropdown back on a chain that is not running."""
         with (
-            patch.object(nh, "read_chain", return_value="whisper-hy"),
+            patch.object(nh, "read_chain", return_value="nv-in"),
             patch.object(nh, "write_chain", return_value=None),
             patch.object(nh, "kill_everything", return_value=[]),
             patch.object(nh, "start_backend", return_value={"ok": False, "error": "起不来"}),
         ):
-            reply = nh.restart_chain("qwen3-hy")
+            reply = nh.restart_chain("qwen3-in")
         self.assertFalse(reply["ok"])
         self.assertFalse(reply["rolled_back"])
         self.assertIn("回退", reply["error"])
@@ -128,14 +128,14 @@ class RollbackTests(unittest.TestCase):
         """No short-circuit on sameness: the point is to get a clean backend, and a user
         picking the current chain may be recovering from a wedged one."""
         with (
-            patch.object(nh, "read_chain", return_value="whisper-hy"),
+            patch.object(nh, "read_chain", return_value="nv-in"),
             patch.object(nh, "write_chain", return_value=None),
             patch.object(nh, "kill_everything", return_value=[]),
             patch.object(nh, "start_backend", return_value={"ok": True, "ready": True}),
         ):
-            reply = nh.restart_chain("whisper-hy")
+            reply = nh.restart_chain("nv-in")
         self.assertTrue(reply["ok"])
-        self.assertEqual(reply["chain"], "whisper-hy")
+        self.assertEqual(reply["chain"], "nv-in")
 
 
 class ChainTableTests(unittest.TestCase):
@@ -149,7 +149,7 @@ class ChainTableTests(unittest.TestCase):
 
     def test_the_default_chain_is_one_that_exists(self):
         self.assertIn(config.DEFAULT_CHAIN, config.CHAINS)
-        self.assertEqual(config.DEFAULT_CHAIN, "whisper-hy")
+        self.assertEqual(config.DEFAULT_CHAIN, "qwen3-in")
 
     def test_every_chain_names_what_it_is_and_what_it_measured(self):
         for name, spec in config.CHAINS.items():
@@ -193,7 +193,7 @@ class ChainTableTests(unittest.TestCase):
 
     def test_the_qwen3_port_is_named_in_one_place(self):
         self.assertEqual(config.QWEN3_ASR_PORT, 8099)
-        self.assertEqual(config.CHAINS["qwen3-hy"]["qwen3_port"], 8099)
+        self.assertEqual(config.CHAINS["qwen3-in"]["qwen3_port"], 8099)
         self.assertTrue(config.QWEN3_ASR_URL.endswith(":8099"))
 
     def test_runtime_json_is_not_where_the_defaults_live(self):
@@ -277,7 +277,7 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         The label still has to say what the measurements said, because "available" here
         means reachable, not recommended.
         """
-        self.assertEqual(set(config.CHAINS), {"whisper-hy", "qwen3-hy", "gemma-e2e"})
+        self.assertEqual(set(config.CHAINS), {"nv-in", "qwen3-in", "gemma-e2e"})
         self.assertIn('id="chainSelect"', self.popup)
         for chain in config.CHAINS:
             self.assertIn(f'value="{chain}"', self.popup)
@@ -315,7 +315,7 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         dropdown -- and a fourth place disagreeing is how a control ends up selecting
         something the backend refuses."""
         self.assertIn(
-            'if chain not in ("whisper-hy", "qwen3-hy", "gemma-e2e")', self.host)
+            'if chain not in ("nv-in", "qwen3-in", "gemma-e2e")', self.host)
         for chain in config.CHAINS:
             self.assertIn(f'value="{chain}"', self.popup)
 
@@ -357,27 +357,20 @@ class PopupAndHostAgreeTests(unittest.TestCase):
         self.assertIn('"up": any(listening(port) for port in OWNED_PORTS)', self.host)
 
     def test_start_ps1_records_the_chain_it_actually_started(self):
-        """The dropdown read `chain`, which is what was asked for, and start.ps1 falls
-        back to whisper on its own when the Qwen3 weights or the 2.53.0 build are
-        missing. So the dropdown named a chain the backend was not on -- an arm's
-        identity taken from its name, which is the substitution this repository has
-        recorded four times now.
+        """Under Fail-Fast, missing Qwen3 weights or llama 2.53.0 must throw directly
+        rather than silently falling back to whisper-hy. $ChainRunning is initialised
+        to $Chain and written to runtime.json.
         """
         self.assertIn("chain_running", self.start)
-        self.assertIn('$ChainRunning = "whisper-hy"', self.start)
-        # Recorded after the fallbacks, not before. Match the Add-Member, not the bare
-        # field name: a comment that explains the fallback mentions chain_running too,
-        # and the first version of this assertion matched the comment and passed for the
-        # wrong reason.
+        self.assertIn("Fail-Fast", self.start)
+        # Recorded after branches, before server start.
         write = "Add-Member -NotePropertyName chain_running"
         self.assertIn(write, self.start)
-        self.assertGreater(
-            self.start.index(write),
-            self.start.rindex('$ChainRunning = "whisper-hy"'),
-            "chain_running is written before the fallbacks are known")
-        # And initialised before the branches, not inside one. The first version put the
-        # assignment in the else-branch, so the gemma-e2e branch -- which has no
-        # fallback and so never reached it -- wrote a null chain_running and the host
+        # And initialised before the branches, not inside one.
+        self.assertLess(
+            self.start.index("$ChainRunning = $Chain"),
+            self.start.index('if ($Chain -eq "gemma-e2e")'),
+            "$ChainRunning is initialised after the gemma-e2e branch can skip it")
         # silently fell back to the requested chain again.
         self.assertLess(
             self.start.index("$ChainRunning = $Chain"),
