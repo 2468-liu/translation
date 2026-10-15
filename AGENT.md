@@ -338,35 +338,42 @@ clip）同时做到了前两种和第三种：p50 被夸大（434 vs 47，让人
 
 **「异常」是关于我的预期的陈述，不是关于数据的陈述。** 先验证预期本身。
 
+**十七、解耦与 Facade 重构绝不能漏掉进程执行入口。**（2026-10-13 定）
+
+将代码解耦拆分子模块（Facade 模式）时，原模块若曾被外部通过 `python -m <module>` 拉起为独立进程，**必须显式保留 `if __name__ == '__main__': main()` 入口**。
+`server/qt_caption_window.py` 曾因缺失该入口，导致子进程 10ms 闪退而无人监听 UDP，造成下游 ASR/MT 虽正常产出但 `caption.paint = 0` 的假阳性闭环断裂。
+
+**十八、换渲染框架必须同步对齐性能指标埋点。**（2026-10-13 定）
+
+从 Tkinter 升级为 PyQt6 重绘层时，若未在原生绘图回调（`paintEvent`）中同步对齐 `perf.emit("caption", "paint", ...)`，则即使视觉上文字已上屏，日志与监控依然读作 0。
+**判据：改造消费端时，先查它上游约定的测量探针，不可只管画面不管指标。**
+
+**十九、静默降级是评测与出货的第一大毒瘤（Fail-Fast 铁律）。**（2026-10-13 定）
+
+启动脚本在目标权重不存在或端口不可达时，若为了“能跑起来”而隐式回退到其他模型（如 qwen3-hy 静默降级 whisper），将直接污染整个实验记录，产生严重的虚假报告。
+**判据：缺失主配置必须立即抛出致命异常（Fail-Fast）并终止进程，绝不允许自动降级替代。**
+
+**二十、短句参考轴不能拿整段 Dice 相似度匹配长块。**（2026-10-13 定）
+
+`eval_recall.py` 用二元字符 Dice 系数（阈值 0.5）做台词匹配。当原版 SRT 是 15 句独立短句，而 VAD 粗暴切成 2 个超大段时，短句与长段的 Dice 系数会被分母稀释至 0.15 导致召回全为 0。
+**判据：评估细粒度台词时，必须结合流式标点切分（Tier 1/Tier 2）解耦比对，不可仅依赖粗暴 VAD 物理截断。**
+
 ---
 
-## 6. 仓库与素材
+## 6. 仓库与素材（2026-10-13 现状）
 
 ```
-默认链路     CT2 small (cuda, float16) + hy-mt2 (llama-server 8080)
-音频直出     Gemma E2B，默认关闭
-回退点      tag pre-merge-2026-10-07
-素材标签    samples/INDEX.md
-冒烟测试     scripts/smoke.ps1（一分钟内，测量工具改动后必跑）
+默认链路     qwen3-hy (Qwen3-ASR 0.6B 8099 + Index-Translate 2B 8080)
+备选链路     nv-hy (Nemotron 3.5 ASR 极速流式 + 混元翻译 1.8B)
+回退链路     whisper-hy (faster-whisper large-v3-turbo)
+音频直出     Gemma E2B（实验停用）
+UI 架构      PyQt6 原生置顶高对比度字幕窗 + 360 级贴边折叠悬浮球 (qt_pet_widget.py)
+模型物理路径 D:\TranslationDesktop\models\（全部权重绝对路径锁定，不放仓库内）
+独立客户端   D:\TranslationDesktop\TranslationDesktop.exe
+冒烟测试     & "D:\minanconda\envs\pytorch\python.exe" -m pytest tests -q（590+ 测试 100% 通过）
 ```
 
-媒体文件不入库（`.gitignore` 已按扩展名忽略，`fixtures/` 有例外）。
-
-### 模型格式分属两个生态，别混用
-
-```
-.gguf        llama.cpp    hy-mt2 走 llama-server，只认这个
-                        Gemma 音频直出也走 llama-server
-.ggml/.bin   whisper.cpp  这里的 whisper.cpp 探针用它（Q5_1 / Q8_0 / fp16）
-CT2 目录     ctranslate2  faster-whisper 的格式（model.bin），默认链路在用
-```
-
-**踩过一次**：为了验证 `replay.ps1` 的"模型不对"分支，起了个 llama-server
-喂 `ggml-small-q5_1.bin`——那是 whisper.cpp 的文件，llama-server 直接退出，
-于是那次**只测到了"服务没起来"，根本没测到模型不匹配**。
-
-**教训和第 5 节同源**：拿一个生态的素材去测另一个生态的逻辑，得到的不是
-"测不了"，而是"看起来测了"。换文件格式重来才拿到真输出。
+媒体文件不入库（`.gitignore` 已按扩展名忽略，`fixtures/` 与 `samples/` 有例外）。
 
 ---
 
@@ -409,10 +416,6 @@ git worktree add ../captions-old pre-merge-2026-10-07
    后者才是防复发的——因为被证伪的假设看着最合理，最容易被重新提出。
 ```
 
-> 2026-10-07 补这两条的原因：`ASR 上 GPU 是 +10W` 那条结论，
-> 如果只写"+10W"三个字，partial 一旦改成 750ms 它就过期了，
-> 而下一个人会照着用。前提括号让这种过期变成看得见的。
-
 ## 9. 检索脚本
 
 ```bash
@@ -423,3 +426,83 @@ python scripts/rag.py list                      # 有哪些文档
 ```
 
 无外部依赖，纯 stdlib + 中文子串匹配。
+
+---
+
+## 10. 全栈 Agent 协作体系与红队挑刺机制（Adversarial Protocol）
+
+为了杜绝“代码跑通了但其实没上屏”、“配置填了但实际偷偷降级”、“指标看似漂亮但分子分母错位”等暗病，本项目实行**全栈职责分离与对抗式审查流程**：
+
+### 1. 角色分工
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                      全栈 Agent 角色协同矩阵                           │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. System Architect & Full-Stack Implementer (架构与实现)              │
+│    • 职责：前后端管道构建、UI/桌面挂件状态机、多进程 IPC 与低延迟调度。   │
+│    • 信条：实现优雅、解耦清晰、不造无用抽象。                          │
+├────────────────────────────────────────────────────────────────────────┤
+│ 2. Adversarial Critic & Flaw Hunter (红队审判与挑刺猎手 flaw-hunter)    │
+│    • 职责：专门挑刺、找漏洞、查假阳性、打假偷梁换柱与边界破坏测试。    │
+│    • 信条：假定所有声称的成功皆为假象；必须验证端到端真实消费闭环。   │
+├────────────────────────────────────────────────────────────────────────┤
+│ 3. Benchmark & Metric Verifier (严谨测试与证据链)                      │
+│    • 职责：推进标准测试集 (ds2_*)、时间轴物理对齐、召回/延迟统计与元数据归档│
+│    • 信条：无观测值不立论，指标标签只能来自真实数据。                  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. 结案与进表四道门禁（Four Gatekeepers before Done）
+
+任何功能修复宣称完成或测试数据进表前，必须通过以下四道硬性门禁：
+
+1. **门禁一（消费端真实上屏校验）**：
+   - 必须证明 `caption.paint > 0` 且包含有效特征哈希（`sig`）；生产者产生的字幕必须有消费者真实绘制证据，杜绝“空跑”。
+2. **门禁二（运行时真实身份校验）**：
+   - 必须请求真实端口（8080 `/props` 与 8099 `/props`）核验模型文件路径，`meta` 记录必须包含真实观测值，严防静默降级或虚假命名。
+3. **门禁三（环境无污染校验）**：
+   - 回放前后必须通过 `nvidia-smi` 与 `netstat` 确认无游离僵尸进程（Zombie PID）霸占显存与端口。
+4. **门禁四（破坏与边界回归校验）**：
+   - 涵盖设备拔出、空音频、缩写小数点标点穿透等极端输入，全量自动化测试持续 100% 通过（590+ passed）。
+
+---
+
+## 11. 交付与发布标准工作流（Release & Distribution Workflow）
+
+每次会话结束、功能验证完毕或修复合并后，必须执行**标准的发布三步曲（SOP）**，严防产物陈旧、体积失控或代码漂移：
+
+### 步骤一：更新独立可执行文件（Rebuild Desktop App .exe）
+* **触发命令**：
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\build_desktop_exe.ps1
+  ```
+* **交付标准**：
+  1. 通过 `TranslationDesktop.spec` 进行 onedir 打包（包含 PyQt6、ONNXRuntime、C++ DLL 依赖）。
+  2. 脚本自带 180s 日志检查点与内存硬死区防死锁机制，构建耗时控制在 ~70 秒。
+  3. 产物生成于 `dist/TranslationDesktop/TranslationDesktop.exe`，并**自动热同步部署至 `D:\TranslationDesktop`**，确保现场运行目录立即可用。
+
+### 步骤二：更新轻量化分发压缩包（Update Distribution Zip）
+* **触发命令**：
+  ```powershell
+  & "D:\minanconda\envs\pytorch\python.exe" scripts\build_distribution_zip.py
+  ```
+* **交付标准**：
+  1. 产物同步生成至项目根目录与桌面：`translation-ubuntu-24.04.zip`。
+  2. **绝对物理隔离禁令**：严格排除 `tools/`（如 whisper.cpp 源码构建树、nemo 端侧引擎，避免体积飙到 600MB+）、`models/`（大模型权重与 GGUF）、`.git/`、测试音频（`*.wav`, `*.mp4`）及编译缓存。
+  3. **体积红线**：分发包体积必须**严格控制在 ~3.6 MB**（绝不超过 15 MB），支持用户开箱通过脚本秒级拉取环境。
+
+### 步骤三：同步并推送到 GitHub 远端仓库（Sync & Push to GitHub）
+* **触发命令**：
+  ```bash
+  # 1. 运行全量回归测试确认无破损
+  pytest tests/
+  # 2. 干净提交并同步推送主分支
+  git checkout clean-main
+  git merge ubuntu --ff-only  # 或 cherry-pick/rebase 干净提交
+  git push origin clean-main:main
+  ```
+* **交付标准**：
+  1. **零污染门禁**：严禁将任何二进制（`.exe`, `.dll`, `.zip`, `.gguf`）、大音频文件（`*.wav` > 50MB）或用户私有配置（`desktop_config.json`, `runtime.json`）推送到远端仓库。
+  2. **100% 测试通过**：必须保证全量单元与集成测试（595+ items）全绿通过方可推送。
+  3. **双语对齐**：核心文档（README.md / README_EN.md）保持同步更新。
