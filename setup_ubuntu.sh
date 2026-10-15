@@ -81,14 +81,14 @@ else
     echo "  -> 发现已有 models 目录"
 fi
 
-# 5. 检测 llama-server 可执行引擎
-if ! command -v llama-server &> /dev/null && [ ! -f "tools/llama-server/llama-server" ]; then
+# 5. 检测 llama-server / llama 可执行引擎
+if ! command -v llama-server &> /dev/null && ! command -v llama &> /dev/null && [ ! -f "tools/llama-server/llama-server" ] && [ ! -f "tools/llama" ]; then
     echo "----------------------------------------------------------"
-    echo "【提示】未检测到 Linux 版本的 llama-server 可执行引擎。"
-    echo "您可以选择以下任一方式就绪 llama-server："
-    echo "  方式 A (推荐): 安装 LM Studio Linux 版，本程序会自动检测其后端；"
+    echo "【提示】未检测到 Linux 版本的 llama 或 llama-server 可执行引擎。"
+    echo "您可以选择以下任一方式就绪："
+    echo "  方式 A (推荐): 安装官方 llama CLI 工具或 LM Studio Linux 版；"
     echo "  方式 B: 下载 llama.cpp Linux 编译版 (例如 release 页面中的 b3xxx-bin-ubuntu-x64.zip)"
-    echo "          将其中的 llama-server 放入 ./tools/llama-server/llama-server"
+    echo "          将其中的 llama-server 或 llama 放入 ./tools/llama-server/ 或加入系统 PATH"
     echo "          并赋予执行权限: chmod +x tools/llama-server/llama-server"
     echo "----------------------------------------------------------"
 fi

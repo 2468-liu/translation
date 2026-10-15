@@ -56,24 +56,88 @@ $Backends = Join-Path $env:USERPROFILE ".lmstudio\extensions\backends"
 $Platform = "win-x86_64-nvidia-cuda12-avx2"
 
 function Get-Installed {
-    if (-not (Test-Path $Backends)) { return @() }
-    Get-ChildItem $Backends -Directory -Filter "llama.cpp-$Platform-*" |
-        ForEach-Object {
-            $exe = Join-Path $_.FullName "llama-server.exe"
-            if (-not (Test-Path $exe)) { return }
-            $version = $_.Name -replace "^llama\.cpp-$Platform-", ""
-            [pscustomobject]@{
-                version = $version
-                # Sort key: 2.52.0 must beat 2.9.0, which string compare gets wrong.
-                key = [Version]$version
-                path = $exe
-            }
+    $list = @()
+
+    # 1. Custom environment variable override
+    $custom = if ($env:TRANSLATION_LLAMA_EXE) { $env:TRANSLATION_LLAMA_EXE } else { $env:TRANSLATION_LLAMA_SERVER }
+    if ($custom -and (Test-Path $custom)) {
+        $resolved = (Resolve-Path $custom).Path
+        $list += [pscustomobject]@{
+            version = "custom"
+            key     = [Version]"9999.0.0"
+            path    = $resolved
+            name    = (Split-Path $resolved -Leaf)
         }
+    }
+
+    # 2. System PATH candidates (official llama CLI or standalone llama-server)
+    $pathCandidates = @("llama.exe", "llama-server.exe", "llama", "llama-server")
+    foreach ($cand in $pathCandidates) {
+        $cmd = Get-Command $cand -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
+            $ver = "official-cli"
+            $sortKey = [Version]"999.0.0"
+            try {
+                $verOut = & $cmd.Source --version 2>&1 | Out-String
+                if ($verOut -match "build\s*(\d+)") {
+                    $buildNum = [int]$Matches[1]
+                    $ver = "b$buildNum"
+                    $sortKey = [Version]"$buildNum.0.0"
+                } elseif ($verOut -match "version:\s*([0-9\.]+)") {
+                    $ver = $Matches[1]
+                    $sortKey = [Version]$ver
+                }
+            } catch {}
+            $list += [pscustomobject]@{
+                version = $ver
+                key     = $sortKey
+                path    = $cmd.Source
+                name    = $cand
+            }
+            break
+        }
+    }
+
+    # 3. LM Studio backends
+    if (Test-Path $Backends) {
+        Get-ChildItem $Backends -Directory -Filter "llama.cpp-$Platform-*" |
+            ForEach-Object {
+                $exe = Join-Path $_.FullName "llama-server.exe"
+                if (-not (Test-Path $exe)) { return }
+                $version = $_.Name -replace "^llama\.cpp-$Platform-", ""
+                $list += [pscustomobject]@{
+                    version = $version
+                    key = [Version]$version
+                    path    = $exe
+                    name    = "llama-server.exe"
+                }
+            }
+    }
+
+    # 4. Local tools directory
+    $toolsCandidates = @(
+        (Join-Path $Root "tools\llama-server\llama-server.exe"),
+        (Join-Path $Root "tools\llama-server\llama-server"),
+        (Join-Path $Root "tools\llama.exe")
+    )
+    foreach ($tPath in $toolsCandidates) {
+        if (Test-Path $tPath) {
+            $list += [pscustomobject]@{
+                version = "tools"
+                key     = [Version]"0.0.1"
+                path    = (Resolve-Path $tPath).Path
+                name    = (Split-Path $tPath -Leaf)
+            }
+            break
+        }
+    }
+
+    return $list
 }
 
 $installed = @(Get-Installed)
 if (-not $installed) {
-    throw "no llama.cpp-$Platform-* build found under $Backends"
+    throw "No llama engine found in PATH, $Backends, or tools/! Please install llama or llama.cpp."
 }
 $available = ($installed | Sort-Object key | ForEach-Object { $_.version }) -join ", "
 
@@ -129,4 +193,5 @@ Write-Host "# llama.cpp $Platform-$($chosen.version) ($how); installed: $availab
     platform  = $Platform
     selected  = $how
     installed = $available
+    is_cli    = ((Split-Path $chosen.path -Leaf) -match "^llama(\.exe)?$")
 }

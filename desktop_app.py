@@ -292,9 +292,9 @@ def _find_llama_server_exe() -> Path | None:
     if custom and Path(custom).exists():
         return Path(custom)
 
-    exe_names = ["llama-server.exe", "llama.exe", "llama-server", "llama"] if sys.platform == "win32" else ["llama-server", "llama"]
+    exe_names = ["llama.exe", "llama-server.exe", "llama", "llama-server"] if sys.platform == "win32" else ["llama", "llama-server"]
 
-    # 1. Check system PATH (standard on Linux/Ubuntu)
+    # 1. Check system PATH (standard on Linux/Ubuntu and official Windows llama install)
     import shutil
     for name in exe_names:
         which_path = shutil.which(name)
@@ -450,7 +450,7 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
 
     proc = subprocess.Popen(
         cmd,
-        cwd=str(exe.parent),
+        cwd=str(ROOT),
         stdout=out_f,
         stderr=subprocess.STDOUT,
         creationflags=creationflags,
@@ -567,7 +567,7 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
 
     proc = subprocess.Popen(
         cmd,
-        cwd=str(exe.parent),
+        cwd=str(ROOT),
         stdout=out_f,
         stderr=subprocess.STDOUT,
         creationflags=creationflags,
