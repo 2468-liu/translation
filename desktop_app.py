@@ -85,26 +85,47 @@ try:
 
 
     def check_single_instance(mutex_name: str = SINGLE_INSTANCE_MUTEX_NAME) -> tuple[bool, any]:
-        """Check if another instance is already running via Windows Named Mutex.
+        """Check if another instance is already running via Windows Named Mutex or Linux flock.
 
-        Handles both ERROR_ALREADY_EXISTS (183) and ERROR_ACCESS_DENIED (5)
-        for cross-privilege / cross-session security boundary protection.
-        Returns (is_primary, mutex_handle).
+        - Windows: Named Mutex (CreateMutexW) handles ERROR_ALREADY_EXISTS (183) & ERROR_ACCESS_DENIED (5).
+        - Linux: Kernel-level non-blocking file lock (fcntl.flock) in $XDG_RUNTIME_DIR.
+          Automatically released by the kernel if the process terminates or crashes.
+        Returns (is_primary, handle).
         """
-        if sys.platform != "win32":
-            return True, None
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            mutex = kernel32.CreateMutexW(None, False, mutex_name)
-            last_error = kernel32.GetLastError()
-            if last_error == 183:  # ERROR_ALREADY_EXISTS
-                return False, mutex
-            if last_error == 5:    # ERROR_ACCESS_DENIED (already open in another integrity/session)
-                return False, None
-            return True, mutex
-        except Exception:
-            return True, None
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                mutex = kernel32.CreateMutexW(None, False, mutex_name)
+                last_error = kernel32.GetLastError()
+                if last_error == 183:  # ERROR_ALREADY_EXISTS
+                    return False, mutex
+                if last_error == 5:    # ERROR_ACCESS_DENIED (already open in another integrity/session)
+                    return False, None
+                return True, mutex
+            except Exception:
+                return True, None
+        else:
+            # Linux / Ubuntu 24.04 / Zorin 18: Kernel flock on runtime lockfile
+            try:
+                import fcntl
+                runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+                lock_file = os.path.join(runtime_dir, "translation_desktop_single_instance.lock")
+                fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    os.ftruncate(fd, 0)
+                    os.write(fd, f"{os.getpid()}\n".encode())
+                    return True, fd
+                except (BlockingIOError, OSError):
+                    try:
+                        os.close(fd)
+                    except Exception:
+                        pass
+                    return False, None
+            except Exception as e:
+                print(f"[DesktopApp] Linux single-instance lock check error: {e}")
+                return True, None
 
 
     def wake_existing_instance() -> bool:
@@ -160,6 +181,7 @@ def _listening(port: int) -> bool:
 def _pids_on_port(port: int) -> list[int]:
     """Find all PIDs listening on a specific TCP port."""
     pids: list[int] = []
+    current_pid = os.getpid()
     if sys.platform == "win32":
         try:
             result = subprocess.run(
@@ -177,21 +199,26 @@ def _pids_on_port(port: int) -> list[int]:
                 if local.endswith(f":{port}"):
                     try:
                         pid = int(parts[-1])
-                        if pid and pid not in pids:
+                        if pid and pid != current_pid and pid not in pids:
                             pids.append(pid)
                     except ValueError:
                         continue
         except Exception:
             pass
     else:
-        # Linux / Ubuntu 24.04 / Zorin: try lsof or fuser
+        # Linux / Ubuntu 24.04 / Zorin: use lsof with -sTCP:LISTEN or fuser
         try:
-            result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
             for line in result.stdout.splitlines():
                 line = line.strip()
                 if line.isdigit():
                     pid = int(line)
-                    if pid not in pids:
+                    if pid and pid != current_pid and pid not in pids:
                         pids.append(pid)
         except Exception:
             pass
@@ -202,7 +229,7 @@ def _pids_on_port(port: int) -> list[int]:
                     part = part.strip()
                     if part.isdigit():
                         pid = int(part)
-                        if pid not in pids:
+                        if pid and pid != current_pid and pid not in pids:
                             pids.append(pid)
             except Exception:
                 pass
@@ -210,9 +237,30 @@ def _pids_on_port(port: int) -> list[int]:
 
 
 def _kill_port(port: int) -> list[int]:
-    """Kill all processes listening on a port and wait until the port is closed."""
+    """Kill all processes listening on a port and wait until the port is closed.
+
+    Applies 3 physical safety barriers:
+    1. Filters strictly for LISTEN state sockets.
+    2. Self-preservation: Never kills current process PID.
+    3. Linux /proc/<pid>/cmdline fingerprint verification to prevent PID recycling collateral damage.
+    """
     pids = _pids_on_port(port)
+    current_pid = os.getpid()
     for pid in pids:
+        if pid == current_pid:
+            continue
+        # Fingerprint guard on Linux: ensure PID belongs to llama/translation/python
+        if sys.platform != "win32":
+            cmdline_path = f"/proc/{pid}/cmdline"
+            if os.path.exists(cmdline_path):
+                try:
+                    with open(cmdline_path, "rb") as f:
+                        raw = f.read().decode("utf-8", errors="ignore").lower()
+                    if not any(token in raw for token in ("llama", "desktop_app", "translation", "python")):
+                        print(f"[DesktopApp] WARNING: PID {pid} does not match expected model fingerprint, skipping kill to protect system process.")
+                        continue
+                except Exception:
+                    pass
         try:
             print(f"[DesktopApp] Terminating process PID {pid} listening on port {port}...")
             if sys.platform == "win32":
@@ -223,7 +271,7 @@ def _kill_port(port: int) -> list[int]:
                     check=False,
                 )
             else:
-                import os, signal
+                import signal
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -244,7 +292,7 @@ def _find_llama_server_exe() -> Path | None:
     if custom and Path(custom).exists():
         return Path(custom)
 
-    exe_names = ["llama-server.exe", "llama-server"] if sys.platform == "win32" else ["llama-server"]
+    exe_names = ["llama-server.exe", "llama.exe", "llama-server", "llama"] if sys.platform == "win32" else ["llama-server", "llama"]
 
     # 1. Check system PATH (standard on Linux/Ubuntu)
     import shutil
@@ -276,8 +324,15 @@ def _find_llama_server_exe() -> Path | None:
                 if sub_exe.exists():
                     return sub_exe
 
-    # 3. Check local tools/ (bundled standalone engine or manual copy)
-    search_dirs = [ROOT / "tools", Path.cwd() / "tools", Path("/usr/local/bin"), Path("/opt/llama-server")]
+    # 3. Check local tools/ and user home paths (e.g. ~/.local/bin/llama on Linux)
+    search_dirs = [
+        ROOT / "tools",
+        Path.cwd() / "tools",
+        Path.home() / ".local" / "bin",
+        Path.home() / ".llama-app",
+        Path("/usr/local/bin"),
+        Path("/opt/llama-server"),
+    ]
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
         search_dirs.insert(0, app_dir / "tools")
@@ -363,8 +418,10 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
     if splash:
         splash.set_progress(0.25, f"正在启动 Index 影视翻译引擎 ({exe.name})...")
 
-    cmd = [
-        str(exe),
+    cmd = [str(exe)]
+    if exe.stem.lower() in ("llama", "llama-cli"):
+        cmd.append("serve")
+    cmd.extend([
         "-m", str(model_path),
         "--host", config.LLAMA_HOST,
         "--port", str(config.LLAMA_PORT),
@@ -373,7 +430,7 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
         "-t", "4",
         "-np", "3",
         "--no-webui",
-    ]
+    ])
     if is_index:
         cmd.extend(["--reasoning", "off"])
 
@@ -475,8 +532,10 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
     if splash:
         splash.set_progress(0.55, "正在启动 Qwen3 语音大模型引擎...")
 
-    cmd = [
-        str(exe),
+    cmd = [str(exe)]
+    if exe.stem.lower() in ("llama", "llama-cli"):
+        cmd.append("serve")
+    cmd.extend([
         "-m", str(model_path),
         "--mmproj", str(mmproj_path),
         "--host", config.LLAMA_HOST,
@@ -486,7 +545,7 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
         "-t", "4",
         "-np", "2",
         "--no-webui",
-    ]
+    ])
     print(f"[DesktopApp] Starting Qwen3-ASR llama-server on port {port} (-c 4096, -np 2, -ngl 99)...")
     creationflags = 0
     if sys.platform == "win32":
@@ -947,13 +1006,26 @@ class DesktopApp:
                 QLocalServer.removeServer(SINGLE_INSTANCE_SERVER_NAME)
             except Exception:
                 pass
-        if getattr(self, "_instance_mutex", None) and sys.platform == "win32":
-            try:
-                import ctypes
-                ctypes.windll.kernel32.CloseHandle(self._instance_mutex)
-                self._instance_mutex = None
-            except Exception:
-                pass
+        if getattr(self, "_instance_mutex", None):
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.CloseHandle(self._instance_mutex)
+                    self._instance_mutex = None
+                except Exception:
+                    pass
+            else:
+                try:
+                    import fcntl
+                    if isinstance(self._instance_mutex, int):
+                        try:
+                            fcntl.flock(self._instance_mutex, fcntl.LOCK_UN)
+                        except Exception:
+                            pass
+                        os.close(self._instance_mutex)
+                        self._instance_mutex = None
+                except Exception:
+                    pass
         if hasattr(self, "watchdog_timer") and self.watchdog_timer:
             try:
                 self.watchdog_timer.stop()

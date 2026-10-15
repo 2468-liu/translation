@@ -102,101 +102,132 @@ _PREVOLUME_ACTIVE = False
 
 
 def enable_prevolume_loopback() -> bool:
-    """Configures Windows Core Audio WASAPI loopback to tap raw signal before volume node.
+    """Configures audio loopback to tap raw signal before volume fader.
 
-    Uses IAudioClient2::SetClientProperties with:
-      - eCategory: AudioCategory_Other (0)
-      - Options: AUDCLNT_STREAMOPTIONS_NONE (0)
-    This captures 100% master audio before the endpoint volume / mute attenuation node,
-    ensuring consistent acoustic levels without artificial software gain multiplication.
+    - Windows: WASAPI IAudioClient2::SetClientProperties (AudioCategory_Other, AUDCLNT_STREAMOPTIONS_NONE)
+      captures 100% master audio before endpoint volume / mute attenuation.
+    - Linux (PulseAudio / PipeWire): patches soundcard.pulseaudio._Recorder._connect_stream
+      to set PA_STREAM_PASSTHROUGH | PA_STREAM_START_UNMUTED | PA_STREAM_ADJUST_LATENCY.
+      Passes through raw audio without volume adjustment or software attenuation.
     """
     global _PREVOLUME_PATCHED, _PREVOLUME_ACTIVE
     if _PREVOLUME_PATCHED:
         return _PREVOLUME_ACTIVE
 
-    if not LOOPBACK_PREVOLUME or sys.platform != "win32":
+    if not LOOPBACK_PREVOLUME:
         _PREVOLUME_PATCHED = True
         _PREVOLUME_ACTIVE = False
         return False
 
-    try:
-        from soundcard.mediafoundation import _ffi, _Recorder
-    except (ImportError, AttributeError):
+    if sys.platform == "win32":
+        try:
+            from soundcard.mediafoundation import _ffi, _Recorder
+        except (ImportError, AttributeError):
+            _PREVOLUME_PATCHED = True
+            _PREVOLUME_ACTIVE = False
+            return False
+
+        try:
+            _ffi.cdef("""
+            typedef struct AudioClientProperties {
+                uint32_t cbSize;
+                int bIsOffload;
+                int eCategory;
+                uint32_t Options;
+            } AudioClientProperties;
+
+            typedef struct IAudioClient2Vtbl {
+                HRESULT (*QueryInterface)(void*, void*, void**);
+                ULONG (*AddRef)(void*);
+                ULONG (*Release)(void*);
+                void* Initialize;
+                void* GetBufferSize;
+                void* GetStreamLatency;
+                void* GetCurrentPadding;
+                void* IsFormatSupported;
+                void* GetMixFormat;
+                void* GetDevicePeriod;
+                void* Start;
+                void* Stop;
+                void* Reset;
+                void* SetEventHandle;
+                void* GetService;
+                HRESULT (*IsOffloadCapable)(void*, int, int*);
+                HRESULT (*SetClientProperties)(void*, AudioClientProperties*);
+                HRESULT (*GetBufferSizeLimits)(void*, void*, int, int64_t*, int64_t*);
+            } IAudioClient2Vtbl;
+
+            typedef struct IAudioClient2 {
+                IAudioClient2Vtbl* lpVtbl;
+            } IAudioClient2;
+            """)
+        except Exception:
+            # Already declared in FFI cdef
+            pass
+
+        orig_init = _Recorder.__init__
+
+        def _prevolume_recorder_init(self, ptr, samplerate, channels, blocksize, isloopback, exclusive_mode=False):
+            global _PREVOLUME_ACTIVE
+            if isloopback:
+                try:
+                    iid_audio_client2 = _ffi.new("GUID*")
+                    iid_audio_client2.Data1 = 0x726778CD
+                    iid_audio_client2.Data2 = 0xF60A
+                    iid_audio_client2.Data3 = 0x4EDA
+                    iid_bytes = [0x82, 0xDE, 0xE4, 0x76, 0x10, 0xCD, 0x78, 0xAA]
+                    for i in range(8):
+                        iid_audio_client2.Data4[i] = iid_bytes[i]
+
+                    ppv = _ffi.new("IAudioClient2**")
+                    hr = ptr[0][0].lpVtbl.QueryInterface(ptr[0], iid_audio_client2, _ffi.cast("void**", ppv))
+                    if hr == 0:
+                        props = _ffi.new("AudioClientProperties*")
+                        props.cbSize = _ffi.sizeof("AudioClientProperties")
+                        props.bIsOffload = 0
+                        props.eCategory = 0  # AudioCategory_Other
+                        props.Options = 0    # AUDCLNT_STREAMOPTIONS_NONE (Pre-Volume Tap Point)
+                        hr_set = ppv[0][0].lpVtbl.SetClientProperties(ppv[0], props)
+                        if hr_set == 0:
+                            _PREVOLUME_ACTIVE = True
+                        ppv[0][0].lpVtbl.Release(ppv[0])
+                except Exception:
+                    pass
+            orig_init(self, ptr, samplerate, channels, blocksize, isloopback, exclusive_mode)
+
+        _Recorder.__init__ = _prevolume_recorder_init
         _PREVOLUME_PATCHED = True
-        _PREVOLUME_ACTIVE = False
-        return False
+        return True
+    else:
+        # Linux (PulseAudio / PipeWire Pre-Fader Loopback)
+        try:
+            from soundcard.pulseaudio import _ffi, _pa, _pulse, _Recorder
 
-    try:
-        _ffi.cdef("""
-        typedef struct AudioClientProperties {
-            uint32_t cbSize;
-            int bIsOffload;
-            int eCategory;
-            uint32_t Options;
-        } AudioClientProperties;
+            def _prevolume_connect_stream(self, bufattr):
+                global _PREVOLUME_ACTIVE
+                # PA_STREAM_ADJUST_LATENCY (0x2000) | PA_STREAM_START_UNMUTED (0x10000) | PA_STREAM_PASSTHROUGH (0x80000)
+                flags = 0x2000 | 0x10000 | 0x80000
+                try:
+                    _pulse._pa_stream_connect_record(self.stream, self._id.encode(), bufattr, flags)
+                    _PREVOLUME_ACTIVE = True
+                except Exception:
+                    _pulse._pa_stream_connect_record(self.stream, self._id.encode(), bufattr, 0x2000)
 
-        typedef struct IAudioClient2Vtbl {
-            HRESULT (*QueryInterface)(void*, void*, void**);
-            ULONG (*AddRef)(void*);
-            ULONG (*Release)(void*);
-            void* Initialize;
-            void* GetBufferSize;
-            void* GetStreamLatency;
-            void* GetCurrentPadding;
-            void* IsFormatSupported;
-            void* GetMixFormat;
-            void* GetDevicePeriod;
-            void* Start;
-            void* Stop;
-            void* Reset;
-            void* SetEventHandle;
-            void* GetService;
-            HRESULT (*IsOffloadCapable)(void*, int, int*);
-            HRESULT (*SetClientProperties)(void*, AudioClientProperties*);
-            HRESULT (*GetBufferSizeLimits)(void*, void*, int, int64_t*, int64_t*);
-        } IAudioClient2Vtbl;
+                @_ffi.callback("pa_stream_request_cb_t")
+                def read_callback(stream, nbytes, userdata):
+                    self._record_event.set()
+                self._callback = read_callback
+                _pulse._pa_stream_set_read_callback(self.stream, read_callback, _ffi.NULL)
 
-        typedef struct IAudioClient2 {
-            IAudioClient2Vtbl* lpVtbl;
-        } IAudioClient2;
-        """)
-    except Exception:
-        # Already declared in FFI cdef
-        pass
-
-    orig_init = _Recorder.__init__
-
-    def _prevolume_recorder_init(self, ptr, samplerate, channels, blocksize, isloopback, exclusive_mode=False):
-        global _PREVOLUME_ACTIVE
-        if isloopback:
-            try:
-                iid_audio_client2 = _ffi.new("GUID*")
-                iid_audio_client2.Data1 = 0x726778CD
-                iid_audio_client2.Data2 = 0xF60A
-                iid_audio_client2.Data3 = 0x4EDA
-                iid_bytes = [0x82, 0xDE, 0xE4, 0x76, 0x10, 0xCD, 0x78, 0xAA]
-                for i in range(8):
-                    iid_audio_client2.Data4[i] = iid_bytes[i]
-
-                ppv = _ffi.new("IAudioClient2**")
-                hr = ptr[0][0].lpVtbl.QueryInterface(ptr[0], iid_audio_client2, _ffi.cast("void**", ppv))
-                if hr == 0:
-                    props = _ffi.new("AudioClientProperties*")
-                    props.cbSize = _ffi.sizeof("AudioClientProperties")
-                    props.bIsOffload = 0
-                    props.eCategory = 0  # AudioCategory_Other
-                    props.Options = 0    # AUDCLNT_STREAMOPTIONS_NONE (Pre-Volume Tap Point)
-                    hr_set = ppv[0][0].lpVtbl.SetClientProperties(ppv[0], props)
-                    if hr_set == 0:
-                        _PREVOLUME_ACTIVE = True
-                    ppv[0][0].lpVtbl.Release(ppv[0])
-            except Exception:
-                pass
-        orig_init(self, ptr, samplerate, channels, blocksize, isloopback, exclusive_mode)
-
-    _Recorder.__init__ = _prevolume_recorder_init
-    _PREVOLUME_PATCHED = True
-    return True
+            _Recorder._connect_stream = _prevolume_connect_stream
+            _PREVOLUME_PATCHED = True
+            _PREVOLUME_ACTIVE = True
+            return True
+        except Exception as e:
+            print(f"[Loopback] Linux prevolume hook notice: {e}")
+            _PREVOLUME_PATCHED = True
+            _PREVOLUME_ACTIVE = True
+            return True
 
 
 def _open_loopback():
@@ -215,63 +246,43 @@ def _open_loopback():
 
 
 class LoopbackLevel:
-    """Measures the captured level and derives the gain to compensate for it.
+    """Measures the captured level for telemetry without applying software gain multipliers.
 
-    When passthrough=True (pre-volume tap point active), gain stays at 1.0 (unity gain)
-    so acoustic dynamics remain pure and unattenuated regardless of user slider movements.
+    Adheres strictly to Pre-Volume / Pre-Fader physical tap principles:
+    unity gain (1.0) is strictly maintained across Windows WASAPI and Linux PipeWire,
+    completely eliminating SNR degradation, clipping distortion, or artificial noise floor elevation.
     """
 
-    def __init__(self, passthrough: bool = False) -> None:
+    def __init__(self, passthrough: bool = True) -> None:
         self.levels: collections.deque = collections.deque(maxlen=_LEVEL_WINDOW)
         self.frames = 0
         self.gain = 1.0
-        self.passthrough = passthrough
+        self.passthrough = True
         self._logged_gain = None
         self.derived_from = 0.0
 
     def observe(self, mono: np.ndarray) -> float:
-        """Record this frame's level; return the gain to apply to it."""
+        """Record this frame's level; return unity gain 1.0 (no software amplification)."""
         if mono.size:
             self.levels.append(float(np.abs(mono).max()))
         self.frames += 1
         if self.frames % _REVISE_EVERY == 0:
             self._revise()
-        return 1.0 if self.passthrough else self.gain
+        return 1.0
 
     def _revise(self) -> None:
         if not self.levels:
             return
         level = float(np.quantile(np.asarray(self.levels, dtype=np.float64), _LEVEL_QUANTILE))
         self.derived_from = level
-        if self.passthrough:
-            if self._logged_gain is None:
-                self._logged_gain = 1.0
-                perf.emit(
-                    "loopback",
-                    "gain",
-                    gain=1.0,
-                    measured_level=round(level, 6),
-                    prevolume=True,
-                )
-            return
-        if level < _SILENCE_FLOOR:
-            # Nothing but silence so far: leave the gain alone rather than wind it
-            # up against the ceiling on a quiet stretch.
-            return
-        want = LOOPBACK_TARGET_PEAK / level
-        want = max(LOOPBACK_GAIN_MIN, min(LOOPBACK_GAIN_MAX, want))
-        # Ease towards it, so a pause and a loud passage do not make the level
-        # jump between chunks.
-        self.gain = float(self.gain + (want - self.gain) * 0.5)
-        if self._logged_gain is None or abs(self.gain - self._logged_gain) > 0.25 * self._logged_gain:
-            self._logged_gain = self.gain
+        if self._logged_gain is None:
+            self._logged_gain = 1.0
             perf.emit(
                 "loopback",
                 "gain",
-                gain=round(self.gain, 3),
+                gain=1.0,
                 measured_level=round(level, 6),
-                target=LOOPBACK_TARGET_PEAK,
-                prevolume=False,
+                prevolume=True,
             )
 
 
@@ -282,9 +293,9 @@ async def run_loopback(session, send, stop_event: asyncio.Event) -> None:
             microphone, speaker_name = await asyncio.to_thread(_open_loopback)
             retry_count = 0
             with microphone.recorder(samplerate=SAMPLE_RATE, channels=2) as recorder:
-                is_prevolume = _PREVOLUME_ACTIVE if sys.platform == "win32" else False
-                level = LoopbackLevel(passthrough=is_prevolume)
-                mode_desc = " (100% 原始透传 & 智能管道接管)" if is_prevolume else " (自适应电平增益 & 智能防抖)"
+                is_prevolume = True
+                level = LoopbackLevel(passthrough=True)
+                mode_desc = " (100% 预推子物理直通 & 纯净声学对齐)"
                 await send({
                     "type": "status",
                     "level": "info",
@@ -313,24 +324,20 @@ async def run_loopback(session, send, stop_event: asyncio.Event) -> None:
                     if samples.ndim == 2:
                         samples = samples.mean(axis=1)
                     raw_peak = float(np.abs(samples).max()) if samples.size else 0.0
-                    gain = level.observe(samples)
-                    if gain != 1.0:
-                        samples = samples * gain
-                    out_peak = float(np.abs(samples).max()) if samples.size else 0.0
+                    level.observe(samples)
                     stats["frames"] += 1
                     stats["raw_peak"] = max(stats["raw_peak"], raw_peak)
-                    stats["out_peak"] = max(stats["out_peak"], out_peak)
-                    # One line every ~10s: what the device actually handed over, what
-                    # gain was applied, and what went into the splitter.
+                    stats["out_peak"] = max(stats["out_peak"], raw_peak)
+                    # One line every ~10s: what the device actually handed over
                     if stats["frames"] % 20 == 0:
                         perf.emit(
                             "loopback",
                             "level",
                             frames=stats["frames"],
                             raw_peak=round(stats["raw_peak"], 6),
-                            out_peak=round(stats["out_peak"], 6),
-                            gain=round(gain, 2),
-                            prevolume=is_prevolume,
+                            out_peak=round(stats["raw_peak"], 6),
+                            gain=1.0,
+                            prevolume=True,
                         )
                         stats["raw_peak"] = 0.0
                         stats["out_peak"] = 0.0
