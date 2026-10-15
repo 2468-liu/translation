@@ -70,25 +70,25 @@ class PipelineLogTests(unittest.TestCase):
         # The engine classes are patched so nothing is loaded.
         from server import asr as asr_module
 
-        sentinel = {"qwen3": "qwen-engine", "whisper": "whisper-engine"}
+        sentinel = {"qwen3": "qwen-engine", "nemotron": "nemotron-engine"}
 
         # Real classes, not Mock: type(engine).__name__ is what the log prints, and a
         # Mock reports "Mock" however its __class__ is set.
-        class WhisperEngine:
+        class NemotronEngine:
             pass
 
         class QwenEngine:
             pass
 
-        built = {"qwen3": "QwenEngine", "whisper": "WhisperEngine"}
+        built = {"qwen3": "QwenEngine", "nemotron": "NemotronEngine"}
         for backend in sentinel:
             with mock.patch.object(asr_module.config, "ASR_BACKEND", backend), \
                  mock.patch.object(asr_module, "Qwen3AsrEngine", QwenEngine), \
-                 mock.patch.object(asr_module, "AsrEngine", WhisperEngine):
+                 mock.patch.object(asr_module, "NemotronAsrEngine", NemotronEngine):
                 engine = asr_module.build_asr()
             self.assertEqual(type(engine).__name__, built[backend], backend)
             self.assertNotEqual(type(engine).__name__, built[
-                "whisper" if backend == "qwen3" else "qwen3"
+                "nemotron" if backend == "qwen3" else "qwen3"
             ], f"{backend} built the other backend's engine")
 
     def test_an_unknown_backend_is_refused_rather_than_defaulted(self):

@@ -45,12 +45,12 @@ def splitter_for(pattern, **over):
 
 
 class ShippedCadenceTests(unittest.TestCase):
-    def test_the_default_is_750(self):
+    def test_the_default_is_160(self):
         """Pinned here rather than only in config.py so the number these tests used to
         depend on by accident has one visible home."""
         from server import config
 
-        self.assertEqual(config.PARTIAL_INTERVAL_MS, 750)
+        self.assertEqual(config.PARTIAL_INTERVAL_MS, 160)
 
     def test_the_test_cadence_is_shorter_than_the_shortest_utterance_these_tests_use(self):
         """Otherwise the helper's 120ms stops being enough and the failures come back
@@ -388,5 +388,89 @@ class VadDeliveredFlagTests(unittest.TestCase):
         assert all(e["delivered"] == 1 for _w, e in ends)
 
 
+class CinemaTuningTests(unittest.TestCase):
+    def test_cinema_tuning_parameters(self):
+        from server.vad import cinema_tuning
+        t = cinema_tuning()
+        self.assertEqual(t.preroll_max_ms, 500)
+        self.assertEqual(t.min_speech_ms, 100)
+        self.assertEqual(t.threshold, 0.40)
+        self.assertEqual(t.sustain_threshold, 0.32)
+        self.assertEqual(t.min_silence_ms, 220)
+        self.assertEqual(t.merge_window_ms, 500)
+
+    def test_preroll_does_not_duplicate_speech_onset_frame(self):
+        from server.vad import cinema_tuning, UtteranceSplitter, FRAME
+        pattern = [False, False, False, True] + [False] * 20
+        splitter = UtteranceSplitter(FakeVad(pattern), tuning=cinema_tuning())
+        # Provide frames with distinct values to trace ordering
+        payload = np.concatenate([np.full(FRAME, float(i), dtype=np.float32) for i in range(24)])
+        splitter.push(payload)
+        # Frames 0, 1, 2 are silence; frame 3 is speech.
+        # Utterance should start with silence preroll frames 0, 1, 2 then speech frame 3, with no duplicates
+        lead_vals = [float(u[0]) for u in splitter.utterance[:4]]
+        self.assertEqual(lead_vals, [0.0, 1.0, 2.0, 3.0])
+
+    def test_cinema_short_dialogue_not_dropped_on_merge_timeout(self):
+        from server.vad import cinema_tuning, UtteranceSplitter, FRAME
+        # 4 frames of speech = 128ms (above 100ms floor). Followed by 25 quiet frames (~800ms, exceeds 500ms merge window).
+        pattern = [True] * 4 + [False] * 25
+        splitter = UtteranceSplitter(FakeVad(pattern), tuning=cinema_tuning())
+        events = splitter.push(_payload(4, 25))
+        ends = [audio for kind, audio, _f in events if kind == "end"]
+        self.assertEqual(len(ends), 1, "Short cinema dialogue (128ms) must be delivered on merge window timeout, not dropped")
+
+
+class VadDualThresholdHysteresisTests(unittest.TestCase):
+    """Test dual-threshold hysteresis for conversational dynamic range.
+    
+    When loud speech (prob > onset_threshold) is followed by quiet continuation
+    (e.g., whisper/female dialogue with prob ~0.25), the sustain threshold (~0.18)
+    keeps speech active and avoids premature cutoff.
+    """
+
+    class FakeProbEngine:
+        def __init__(self, probs):
+            self.probs = iter(probs)
+
+        def prob(self, _frame):
+            try:
+                return next(self.probs)
+            except StopIteration:
+                return 0.0
+
+        def reset(self):
+            pass
+
+    def test_quiet_continuation_sustained_in_dialogue(self):
+        # 10 frames loud speech (prob 0.85, 320ms)
+        # 10 frames quiet speech (prob 0.25, 320ms - below onset 0.50, but above sustain 0.18)
+        # 15 frames silence (prob 0.0, 480ms - closes utterance)
+        probs = [0.85] * 10 + [0.25] * 10 + [0.0] * 15
+        payload = np.ones(len(probs) * FRAME, dtype=np.float32)
+
+        tuning = Tuning(
+            min_silence_ms=400,
+            max_utterance_ms=12000,
+            speech_pad_ms=VAD_SPEECH_PAD_MS,
+            early_end_ms=EARLY_END_SILENCE_MS,
+            soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+            soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+            partial_interval_ms=120,
+            threshold=0.50,
+            sustain_threshold=0.18,
+        )
+        splitter = UtteranceSplitter(self.FakeProbEngine(probs), tuning=tuning)
+        events = splitter.push(payload)
+
+        # There should be an 'end' event containing BOTH the loud and quiet parts (at least 20 frames = 640ms)
+        end_events = [audio for kind, audio, _f in events if kind == "end"]
+        self.assertEqual(len(end_events), 1)
+        delivered_audio = end_events[0]
+        # 20 frames of speech = 20 * 512 = 10240 samples minimum
+        self.assertGreaterEqual(delivered_audio.size, 20 * FRAME)
+
+
 if __name__ == "__main__":
     unittest.main()
+

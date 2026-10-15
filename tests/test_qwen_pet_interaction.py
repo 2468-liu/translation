@@ -114,34 +114,39 @@ class TestPet360BallInteraction:
         assert cfg.get("show_pet") is True
 
 
-class TestAsrBackendTrayIntegration:
-    """Validate ASR Backend and Cadence UI synchronization."""
+class TestScenePresetsIntegration:
+    """Validate Scene Presets (Movie/Speech/Stream) synchronize ASR, Cadence and Config."""
 
-    def test_asr_backend_switch_emits_config_change(self, qtbot, pet_and_coordinator):
+    def test_scene_preset_switch_emits_config_change(self, qtbot, pet_and_coordinator):
         window, pet = pet_and_coordinator
         emitted_configs = []
         window.config_changed.connect(lambda cfg: emitted_configs.append(cfg))
 
-        # Switch to nemotron
-        window.set_asr_backend_ui("nemotron")
-        window.asr_nemo_act.trigger()
+        # Switch to stream preset (Nemotron + 160ms)
+        assert hasattr(window, "_scene_stream_act")
+        window._scene_stream_act.trigger()
 
-        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" for cfg in emitted_configs))
+        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" and cfg.get("partial_interval_ms") == 160 for cfg in emitted_configs))
+        assert window.asr_backend == "nemotron"
+        assert window.partial_interval_ms == 160
 
-        # Switch back to qwen3
-        window.set_asr_backend_ui("qwen3")
-        window.asr_qwen_act.trigger()
-        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "qwen3" for cfg in emitted_configs))
+        # Switch back to movie preset (Qwen3 + 1000ms + rolling)
+        assert hasattr(window, "_scene_movie_act")
+        window._scene_movie_act.trigger()
 
-    def test_cadence_750ms_selectable_in_tray(self, qtbot, pet_and_coordinator):
+        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "qwen3" and cfg.get("partial_interval_ms") == 1000 for cfg in emitted_configs))
+        assert window.asr_backend == "qwen3"
+        assert window.partial_interval_ms == 1000
+
+    def test_tray_scene_preset_selectable(self, qtbot, pet_and_coordinator):
         window, pet = pet_and_coordinator
         emitted_configs = []
         window.config_changed.connect(lambda cfg: emitted_configs.append(cfg))
 
-        # Find 750ms action in cad_group
-        act_750 = next((a for a in window.cad_group.actions() if a.data() == 750), None)
-        assert act_750 is not None
-        act_750.trigger()
+        # Switch to speech preset via tray (Qwen3 + 500ms)
+        assert hasattr(window, "_tray_scene_speech")
+        window._tray_scene_speech.trigger()
 
-        assert window.partial_interval_ms == 750
-        qtbot.waitUntil(lambda: any(cfg.get("partial_interval_ms") == 750 for cfg in emitted_configs))
+        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "qwen3" and cfg.get("partial_interval_ms") == 500 for cfg in emitted_configs))
+        assert window.asr_backend == "qwen3"
+        assert window.partial_interval_ms == 500

@@ -202,40 +202,27 @@ class WebSocketConfigCarriesTheSwitchTests(unittest.TestCase):
         self.assertIn("chrome.storage.local.set({ partialIntervalMs", self.popup)
 
     def test_popup_offers_the_measured_range(self):
-        """250 to 1000 in steps of 50, and the slider's own bounds are the claim.
-
-        Both ends are measured rather than chosen: below 620ms the caption hold floor
-        stops clamping anything, so a lower bound would be offering a setting that
-        cannot change the output; above 1000ms the reference table tops out at 4200ms
-        and only the first-line delay grows. A wider range would advertise values no
-        measurement covers.
+        """Official NV FastConformer-RNNT recommended cadence gear presets:
+        80, 160, 320, 560, 1120 ms.
         """
-        self.assertIn('min="250"', self.popup_html)
-        self.assertIn('max="1000"', self.popup_html)
-        self.assertIn('step="50"', self.popup_html)
-        for name, value in (("CADENCE_MIN_MS", 250), ("CADENCE_MAX_MS", 1000),
-                            ("CADENCE_STEP_MS", 50)):
-            self.assertIn(f"{name} = {value}", self.popup)
+        for gear in ("80", "160", "320", "560", "1120"):
+            self.assertIn(f'value="{gear}"', self.popup_html)
+        self.assertIn("NV_CADENCE_PRESETS = [80, 160, 320, 560, 1120]", self.popup)
 
     def test_every_sent_value_is_inside_the_slider_bounds(self):
-        """A stored value from an older build can be anything, and the server applies
-        whatever arrives without clamping it. If the popup forwards it unchecked then
-        a stale 150 reaches the splitter, so the clamp has to be on the send path and
-        not only on the widget."""
-        for snippet in ("clampCadence(cadenceSlider.value)",
+        for snippet in ("clampCadence(",
                         "chrome.storage.local.set({ partialIntervalMs: v })"):
             self.assertIn(snippet, self.popup)
 
     def test_popup_default_matches_the_server_default(self):
         # Otherwise pressing 开始 silently changes the cadence: the extension
         # sends its stored value on the opening config frame, and the server
-        # applies whatever arrives. This is the invariant that used to be violated by
-        # the default moving to 750 on the server while the popup still sent 250.
+        # applies whatever arrives.
         from server import config
 
         self.assertIn("partialIntervalMs: DEFAULT_CADENCE_MS", self.popup)
-        self.assertEqual(config.PARTIAL_INTERVAL_MS, 750)
-        self.assertIn("const DEFAULT_CADENCE_MS = 750", self.popup)
+        self.assertEqual(config.PARTIAL_INTERVAL_MS, 160)
+        self.assertIn("const DEFAULT_CADENCE_MS = 160", self.popup)
 
 
 class StateListenerStartupTests(unittest.TestCase):

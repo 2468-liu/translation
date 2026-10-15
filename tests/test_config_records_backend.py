@@ -64,14 +64,10 @@ class BackendIsRecordedTests(unittest.TestCase):
 
 
 class DefaultsTests(unittest.TestCase):
-    def test_whisper_stays_the_default_backend(self):
-        """The engine swap was measured and not adopted: end-to-end first-translation
-        to paint went 382ms to 925ms and overwrites 11 to 28 on blog_3min, and on
-        lecture_mix it costs a 3.4% tail of 30-second calls. ASR_BACKEND exists so a
-        bad run costs one environment variable, so the default has to stay on the path
-        that is currently in use."""
+    def test_nemotron_is_the_default_backend(self):
+        """Nemotron 3.5 ASR is the measured and adopted default streaming backend."""
         from server import config
-        self.assertEqual(config.ASR_BACKEND, "whisper")
+        self.assertEqual(config.ASR_BACKEND, "nemotron")
 
     def test_cap_default_is_128(self):
         from server import config

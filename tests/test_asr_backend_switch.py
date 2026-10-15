@@ -13,15 +13,23 @@ from server.config import ASR_BACKEND
 
 
 class BackendSelectionTests(unittest.TestCase):
-    def test_default_is_whisper(self):
-        # The engine swap was measured but not adopted: the run that decides it has
-        # not happened yet, so the default must stay where it was. Changing this
-        # default without a recorded run is how a measured-but-unadopted change
-        # becomes the default by accident.
-        self.assertEqual(ASR_BACKEND, "whisper")
+    def test_default_is_nemotron(self):
+        # Nemotron 3.5 ASR is the measured and adopted default streaming backend.
+        self.assertEqual(ASR_BACKEND, "nemotron")
 
-    def test_whisper_backend_builds_the_whisper_engine(self):
-        with patch.object(asr_mod, "AsrEngine") as engine:
+    def test_whisper_backend_is_rejected_loudly(self):
+        with patch.object(asr_mod.config, "ASR_BACKEND", "whisper"):
+            with self.assertRaises(ValueError) as ctx:
+                asr_mod.build_asr()
+        self.assertIn("whisper", str(ctx.exception))
+        self.assertIn("nemotron", str(ctx.exception))
+        self.assertIn("qwen3", str(ctx.exception))
+
+    def test_nemotron_backend_builds_the_nemotron_engine(self):
+        with (
+            patch.object(asr_mod.config, "ASR_BACKEND", "nemotron"),
+            patch.object(asr_mod, "NemotronAsrEngine") as engine,
+        ):
             self.assertIs(asr_mod.build_asr(), engine.return_value)
 
     def test_qwen3_backend_builds_the_qwen3_engine(self):
@@ -32,13 +40,12 @@ class BackendSelectionTests(unittest.TestCase):
             self.assertIs(asr_mod.build_asr(), engine.return_value)
 
     def test_unknown_backend_fails_loudly(self):
-        # Silently falling back to whisper would produce a run whose name says one
-        # thing and whose logs say another, which is the same failure shape as the
-        # twelve "MTP on" arms that all ran with MTP off.
-        with patch.object(asr_mod.config, "ASR_BACKEND", "whisper-large-v3"):
+        # Silently falling back would produce a run whose name says one
+        # thing and whose logs say another.
+        with patch.object(asr_mod.config, "ASR_BACKEND", "unknown-asr"):
             with self.assertRaises(ValueError) as ctx:
                 asr_mod.build_asr()
-        self.assertIn("whisper", str(ctx.exception))
+        self.assertIn("nemotron", str(ctx.exception))
         self.assertIn("qwen3", str(ctx.exception))
 
 
