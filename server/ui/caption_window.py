@@ -960,7 +960,10 @@ class QtCaptionWindow(QWidget):
         self._last_segment_at = now
         self._segment_seq += 1
         if self._block_by_punct:
-            self._cancel_clause()
+            if self._clause_pending and not self._clause_fell_back:
+                self._flush_clause()
+            else:
+                self._cancel_clause()
 
     def _pace(self) -> float:
         return pace_scale(self._gaps)
@@ -1316,10 +1319,8 @@ class QtCaptionWindow(QWidget):
 
         act = caption_action(self.closed, self.line, self.visible)
         if act == "withdraw":
-            if self.text_only:
-                self.visible = False
-                self.withdraw()
-            else:
+            # Sticky Caption / Zero-Blank: Do not unmap/withdraw Win32 window between utterances
+            if not self.text_only:
                 self.visible = True
                 self.update()
             return
@@ -1348,10 +1349,8 @@ class QtCaptionWindow(QWidget):
 
         act = caption_action(self.closed, self.line, self.visible)
         if act == "withdraw":
-            if self.text_only:
-                self.visible = False
-                self.withdraw()
-            else:
+            # Sticky Caption / Zero-Blank: Do not unmap/withdraw Win32 window between utterances
+            if not self.text_only:
                 self.visible = True
                 self.update()
             return
