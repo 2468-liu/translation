@@ -78,28 +78,74 @@ def save_desktop_config(cfg: dict) -> None:
 
 
 def resolve_models_dir() -> Path:
-    """Resolve models directory. Checks user custom config, D:/TranslationDesktop, and local directories."""
+    """Resolve models directory. Checks TRANSLATION_MODELS_DIR, desktop_config.json,
+    case-insensitive Linux mount points (/mnt/DATA, /mnt/d, /DATA, /media/*), and local directories.
+    """
+    # 0. User environment variable (highest priority)
+    env_dir = os.environ.get("TRANSLATION_MODELS_DIR") or os.environ.get("MODELS_DIR")
+    if env_dir and Path(env_dir).exists():
+        return Path(env_dir).resolve()
+
+    # 1. User custom config in desktop_config.json
     cfg = load_desktop_config()
     custom = cfg.get("models_dir")
     if custom and Path(custom).exists():
         return Path(custom).resolve()
 
-    candidates = [
+    candidates: list[Path] = [
         ROOT / "models",
         Path.cwd() / "models",
         Path("D:/TranslationDesktop/models"),
         Path("D:/models"),
-        Path("/mnt/d/TranslationDesktop/models"),
-        Path("/mnt/c/Users/20693/Desktop/translation/models"),
-        Path.home() / "models",
-        Path.home() / ".cache" / "translation" / "models",
     ]
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
         candidates.insert(0, app_dir / "models")
 
+    # 2. Linux / WSL2 cross-platform mount point candidates (casing & mount variations)
+    linux_mount_roots = [
+        Path("/mnt/d"),
+        Path("/mnt/D"),
+        Path("/mnt/DATA"),
+        Path("/mnt/data"),
+        Path("/DATA"),
+        Path("/data"),
+    ]
+    # Scan /media and /run/media for automounts (e.g. /media/$USER/DATA or /media/DATA)
+    for media_root in [Path("/media"), Path("/run/media")]:
+        if media_root.exists():
+            try:
+                for entry in media_root.iterdir():
+                    if entry.is_dir():
+                        linux_mount_roots.append(entry)
+                        # Check sub-mounts like /media/username/DATA
+                        try:
+                            for sub in entry.iterdir():
+                                if sub.is_dir():
+                                    linux_mount_roots.append(sub)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+    for mroot in linux_mount_roots:
+        candidates.append(mroot / "TranslationDesktop" / "models")
+        candidates.append(mroot / "models")
+        candidates.append(mroot)
+
+    candidates.extend([
+        Path("/mnt/c/Users/20693/Desktop/translation/models"),
+        Path.home() / "models",
+        Path.home() / ".cache" / "translation" / "models",
+    ])
+
     for c in candidates:
-        if c.exists() and ((c / "NV3.5-ASR-0.6B").exists() or (c / "Qwen-ASR-0.6B").exists() or (c / "Index-Translate").exists()):
+        if c.exists() and (
+            (c / "NV3.5-ASR-0.6B").exists()
+            or (c / "Qwen-ASR-0.6B").exists()
+            or (c / "Index-Translate").exists()
+            or (c / "silero_vad.onnx").exists()
+        ):
             return c.resolve()
 
     for c in candidates:
