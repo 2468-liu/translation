@@ -208,6 +208,7 @@ if ($LlamaPath) {
     if (-not $backend) { throw "resolve_llama.ps1 没有给出结果" }
 }
 $Llama = $backend.path
+$LlamaIsCli = ($backend.is_cli -eq $true) -or ((Split-Path $Llama -Leaf) -match "^llama(\.exe)?$")
 # 这一段是给人看的，不是给机器看的：llama-common.dll 等依赖在 exe 同目录，复制单文件跑不起来。
 Write-Note "llama    $LlamaPlatform-$($backend.version) ($($backend.selected))"
 if ($backend.installed) {
@@ -280,13 +281,13 @@ if ($Chain -eq "gemma-e2e") {
     $env:TRANSLATION_ASR_BACKEND = $AsrBackend
     if ($env:TRANSLATION_MT_BACKEND -eq "gemma4") {
         # A previous gemma-e2e left these set in the environment this process inherited.
-        $env:TRANSLATION_MT_BACKEND = "hy-mt2"
+        $env:TRANSLATION_MT_BACKEND = "index-translate"
         $env:TRANSLATION_AUDIO_NATIVE = "0"
     }
     Write-Note "chain    $Chain  (asr=$AsrBackend, $($ChainSpec.status))"
 }
 
-$MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLower() } else { "hy-mt2" }
+$MtBackend = if ($env:TRANSLATION_MT_BACKEND) { $env:TRANSLATION_MT_BACKEND.ToLower() } else { "index-translate" }
 $MtPort = if ($MtBackend -eq "gemma4") { 8082 } else { 8080 }
 Write-Note "mt       $MtBackend  port $MtPort"
 
@@ -298,7 +299,13 @@ Write-Note "mt       $MtBackend  port $MtPort"
 # Ambiguity is a property of the directory, not of who is going to read the file, so it
 # is checked here and the result is reused below.
 $HyGguf = $null
-if ($MtBackend -ne "gemma4") {
+if ($MtBackend -eq "index-translate") {
+    $HyGguf = Get-IndexTranslateGguf
+    if (-not $HyGguf) {
+        $HyGguf = Get-HyMt2Gguf
+    }
+    Write-Note "weights  $(if ($HyGguf) { $HyGguf.Name } else { 'MISSING (Index-Translate Q4_K_M)' })"
+} elseif ($MtBackend -ne "gemma4") {
     $HyGguf = Get-HyMt2Gguf
     Write-Note "weights  $(if ($HyGguf) { $HyGguf.Name } else { 'MISSING (hy-mt2 Q4_K_M)' })"
 }
@@ -415,7 +422,8 @@ if (Test-Port $MtPort) {
             }
         }
         Write-Note "llama-server start: audio-native, projector on CPU"
-        Start-Process -FilePath $Llama -WorkingDirectory (Split-Path $Llama) -ArgumentList $args `
+        $launchArgs = if ($LlamaIsCli) { @("serve") + $args } else { $args }
+        Start-Process -FilePath $Llama -WorkingDirectory $Root -ArgumentList $launchArgs `
             -RedirectStandardOutput (Join-Path $LogDir "llama.out") `
             -RedirectStandardError (Join-Path $LogDir "llama.err") -WindowStyle Hidden
     }
@@ -472,7 +480,8 @@ if (Test-Port $MtPort) {
         } else {
             Write-Note "llama-server start: gemma4 translator, ngl=$ngl ctx=$ctx, no draft"
         }
-        Start-Process -FilePath $Llama -WorkingDirectory (Split-Path $Llama) -ArgumentList $args `
+        $launchArgs = if ($LlamaIsCli) { @("serve") + $args } else { $args }
+        Start-Process -FilePath $Llama -WorkingDirectory $Root -ArgumentList $launchArgs `
             -RedirectStandardOutput (Join-Path $LogDir "llama.out") `
             -RedirectStandardError (Join-Path $LogDir "llama.err") -WindowStyle Hidden
     }
@@ -492,20 +501,27 @@ if (Test-Port $MtPort) {
         # Startup log keeps -ngl / "offloaded x/y layers" / n_slots visible after the window is gone.
         $LlamaOut = Join-Path $LogDir "llama.out"
         $LlamaErr = Join-Path $LogDir "llama.err"
-        Write-Note "llama-server start: ngl=$ngl ctx=$ctx np=1 ($vramNote)"
-        Start-Process -FilePath $Llama -WorkingDirectory (Split-Path $Llama) -ArgumentList @(
+        Write-Note "llama-server start: ngl=$ngl ctx=$ctx np=3 ($vramNote)"
+        $llamaArgs = @(
             "-m", $gguf.FullName,
             "--host", "127.0.0.1",
             "--port", "8080",
             "-ngl", "$ngl",
             "-c", "$ctx",
             "-t", "4",
-            "-np", "1",
+            "-np", "3",
+            "--no-webui",
             # -lv 4 is the lowest level that prints
             # "load_tensors: offloaded 33/33 layers to GPU"; without it the
             # startup log never shows whether -ngl actually landed.
             "-lv", "4"
-        ) -RedirectStandardOutput $LlamaOut -RedirectStandardError $LlamaErr -WindowStyle Hidden
+        )
+        if ($gguf.Name -like "*Index*") {
+            $llamaArgs += @("--reasoning", "off")
+        }
+        $launchArgs = if ($LlamaIsCli) { @("serve") + $llamaArgs } else { $llamaArgs }
+        Start-Process -FilePath $Llama -WorkingDirectory $Root -ArgumentList $launchArgs `
+            -RedirectStandardOutput $LlamaOut -RedirectStandardError $LlamaErr -WindowStyle Hidden
         Write-Note "starting llama-server $($gguf.Name)"
 
         # The Qwen3 recogniser needs a second llama-server, and this has to be here
@@ -519,12 +535,30 @@ if (Test-Port $MtPort) {
         # -WorkingDirectory, which is the backend install directory. That produced a
         # server that died on a model path it could not find.
         if ($AsrBackend -eq "qwen3") {
-            $qwenModel = Join-Path $Root $env:TRANSLATION_QWEN3_ASR_MODEL
-            $qwenMmproj = Join-Path $Root $env:TRANSLATION_QWEN3_ASR_MMPROJ
-            if (-not $env:TRANSLATION_QWEN3_ASR_MODEL) {
-                $qwenModel = Join-Path $Root "models\Qwen-ASR-0.6B\Qwen3-ASR-0.6B-Q8_0.gguf"
-                $qwenMmproj = Join-Path $Root "models\Qwen-ASR-0.6B\mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
-            }
+            # Resolved by the same code that resolves them for the server.
+            #
+            # This used to build the path here, against the repository root, while
+            # server.config.resolve_models_dir() resolved the same files through a
+            # chain that includes D:/TranslationDesktop/models. The two disagreed
+            # and nothing said so: start.ps1 concluded the weights were missing and
+            # silently fell back to whisper-hy, printing
+            #
+            #     chain    qwen3-hy  (asr=qwen3, ...)
+            #     Qwen3-ASR 权重缺失 ... 改用 whisper
+            #     chain    实际启动 whisper-hy
+            #
+            # so a run labelled qwen3-hy was whisper-hy, with no error and a
+            # report that read correctly. Same shape as the twelve "MTP on" cells
+            # that were all off.
+            #
+            # The env override stays, but it is now treated as an absolute path --
+            # Join-Path concatenates rather than replaces, so Join-Path $Root
+            # 'D:\...' produced 'C:\repo\D:\...' and the override could never work
+            # for a model on another drive. There was no value that both worked and
+            # matched what the server loads.
+            $qwenPaths = & $Python -c "from server.config import QWEN3_ASR_MODEL, QWEN3_ASR_MMPROJ; print(QWEN3_ASR_MODEL); print(QWEN3_ASR_MMPROJ)"
+            $qwenModel = if ($env:TRANSLATION_QWEN3_ASR_MODEL) { $env:TRANSLATION_QWEN3_ASR_MODEL } else { $qwenPaths[0] }
+            $qwenMmproj = if ($env:TRANSLATION_QWEN3_ASR_MMPROJ) { $env:TRANSLATION_QWEN3_ASR_MMPROJ } else { $qwenPaths[1] }
             # 2.53.0 is the only installed build with the multimodal projector path this
             # needs. It is resolved by absolute path so this one is pinned regardless of
             # what $Llama is.
@@ -537,26 +571,74 @@ if (Test-Port $MtPort) {
             # the start.log line that said "newest installed" was right there.
             $llama53 = Get-ChildItem "$env:USERPROFILE\.lmstudio\extensions\backends\llama.cpp-$LlamaPlatform-2.53.0\llama-server.exe" -ErrorAction SilentlyContinue |
                 Select-Object -First 1
+            $qwenExe = if ($llama53) { $llama53.FullName } else { $Llama }
             if (-not (Test-Path $qwenModel) -or -not (Test-Path $qwenMmproj)) {
-                Write-Note "Qwen3-ASR 权重缺失（$qwenModel / $qwenMmproj）；识别会卡住，改用 whisper"
-                $env:TRANSLATION_ASR_BACKEND = "whisper"
-                $AsrBackend = "whisper"
-                Write-Note "chain    实际启动 whisper-hy"
-                $ChainRunning = "whisper-hy"
-            } elseif (-not $llama53) {
-                Write-Note "找不到 llama 2.53.0（Qwen3-ASR 需要）；识别会卡住，改用 whisper"
-                $env:TRANSLATION_ASR_BACKEND = "whisper"
-                $AsrBackend = "whisper"
-                Write-Note "chain    实际启动 whisper-hy"
-                $ChainRunning = "whisper-hy"
+                throw "Qwen3-ASR 权重缺失（$qwenModel / $qwenMmproj）。Fail-Fast 原则：拒绝静默降级为 whisper，请检查 D:\TranslationDesktop\models\Qwen-ASR-0.6B"
+            } elseif (-not $qwenExe -or -not (Test-Path $qwenExe)) {
+                throw "找不到可用的 llama 引擎（Qwen3-ASR 需要支持 mmproj 的 llama-server 或 llama.exe）。"
             } elseif (Test-Port $Qwen3Port) {
-                Write-Note "端口 $Qwen3Port 已被占用，沿用现有的 Qwen3-ASR 服务"
+                $qwenHealthy = $false
+                try {
+                    $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Qwen3Port/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue
+                    if ($resp.StatusCode -eq 200) { $qwenHealthy = $true }
+                } catch {}
+                if ($qwenHealthy) {
+                    Write-Note "端口 $Qwen3Port 已被占用且健康，沿用现有的 Qwen3-ASR 服务"
+                } else {
+                    Write-Note "端口 $Qwen3Port 已被占用但未响应健康检查，正在杀死并重新拉起..."
+                    try {
+                        $lines = & netstat -ano -p TCP | Select-String ":$Qwen3Port\s+.*LISTENING"
+                        foreach ($l in $lines) {
+                            $parts = ($l.Line.Trim() -split "\s+")
+                            $pidToKill = [int]$parts[-1]
+                            if ($pidToKill) { taskkill.exe /PID $pidToKill /T /F 2>&1 | Out-Null }
+                        }
+                    } catch {}
+                    Start-Sleep -Milliseconds 500
+                    # Proceed to launch
+                    Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 2, -c 4096)"
+                    $qwenIsCli = ((Split-Path $qwenExe -Leaf) -match "^llama(\.exe)?$")
+                    $qwenLaunchArgs = if ($qwenIsCli) { @("serve") } else { @() }
+                    $qwenLaunchArgs += @(
+                        "-m", $qwenModel,
+                        "--mmproj", $qwenMmproj,
+                        "--host", "127.0.0.1",
+                        "--port", "$Qwen3Port",
+                        "-ngl", "99",
+                        "-c", "4096",
+                        "-t", "4",
+                        "-np", "2"
+                    )
+                    Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
+                       -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
+                       -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden
+                    $qwenReady = $false
+                    for ($i = 0; $i -lt 30; $i++) {
+                        Start-Sleep -Seconds 1
+                        if (Test-Port $Qwen3Port) { $qwenReady = $true; break }
+                    }
+                    if ($qwenReady) {
+                        Write-Note "Qwen3-ASR ready on $Qwen3Port"
+                    } else {
+                        try {
+                            $lines = & netstat -ano -p TCP | Select-String ":$Qwen3Port\s+.*LISTENING"
+                            foreach ($l in $lines) {
+                                $parts = ($l.Line.Trim() -split "\s+")
+                                $pidToKill = [int]$parts[-1]
+                                if ($pidToKill) { taskkill.exe /PID $pidToKill /T /F 2>&1 | Out-Null }
+                            }
+                        } catch {}
+                        throw "Qwen3-ASR 在 30 秒内未就绪（端口 $Qwen3Port）。Fail-Fast 原则：启动中止，已清理显存，日志在 $LogDir\llama8099.err"
+                    }
+                }
             } else {
                 # -np 1. Measured: with four slots the 30-second repetition events were
                 # still bounded to the same 128-token cap, so slots were not the trigger,
                 # but one slot removes the concurrency the pipeline does not need anyway.
-                Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port (llama 2.53.0, -np 1, -c 4096)"
-                Start-Process -FilePath $llama53.FullName -WorkingDirectory (Split-Path $llama53.FullName) -ArgumentList @(
+                Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 2, -c 4096)"
+                $qwenIsCli = ((Split-Path $qwenExe -Leaf) -match "^llama(\.exe)?$")
+                $qwenLaunchArgs = if ($qwenIsCli) { @("serve") } else { @() }
+                $qwenLaunchArgs += @(
                     "-m", $qwenModel,
                     "--mmproj", $qwenMmproj,
                     "--host", "127.0.0.1",
@@ -564,31 +646,46 @@ if (Test-Port $MtPort) {
                     "-ngl", "99",
                     "-c", "4096",
                     "-t", "4",
-                    "-np", "1"
-                ) -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
+                    "-np", "2"
+                )
+                Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
+                   -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
                    -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden
                 # Poll rather than sleep. Loading the audio tower takes longer than the
                 # python service does, so a fixed wait would hand over a half-ready
                 # recogniser and the first three recognitions would be slow for no
                 # reason a reader could see.
                 $qwenReady = $false
-                for ($i = 0; $i -lt 60; $i++) {
-                    Start-Sleep -Seconds 5
+                for ($i = 0; $i -lt 30; $i++) {
+                    Start-Sleep -Seconds 1
                     if (Test-Port $Qwen3Port) { $qwenReady = $true; break }
                 }
                 if ($qwenReady) {
                     Write-Note "Qwen3-ASR ready on $Qwen3Port"
                 } else {
-                    # Falling back beats starting a backend whose recogniser cannot answer.
-                    # The reason goes to the log because there is nowhere else for it to
-                    # go: the extension is told the backend started, and a backend on the
-                    # wrong chain is exactly the kind of thing that must be visible.
-                    Write-Note "Qwen3-ASR 在 75 秒内没就绪；改用 whisper 启动"
-                    $env:TRANSLATION_ASR_BACKEND = "whisper"
-                    $AsrBackend = "whisper"
-                    Write-Note "chain    实际启动 whisper-hy"
-                $ChainRunning = "whisper-hy"
+                    try {
+                        $lines = & netstat -ano -p TCP | Select-String ":$Qwen3Port\s+.*LISTENING"
+                        foreach ($l in $lines) {
+                            $parts = ($l.Line.Trim() -split "\s+")
+                            $pidToKill = [int]$parts[-1]
+                            if ($pidToKill) { taskkill.exe /PID $pidToKill /T /F 2>&1 | Out-Null }
+                        }
+                    } catch {}
+                    throw "Qwen3-ASR 在 30 秒内未就绪（端口 $Qwen3Port）。Fail-Fast 原则：启动中止，已清理显存，日志在 $LogDir\llama8099.err"
                 }
+            }
+        } else {
+            # 非 Qwen 模式（Nemotron / Whisper）：释放端口 8099 上的旧 Qwen 服务以腾出全部 GPU 显存
+            if (Test-Port $Qwen3Port) {
+                Write-Note "非 Qwen 模式：释放端口 $Qwen3Port 上的旧服务以腾出显存..."
+                try {
+                    $lines = & netstat -ano -p TCP | Select-String ":$Qwen3Port\s+.*LISTENING"
+                    foreach ($l in $lines) {
+                        $parts = ($l.Line.Trim() -split "\s+")
+                        $pidToKill = [int]$parts[-1]
+                        if ($pidToKill) { taskkill.exe /PID $pidToKill /T /F 2>&1 | Out-Null }
+                    }
+                } catch {}
             }
         }
     }
