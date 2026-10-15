@@ -506,9 +506,11 @@ class QtCaptionWindowTests(unittest.TestCase):
         nv_act = next(a for a in ctx_menu.actions() if "NV (Nemotron)" in a.text())
         self.assertIsNotNone(nv_act.menu())
         nv_sub_texts = [a.text() for a in nv_act.menu().actions() if a.text()]
+        self.assertTrue(any("80ms" in t for t in nv_sub_texts))
         self.assertTrue(any("160ms" in t for t in nv_sub_texts))
-        self.assertTrue(any("240ms" in t for t in nv_sub_texts))
         self.assertTrue(any("320ms" in t for t in nv_sub_texts))
+        self.assertTrue(any("560ms" in t for t in nv_sub_texts))
+        self.assertTrue(any("1120ms" in t for t in nv_sub_texts))
 
         # Verify appearance sub-menu items (only visual geometry, font, color; no punct or nested bilingual remnants)
         style_act = next(a for a in ctx_menu.actions() if "字幕外观设置" in a.text())

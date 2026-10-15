@@ -280,7 +280,7 @@ class NemotronAsrEngine:
         lib.nemo_speech_asr_result_destroy.restype = None
 
     def transcribe(self, audio: np.ndarray, language: str | None) -> tuple[str, str | None, float]:
-        if audio.size < 1600:
+        if audio.size < 800:
             return "", language, 0.0
 
         if audio.dtype != np.float32:

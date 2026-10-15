@@ -117,10 +117,11 @@ QWEN_CADENCES: list[tuple[str, int]] = [
 ]
 
 NV_CADENCES: list[tuple[str, int]] = [
-    ("⚡ 160ms (推荐·极速整句直出·短气口)", 160),
-    ("🌊 240ms (平滑切块·标准气口)", 240),
-    ("🛡️ 320ms (抗抖动·整句稳定)", 320),
-    ("🧱 480ms (高缓冲·大块整句)", 480),
+    ("⚡ 最低延迟 80ms (Lowest latency·极致响应)", 80),
+    ("🚀 快速 160ms (Fast·官方推荐·平衡首选)", 160),
+    ("⚖️ 均衡 320ms (Balanced·模型默认·通用流式)", 320),
+    ("🎯 高准确率 560ms (Accurate·高保真低容错)", 560),
+    ("💎 最高准确率 1120ms (Most accurate·1.12s高精转录)", 1120),
 ]
 
 
@@ -198,7 +199,7 @@ class CaptionMenuBuilder:
         # Backward compatibility aliases for scene presets
         self.win._scene_movie_act = self.win._qwen_actions[0]   # 1000ms
         self.win._scene_speech_act = self.win._qwen_actions[2]  # 500ms
-        self.win._scene_stream_act = self.win._nv_actions[0]    # 160ms
+        self.win._scene_stream_act = next((a for a in self.win._nv_actions if a.data().get("ms") == 160), self.win._nv_actions[0])    # 160ms
 
         # 2. Direct Core Toggles
         self.win._rolling_two_lines_act = menu.addAction("📜 双行滚动字幕 (Google同款·抗高密度对白)")
@@ -370,7 +371,7 @@ class CaptionMenuBuilder:
         # Backward compatibility aliases for tray scene presets
         self.win._tray_scene_movie = self.win._tray_qwen_actions[0]   # 1000ms
         self.win._tray_scene_speech = self.win._tray_qwen_actions[2]  # 500ms
-        self.win._tray_scene_stream = self.win._tray_nv_actions[0]    # 160ms
+        self.win._tray_scene_stream = next((a for a in self.win._tray_nv_actions if a.data().get("ms") == 160), self.win._tray_nv_actions[0])    # 160ms
 
         menu.addSeparator()
 
@@ -471,7 +472,7 @@ class CaptionMenuBuilder:
             return "movie"
         elif backend == "qwen3" and ms == 500:
             return "speech"
-        elif backend == "nemotron" or ms == 160:
+        elif backend == "nemotron" or ms in (80, 160, 320, 560, 1120):
             return "stream"
         return "movie"
 
