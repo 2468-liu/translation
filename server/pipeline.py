@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 import numpy as np
@@ -25,7 +26,7 @@ from .translate import (
     collapse_translation_repeats,
     stream_translation,
 )
-from .vad import UtteranceSplitter, audio_model_tuning, whisper_tuning
+from .vad import UtteranceSplitter, audio_model_tuning, standard_tuning
 
 
 class Session:
@@ -57,8 +58,11 @@ class Session:
         self.audio_native = asr is None
         self.asr = asr
         if tuning is None:
-            tuning = audio_model_tuning() if self.audio_native else whisper_tuning()
+            tuning = audio_model_tuning() if self.audio_native else standard_tuning()
         self.vad = UtteranceSplitter(tuning=tuning)
+        from .audio_enhancer import AudioEnhancer
+        from . import config
+        self.enhancer = AudioEnhancer(enabled=getattr(config, "AUDIO_ENHANCE_ENABLED", True))
         self.jobs: asyncio.Queue = asyncio.Queue()
         self.language: str | None = None
         self.language_locked = False
@@ -82,11 +86,24 @@ class Session:
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=2.0))
         self.meter_samples = 0
         self.meter_peak = 0.0
+        self.translate_slots = getattr(config, "TRANSLATION_SLOTS", 3)
+        self._translate_sem = asyncio.Semaphore(self.translate_slots)
+        self.asr_slots = int(getattr(config, "ASR_SLOTS", getattr(config, "QWEN3_ASR_SLOTS", 2)))
+        self._asr_sem = asyncio.Semaphore(self.asr_slots)
+        self._active_final_tasks: set[asyncio.Task] = set()
+        self._draft_task: asyncio.Task | None = None
+        self._draft_job_id: int = 0
+        self._final_seq: int = 0
+        self._next_commit_seq: int = 1
+        self._completed_finals: dict[int, tuple[dict, str, str]] = {}
+        self._asr_texts: dict[int, str] = {}
         self.translate_task: asyncio.Task | None = None
+        self.translate_task_is_final: bool = False
         self.pending_translate: tuple[str, bool, str | None, int] | None = None
         self.media_generation = 0
         self.shown_translation = ""
         self.shown_source = ""
+        self.target_language = "zh"
         self.api: dict | None = None
         self.api_error = ""
 
@@ -105,7 +122,22 @@ class Session:
             self.api = {"enabled": True, "url": url, "key": key, "model": model}
         self.warned_translate = False
 
+    def set_target_language(self, target_language: str | None) -> None:
+        old_tgt = self.target_language
+        new_tgt = (target_language or "zh").strip().lower()
+        if not new_tgt:
+            new_tgt = "zh"
+        if old_tgt != new_tgt:
+            self.target_language = new_tgt
+            self.last_translated = ""
+            self.last_translation = ""
+            self.context.clear()
+
     def set_language(self, language: str | None) -> None:
+        old_lang = self.language if self.language_locked else "auto"
+        new_lang = language if (language and language != "auto") else "auto"
+        changed = old_lang != new_lang
+
         if language and language != "auto":
             self.language = language
             self.language_locked = True
@@ -113,18 +145,68 @@ class Session:
             self.language = None
             self.language_locked = False
 
+        if changed:
+            self._partial_result = None
+            self._last_audio_final = ""
+            self.last_text = ""
+            self.last_translated = ""
+            self.context.clear()
+
+    def switch_asr(self, new_asr: Any, cadence_ms: int | None = None) -> None:
+        """Seamlessly hot-switch the active recognizer on this persistent pipeline."""
+        old_asr = self.asr
+        self.asr = new_asr
+        self._partial_result = None
+        self._last_audio_final = ""
+        self.last_text = ""
+        self.last_translated = ""
+        self.last_translation = ""
+        self.last_translation_src = ""
+        self.pending_final_src = ""
+        self.shown_translation = ""
+        self.shown_source = ""
+        self.stable = 0
+        self.vad.reset()
+        if cadence_ms is not None:
+            from .vad import apply_partial_interval
+            apply_partial_interval(self.vad, cadence_ms)
+        if hasattr(old_asr, "close") and old_asr is not new_asr:
+            try:
+                old_asr.close()
+            except Exception:
+                pass
+
+    @property
+    def is_block_mode(self) -> bool:
+        from . import config
+        return bool(getattr(config, "BLOCK_OUTPUT", True) or config.chain_output() == "block")
+
     def _asr_language(self) -> str | None:
         return self.language if self.language_locked else None
 
     def reset_for_media(self) -> None:
         self.media_generation += 1
         self.job_id += 1
+        if self._draft_task and not self._draft_task.done():
+            self._draft_task.cancel()
+        self._draft_task = None
+        for t in list(self._active_final_tasks):
+            if not t.done():
+                t.cancel()
+        self._active_final_tasks.clear()
+        self._completed_finals.clear()
+        self._asr_texts.clear()
+        self._next_commit_seq = 1
+        self._final_seq = 0
         task = self.translate_task
         if task and not task.done():
             task.cancel()
         self.translate_task = None
         self.pending_translate = None
+        self.translate_task_is_final = False
         self.vad.reset()
+        if getattr(self, "enhancer", None):
+            self.enhancer.reset()
         self.last_text = ""
         self.stable = 0
         self.last_translated = ""
@@ -141,6 +223,17 @@ class Session:
         self._last_audio_final = ""
         if not self.language_locked:
             self.language = None
+        # Drain pending queue so stale audio jobs are purged immediately
+        while not self.jobs.empty():
+            try:
+                self.jobs.get_nowait()
+                self.jobs.task_done()
+            except Exception:
+                break
+
+    def reset(self) -> None:
+        """Reset internal speech recognition and translation state."""
+        self.reset_for_media()
 
     def push_pcm(self, payload: bytes) -> list[dict]:
         """Feed audio to the splitter. Whoever owns capture calls this.
@@ -178,8 +271,14 @@ class Session:
                 self.stable = 0
                 self.last_translated = ""
                 self._partial_result = None
+                self.shown_source = ""
+                self.shown_translation = ""
                 messages.append({"type": "segment_start"})
             elif kind in ("partial", "end") and audio is not None and audio.size:
+                # In block mode, intermediate partials (flag=False, not early_partial)
+                # are non-reusable throwaway work that would otherwise block the ASR pipeline.
+                if self.is_block_mode and kind == "partial" and not bool(flag):
+                    continue
                 backlog = self.jobs.qsize()
                 self.jobs.put_nowait((kind, audio, perf.mono(), bool(flag)))
                 perf.emit(
@@ -194,6 +293,11 @@ class Session:
         return messages
 
     async def close(self) -> None:
+        if self._draft_task and not self._draft_task.done():
+            self._draft_task.cancel()
+        for t in list(self._active_final_tasks):
+            if not t.done():
+                t.cancel()
         task = self.translate_task
         if task and not task.done():
             task.cancel()
@@ -205,18 +309,59 @@ class Session:
                 kind, audio, queued_at, reuse = await self.jobs.get()
                 try:
                     if kind == "partial":
+                        if self.is_block_mode and not reuse:
+                            continue
                         kind, audio, queued_at, reuse = self._latest(
                             kind, audio, queued_at, reuse
                         )
-                    await self._run(
-                        kind, audio, send, perf.ms(queued_at), self.jobs.qsize(), reuse
-                    )
+                        if kind == "partial":
+                            await self._run(
+                                kind, audio, send, perf.ms(queued_at), self.jobs.qsize(), reuse
+                            )
+                        elif kind == "end":
+                            self._final_seq += 1
+                            seq = self._final_seq
+                            task = asyncio.create_task(
+                                self._run_concurrent_end(
+                                    audio, send, seq, perf.ms(queued_at), self.jobs.qsize(), reuse
+                                )
+                            )
+                            self._active_final_tasks.add(task)
+                            task.add_done_callback(lambda t: self._active_final_tasks.discard(t))
+                    elif kind == "end":
+                        self._final_seq += 1
+                        seq = self._final_seq
+                        task = asyncio.create_task(
+                            self._run_concurrent_end(
+                                audio, send, seq, perf.ms(queued_at), self.jobs.qsize(), reuse
+                            )
+                        )
+                        self._active_final_tasks.add(task)
+                        task.add_done_callback(lambda t: self._active_final_tasks.discard(t))
                 except Exception as exc:
                     print(f"pipeline error: {exc}")
                 finally:
                     self.jobs.task_done()
         except asyncio.CancelledError:
             return
+
+    async def _run_concurrent_end(
+        self,
+        audio: np.ndarray,
+        send,
+        seq: int,
+        qwait: float = 0.0,
+        qlen: int = 0,
+        reuse: bool = False,
+    ) -> None:
+        try:
+            async with self._asr_sem:
+                await self._run("end", audio, send, qwait, qlen, reuse, seq=seq)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"concurrent end error (seq={seq}): {exc}")
+            await self._commit_final(seq, None, "", "", send)
 
     def _latest(
         self, kind: str, audio: np.ndarray, queued_at: float, reuse: bool
@@ -245,10 +390,18 @@ class Session:
         qwait: float = 0.0,
         qlen: int = 0,
         reuse: bool = False,
+        seq: int | None = None,
     ) -> None:
         generation = self.media_generation
         if self.audio_native:
             await self._run_audio_native(kind, audio, send, qwait, qlen, generation)
+            return
+        if generation != self.media_generation:
+            perf.emit("pipeline", "stale", reason="media", kind=kind)
+            if kind == "end" and seq is not None:
+                await self._commit_final(seq, None, "", "", send)
+            return
+        if self.is_block_mode and kind == "partial" and not reuse:
             return
         text, detected, prob = "", None, 0.0
         asr_ms = 0.0
@@ -265,8 +418,11 @@ class Session:
             )
         else:
             t_asr = perf.mono()
+            asr_audio = audio
+            if getattr(self, "enhancer", None) and getattr(self.enhancer, "enabled", False):
+                asr_audio = self.enhancer.process_samples(audio)
             text, detected, prob = await asyncio.to_thread(
-                self.asr.transcribe, audio, self._asr_language()
+                self.asr.transcribe, asr_audio, self._asr_language()
             )
             asr_ms = perf.ms(t_asr)
             perf.emit(
@@ -288,26 +444,37 @@ class Session:
                 self._partial_result = None
         if generation != self.media_generation:
             perf.emit("pipeline", "stale", reason="media", kind=kind)
+            if kind == "end" and seq is not None:
+                await self._commit_final(seq, None, "", "", send)
             return
         current_language = self.language if self.language_locked else detected
-        if detected and not self.language_locked and kind == "end":
+        if detected and not self.language_locked:
+            self._last_detected = detected
             self.language = detected
         if not text:
+            if kind == "end" and seq is not None:
+                await self._commit_final(seq, None, "", "", send)
             return
         final = kind == "end"
+        if final and seq is not None and text:
+            self._asr_texts[seq] = text
         await send({
             "type": "asr",
             "text": text,
             "lang": current_language,
             "prob": round(prob, 3),
             "final": final,
+            "asr_ms": round(asr_ms, 1),
         })
         if text == self.last_text:
             self.stable += 1
         else:
             self.last_text = text
             self.stable = 1
-        should_translate = final or self.stable >= PARTIAL_STABLE_REPEAT
+        if self.is_block_mode:
+            should_translate = final
+        else:
+            should_translate = final or self.stable >= PARTIAL_STABLE_REPEAT
         if not should_translate:
             return
         if text == self.last_translated:
@@ -321,8 +488,11 @@ class Session:
                             "type": "translation",
                             "text": self.last_translation,
                             "final": True,
+                            "source": text,
                         }
                     )
+                    if seq is not None:
+                        await self._commit_final(seq, None, text, self.last_translation, send)
                 else:
                     # Still streaming. last_translation belongs to the previous
                     # sentence, so sending it now would label that text as this
@@ -336,40 +506,163 @@ class Session:
                         chars=len(text),
                         held=self.last_translation_src or "-",
                     )
+                    if seq is not None:
+                        await self._commit_final(seq, None, text, "", send)
             return
         self.last_translated = text
-        self._schedule_translate(text, final, current_language, generation, send)
+        if final:
+            self.last_translated = ""
+        try:
+            self._schedule_translate(text, final, current_language, generation, send, seq=seq)
+        except TypeError:
+            self._schedule_translate(text, final, current_language, generation, send)
 
     def _schedule_translate(
-        self, text: str, final: bool, language: str | None, generation: int, send
-    ) -> None:
-        if self.translate_task and not self.translate_task.done():
-            self.pending_translate = (text, final, language, generation)
-            perf.emit("pipeline", "defer", chars=len(text), final=final)
-            return
-        self.job_id += 1
-        job = self.job_id
-        self.translate_task = asyncio.create_task(
-            self._translate_job(text, final, language, generation, job, send)
-        )
-
-    async def _translate_job(
         self,
         text: str,
         final: bool,
         language: str | None,
         generation: int,
-        job: int,
         send,
+        seq: int | None = None,
+    ) -> None:
+        if not final:
+            # Active draft preemption: only keep newest draft for in-flight utterance
+            if self._draft_task and not self._draft_task.done():
+                self._draft_task.cancel()
+            self._draft_job_id += 1
+            draft_id = self._draft_job_id
+            self._draft_task = asyncio.create_task(
+                self._run_draft_translate(text, language, generation, draft_id, send)
+            )
+            self.translate_task = self._draft_task
+            self.translate_task_is_final = False
+        else:
+            # Authoritative final utterance: cancel in-flight draft, enqueue lossless final task
+            if self._draft_task and not self._draft_task.done():
+                self._draft_task.cancel()
+                self._draft_task = None
+            if seq is None:
+                self._final_seq += 1
+                seq = self._final_seq
+            self.job_id += 1
+            job = self.job_id
+            task = asyncio.create_task(
+                self._run_final_translate(text, language, generation, seq, job, send)
+            )
+            self._active_final_tasks.add(task)
+            task.add_done_callback(lambda t: self._active_final_tasks.discard(t))
+            self.translate_task = task
+            self.translate_task_is_final = True
+
+    async def _run_draft_translate(
+        self, text: str, language: str | None, generation: int, draft_id: int, send
     ) -> None:
         try:
-            await self._translate(text, final, language, generation, job, send)
+            async with self._translate_sem:
+                if generation != self.media_generation or draft_id != self._draft_job_id:
+                    return
+                await self._execute_translation(
+                    text=text,
+                    final=False,
+                    language=language,
+                    generation=generation,
+                    job=draft_id,
+                    seq=None,
+                    send=send,
+                )
+        except asyncio.CancelledError:
+            perf.emit("pipeline", "draft_cancelled", job=draft_id, chars=len(text))
+        except Exception as e:
+            print(f"[Pipeline] Draft translation error: {e}")
         finally:
-            pending = self.pending_translate
-            self.pending_translate = None
-            self.translate_task = None
-            if pending and pending[0] != text and pending[3] == self.media_generation:
-                self._schedule_translate(pending[0], pending[1], pending[2], pending[3], send)
+            if self.translate_task is self._draft_task:
+                self.translate_task = None
+
+    async def _run_final_translate(
+        self, text: str, language: str | None, generation: int, seq: int, job: int, send
+    ) -> None:
+        task = asyncio.current_task()
+        committed = False
+        try:
+            async with self._translate_sem:
+                if generation != self.media_generation:
+                    return
+                await self._execute_translation(
+                    text=text,
+                    final=True,
+                    language=language,
+                    generation=generation,
+                    job=job,
+                    seq=seq,
+                    send=send,
+                )
+                committed = True
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[Pipeline] Final translation error (seq={seq}): {e}")
+        finally:
+            if not committed:
+                # Guaranteed sequence release: advance next_commit_seq so pipeline never deadlocks
+                await self._commit_final(seq, None, text, "", send)
+            if self.translate_task is task:
+                self.translate_task = None
+
+    async def _commit_final(
+        self, seq: int, payload: dict | None, text: str, acc: str, send
+    ) -> None:
+        # Anti-memory-leak: Drop late orphan entries if seq was already bypassed by desync/safeguard
+        if seq < self._next_commit_seq:
+            self._asr_texts.pop(seq, None)
+            return
+
+        if payload is not None:
+            self._completed_finals[seq] = (payload, text, acc)
+        else:
+            self._completed_finals[seq] = None
+
+        # Clean up any lingering obsolete keys from dicts
+        for old_seq in [k for k in self._completed_finals if k < self._next_commit_seq]:
+            self._completed_finals.pop(old_seq, None)
+        for old_seq in [k for k in self._asr_texts if k < self._next_commit_seq - 1]:
+            self._asr_texts.pop(old_seq, None)
+
+        # Sequentially drain completed finals immediately
+        while self._next_commit_seq in self._completed_finals:
+            curr_seq = self._next_commit_seq
+            item = self._completed_finals.pop(self._next_commit_seq)
+            self._next_commit_seq += 1
+            self._asr_texts.pop(curr_seq, None)
+            if item is not None:
+                c_payload, c_text, c_acc = item
+                self.shown_translation = c_acc
+                self.shown_source = c_text
+                self.last_translation = c_acc
+                self.last_translation_src = c_text
+                if c_acc.strip():
+                    self._remember(c_text, c_acc)
+                await send(c_payload)
+
+        # Anti-deadlock safeguard: if sequence got desynced by dropped slot, fast-forward to lowest pending
+        if self._completed_finals:
+            min_avail = min(self._completed_finals.keys())
+            if min_avail > self._next_commit_seq + 1:
+                self._next_commit_seq = min_avail
+                while self._next_commit_seq in self._completed_finals:
+                    curr_seq = self._next_commit_seq
+                    item = self._completed_finals.pop(self._next_commit_seq)
+                    self._next_commit_seq += 1
+                    self._asr_texts.pop(curr_seq, None)
+                    if item is not None:
+                        c_payload, c_text, c_acc = item
+                        self.shown_translation = c_acc
+                        self.shown_source = c_text
+                        self.last_translation = c_acc
+                        self.last_translation_src = c_text
+                        if c_acc.strip():
+                            self._remember(c_text, c_acc)
+                        await send(c_payload)
 
     async def _translate(
         self,
@@ -378,6 +671,27 @@ class Session:
         language: str | None,
         generation: int,
         job: int,
+        send,
+        seq: int | None = None,
+    ) -> None:
+        return await self._execute_translation(
+            text=text,
+            final=final,
+            language=language,
+            generation=generation,
+            job=job,
+            seq=seq,
+            send=send,
+        )
+
+    async def _execute_translation(
+        self,
+        text: str,
+        final: bool,
+        language: str | None,
+        generation: int,
+        job: int,
+        seq: int | None,
         send,
     ) -> None:
         if self.api_error:
@@ -389,12 +703,35 @@ class Session:
         started_at = perf.mono()
         ttft_ms = None
         pieces = 0
+
+        # Context TTL: If > 30s of silence or scene break, clear stale context to prevent KV bloat
+        now = time.monotonic()
+        if getattr(self, "_context_last_ts", 0.0) > 0 and (now - self._context_last_ts > 30.0):
+            self.context.clear()
+        self._context_last_ts = now
+
+        prev_src = self.shown_source if (self.shown_source and self.shown_source != text) else ""
+        if not prev_src and seq is not None and (seq - 1) in self._asr_texts:
+            prev_src = self._asr_texts[seq - 1]
+        prev_trans = self.shown_translation if prev_src else ""
         try:
-            async for piece in stream_translation(
-                text, language, self.context, self.client, self.api
-            ):
+            try:
+                stream = stream_translation(
+                    text,
+                    language,
+                    self.context,
+                    self.client,
+                    self.api,
+                    target_language=self.target_language,
+                    prev_source=prev_src,
+                    prev_translation=prev_trans,
+                )
+            except TypeError:
+                stream = stream_translation(
+                    text, language, self.context, self.client, self.api
+                )
+            async for piece in stream:
                 if ttft_ms is None:
-                    # First chunk back from the translation server.
                     ttft_ms = perf.ms(started_at)
                     perf.emit(
                         "pipeline",
@@ -405,18 +742,28 @@ class Session:
                         job=job,
                     )
                 pieces += 1
-                if generation != self.media_generation or job != self.job_id:
+                if generation != self.media_generation:
+                    return
+                if not final and job != self._draft_job_id:
                     return
                 if piece.startswith("\r"):
                     acc = piece[1:]
                 else:
                     acc += piece
                 acc = collapse_translation_repeats(acc)
-                if not self._caption_accepts(acc):
-                    continue
-                self.shown_translation = acc
-                self.shown_source = text
-                await send({"type": "translation", "text": acc, "final": False})
+                if not self.is_block_mode:
+                    if not self._caption_accepts(acc):
+                        continue
+                    if not final or seq == self._next_commit_seq:
+                        self.shown_translation = acc
+                        self.shown_source = text
+                        await send({
+                            "type": "translation",
+                            "text": acc,
+                            "final": False,
+                            "source": text,
+                            "ttft_ms": round(ttft_ms or 0.0, 1),
+                        })
         except httpx.HTTPError as exc:
             if not self.warned_translate:
                 self.warned_translate = True
@@ -449,27 +796,49 @@ class Session:
                     final=final,
                     job=job,
                 )
-        if generation != self.media_generation or job != self.job_id:
+
+        if generation != self.media_generation:
             return
-        self.last_translation = acc
-        self.last_translation_src = text
-        # A closing event that arrived while this job was streaming is answered
-        # here, with the text that actually belongs to it.
-        promote = self.pending_final_src == text
-        if promote:
-            self.pending_final_src = ""
-        # Nothing downstream reads `final`; it exists so a recorder can tell an
-        # utterance apart from a mid-sentence piece. `_caption_accepts` is False
-        # here for almost every job, because the streaming loop already put the
-        # same text on screen, so without this the final message is never sent.
-        if final or promote or self._caption_accepts(acc):
+
+        if not final:
+            if job == self._draft_job_id:
+                self.last_translation = acc
+                self.last_translation_src = text
+                promote = self.pending_final_src == text
+                if promote:
+                    self.pending_final_src = ""
+                    if acc.strip():
+                        self._remember(text, acc)
+                    await send({
+                        "type": "translation",
+                        "text": acc,
+                        "final": True,
+                        "source": text,
+                        "ttft_ms": round(ttft_ms or 0.0, 1),
+                    })
+        elif seq is not None:
+            final_payload = {
+                "type": "translation",
+                "text": acc,
+                "final": True,
+                "source": text,
+                "ttft_ms": round(ttft_ms or 0.0, 1),
+            }
+            await self._commit_final(seq, final_payload, text, acc, send)
+        elif final:
+            self.last_translation = acc
+            self.last_translation_src = text
             self.shown_translation = acc
             self.shown_source = text
-            await send(
-                {"type": "translation", "text": acc, "final": bool(final or promote)}
-            )
-        if (final or promote) and acc.strip():
-            self._remember(text, acc)
+            if acc.strip():
+                self._remember(text, acc)
+            await send({
+                "type": "translation",
+                "text": acc,
+                "final": True,
+                "source": text,
+                "ttft_ms": round(ttft_ms or 0.0, 1),
+            })
 
     async def _run_audio_native(
         self,
@@ -547,7 +916,7 @@ class Session:
             # model has already heard the whole fragment, so its output is the
             # last word on the subject.
             for step in self._growth_steps(acc):
-                await send({"type": "translation", "text": step, "final": final})
+                await send({"type": "translation", "text": step, "final": final, "source": ""})
         elif sent_any:
             perf.emit("audio", "rejected", kind=kind, chars=len(accepted[-1]))
 
@@ -609,6 +978,11 @@ class Session:
         src = source.strip()
         if not cleaned or not src:
             return
+        now = time.monotonic()
+        if getattr(self, "_context_last_ts", 0.0) > 0 and (now - self._context_last_ts > 30.0):
+            self.context.clear()
+        self._context_last_ts = now
+
         if self.context and self.context[-1] == (src, cleaned):
             return
         self.context.append((src, cleaned))
