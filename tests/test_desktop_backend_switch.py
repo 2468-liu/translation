@@ -1,6 +1,7 @@
+import os
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
-import sys
 from PyQt6.QtWidgets import QApplication
 
 from desktop_app import DesktopApp, _kill_port, _pids_on_port
@@ -153,7 +154,71 @@ class DesktopBackendSwitchTests(unittest.TestCase):
             self.assertEqual(app._current_asr_backend, "qwen3")
             self.assertTrue(hasattr(app, "_startup_warning"))
             self.assertIn("Windows", app._startup_warning)
+    @patch("desktop_app.QLocalServer")
+    @patch("desktop_app.QtCaptionWindow")
+    @patch("desktop_app.Session")
+    @patch("desktop_app.ProcessLoopbackManager")
+    @patch("desktop_app._ensure_llama_server")
+    @patch("desktop_app._ensure_qwen_server")
+    @patch("desktop_app.build_asr")
+    def test_switch_to_nemotron_missing_user_declines_download_rolls_back(
+        self, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+    ):
+        with (
+            patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "qwen3"}),
+            patch("server.asr.nemotron.check_nemotron_status", return_value=(False, "缺少模型权重")),
+            patch.dict(os.environ, {"TRANSLATION_FORCE_INTERACTIVE": "1"}, clear=False),
+            patch("PyQt6.QtWidgets.QMessageBox.question") as mock_question,
+        ):
+            from PyQt6.QtWidgets import QMessageBox
+            mock_question.return_value = QMessageBox.StandardButton.No
+
+            app = DesktopApp(app=self.qapp)
+            app._current_asr_backend = "qwen3"
+
+            app._switch_asr_backend("nemotron")
+
+            mock_question.assert_called_once()
+            self.assertEqual(app._current_asr_backend, "qwen3")
+            app.window.set_asr_backend_ui.assert_called_with("qwen3")
+            app.window.command_received.emit.assert_called_with(
+                "toast", "已取消切换，保持使用 Qwen3-ASR 通用模型", mock_win.return_value.command_received.emit.call_args[0][2], mock_win.return_value.command_received.emit.call_args[0][3], False
+            )
+
+    @patch("desktop_app.QLocalServer")
+    @patch("desktop_app.QtCaptionWindow")
+    @patch("desktop_app.Session")
+    @patch("desktop_app.ProcessLoopbackManager")
+    @patch("desktop_app._ensure_llama_server")
+    @patch("desktop_app._ensure_qwen_server")
+    @patch("desktop_app.build_asr")
+    @patch("subprocess.Popen")
+    def test_switch_to_nemotron_missing_user_accepts_download_launches_script(
+        self, mock_popen, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+    ):
+        with (
+            patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "qwen3"}),
+            patch("server.asr.nemotron.check_nemotron_status", return_value=(False, "缺少模型权重")),
+            patch.dict(os.environ, {"TRANSLATION_FORCE_INTERACTIVE": "1"}, clear=False),
+            patch("PyQt6.QtWidgets.QMessageBox.question") as mock_question,
+        ):
+            from PyQt6.QtWidgets import QMessageBox
+            mock_question.return_value = QMessageBox.StandardButton.Yes
+
+            app = DesktopApp(app=self.qapp)
+            app._current_asr_backend = "qwen3"
+
+            app._switch_asr_backend("nemotron")
+
+            mock_question.assert_called_once()
+            mock_popen.assert_called_once()
+            cmd_args = mock_popen.call_args[0][0]
+            self.assertIn("setup_nemotron.py", cmd_args[1])
+            self.assertIn("--auto", cmd_args)
+            self.assertEqual(app._current_asr_backend, "qwen3")
+            app.window.set_asr_backend_ui.assert_called_with("qwen3")
 
 
 if __name__ == "__main__":
     unittest.main()
+

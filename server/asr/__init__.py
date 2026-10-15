@@ -17,6 +17,7 @@ from .nemotron import (
     _detect_best_vulkan_gpu,
     _resolve_nemo_speech_dll,
     _resolve_nemotron_model_path,
+    check_nemotron_status,
 )
 from .qwen3 import Qwen3AsrEngine
 from .text_filters import (

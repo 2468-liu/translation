@@ -72,9 +72,16 @@ The translation service (port 8080) and Qwen3-ASR service (port 8099) are powere
 * **Windows**: Download [llama.cpp Official Releases](https://github.com/ggml-org/llama.cpp/releases) (build 11630+, e.g. `llama-bxxxx-bin-win-cuda-cu12.4-x64.zip`), extract `llama-server.exe`, and ensure it is in your system `PATH` or in `tools/llama-server/`.
 * **Linux (Ubuntu 24.04)**: Verify with `llama-server --version`. If not present, download the corresponding Linux binary from `llama.cpp` releases or utilize LM Studio.
 
-### 3. Optional On-Device Streaming Engine (NVIDIA Nemotron 3.5 - Windows Only)
-* **Model Weights**: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`, placed in `models/NV3.5-ASR-0.6B/`.
-* **Vulkan C Library**: `nemo_speech_asr_c.dll`, placed in `tools/nemo-speech-vulkan/.../bin`.
+### 3. On-Device Streaming Engine (NVIDIA Nemotron 3.5 - Windows & Linux)
+* **Cross-Platform Native Support**: Full native support on Windows (x64) and Linux (Ubuntu 24.04+ x86_64).
+* **One-Click Automated Provisioning**:
+  * **Adaptive GUI**: Switch to **⚡ On-Device Fast Streaming NV (Nemotron)** directly via the context menu. If components are missing locally, an interactive prompt will appear; clicking [Yes] launches background downloading while keeping Qwen3-ASR active; declining rolls back safely without crashing or hanging.
+  * **Command-Line One-Click Script**:
+    * **Primary (Direct Native Engine)**: `python scripts/setup_nemotron.py` (Linux: `./scripts/setup_nemotron.sh`, Windows: `.\scripts\setup_nemotron.ps1`), downloads model GGUF from HuggingFace/hf-mirror and precompiled dynamic libraries (`nemo_speech_asr_c.dll` / `libnemo_speech_asr_c.so`) from NVIDIA GitHub Releases.
+    * **Secondary (Official Docker Fallback)**: Run with `--docker` to pull and configure the containerized backend from `nvcr.io/nvidia/nemo:latest`.
+* **Component Path Layout**:
+  * **Model Weights**: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`, placed in `models/NV3.5-ASR-0.6B/`.
+  * **Dynamic Library**: Windows placed in `tools/nemo-speech-vulkan/.../bin/nemo_speech_asr_c.dll`; Linux placed in `tools/nemo-speech-vulkan/.../lib/libnemo_speech_asr_c.so` or system library paths.
 
 #### Official Recommended Streaming Chunk Size Matrix
 

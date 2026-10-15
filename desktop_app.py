@@ -84,6 +84,16 @@ try:
     SINGLE_INSTANCE_SERVER_NAME = "TranslationDesktop_SingleInstance_Server"
 
 
+    def _is_testing_env() -> bool:
+        if os.environ.get("TRANSLATION_FORCE_INTERACTIVE") == "1":
+            return False
+        return bool(
+            os.environ.get("TRANSLATION_TEST_MODE")
+            or os.environ.get("PYTEST_CURRENT_TEST")
+            or "unittest" in sys.modules
+        )
+
+
     def check_single_instance(mutex_name: str = SINGLE_INSTANCE_MUTEX_NAME) -> tuple[bool, any]:
         """Check if another instance is already running via Windows Named Mutex or Linux flock.
 
@@ -640,15 +650,13 @@ class DesktopApp:
         # Guard: Check Nemotron viability if configured
         if initial_backend in ("nemotron", "nv", "nemotron-3.5"):
             nemotron_err = None
-            if sys.platform != "win32":
-                nemotron_err = "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台 (Vulkan C DLL)，Linux 环境暂不支持。"
-            else:
-                try:
-                    from server.asr.nemotron import _resolve_nemotron_model_path, _resolve_nemo_speech_dll
-                    _resolve_nemotron_model_path()
-                    _resolve_nemo_speech_dll()
-                except Exception as e:
-                    nemotron_err = f"模型或动态链接库缺失: {e}"
+            try:
+                from server.asr.nemotron import check_nemotron_status
+                ready, reason = check_nemotron_status()
+                if not ready:
+                    nemotron_err = f"Nemotron 3.5 组件尚未就绪: {reason} (支持 Windows 与 Linux，可运行 scripts/setup_nemotron 一键自动拉取)"
+            except Exception as e:
+                nemotron_err = f"模型或动态链接库缺失: {e}"
 
             if nemotron_err:
                 print(f"[DesktopApp] Nemotron engine unavailable ({nemotron_err}). Auto-recovering to Qwen3-ASR...")
@@ -752,12 +760,7 @@ class DesktopApp:
             self.window.show()
 
         if hasattr(self, "_startup_warning") and self._startup_warning:
-            is_testing = bool(
-                os.environ.get("TRANSLATION_TEST_MODE")
-                or os.environ.get("PYTEST_CURRENT_TEST")
-                or "unittest" in sys.modules
-            )
-            if not is_testing:
+            if not _is_testing_env():
                 from PyQt6.QtWidgets import QMessageBox
                 QTimer.singleShot(500, lambda: QMessageBox.warning(
                     self.window, "引擎加载回退提示", self._startup_warning
@@ -838,19 +841,47 @@ class DesktopApp:
         if current_backend == target_backend and (cadence is None or current_cadence == cadence):
             return
 
-        # Pre-flight check: Nemotron platform guard
-        if target_backend == "nemotron" and sys.platform != "win32":
-            msg = "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台（需 Vulkan C 动态库）。\n\n当前 Linux 系统已自动保持使用 Qwen3-ASR 通用模型。"
-            is_testing = bool(
-                os.environ.get("TRANSLATION_TEST_MODE")
-                or os.environ.get("PYTEST_CURRENT_TEST")
-                or "unittest" in sys.modules
-            )
-            if not is_testing:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self.window, "引擎暂不支持", msg)
-            self.window.set_asr_backend_ui("qwen3")
-            return
+        # Pre-flight check: Nemotron dynamic viability guard
+        if target_backend == "nemotron":
+            try:
+                from server.asr.nemotron import check_nemotron_status
+                is_ready, reason = check_nemotron_status()
+            except Exception as e:
+                is_ready, reason = False, str(e)
+
+            if not is_ready:
+                if not _is_testing_env():
+                    from PyQt6.QtWidgets import QMessageBox
+                    reply = QMessageBox.question(
+                        self.window,
+                        "未检测到 Nemotron 引擎组件",
+                        f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
+                        "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
+                        "【是】：后台启动一键脚本拉取并配置官方引擎\n"
+                        "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes,
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        script_py = config.ROOT / "scripts" / "setup_nemotron.py"
+                        try:
+                            import subprocess
+                            cmd = [sys.executable, str(script_py), "--auto"]
+                            creation_flags = 0
+                            if sys.platform == "win32":
+                                creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                            subprocess.Popen(cmd, cwd=str(config.ROOT), creationflags=creation_flags)
+                            self.window.command_received.emit(
+                                "toast", "🚀 已启动 Nemotron 极速引擎一键下载，正在后台拉取官方资源...", time.time(), time.time(), False
+                            )
+                        except Exception as e:
+                            QMessageBox.critical(self.window, "启动下载失败", f"启动自动下载脚本失败: {e}")
+                    else:
+                        self.window.command_received.emit(
+                            "toast", "已取消切换，保持使用 Qwen3-ASR 通用模型", time.time(), time.time(), False
+                        )
+                self.window.set_asr_backend_ui("qwen3")
+                return
 
         print(f"[DesktopApp] Seamlessly switching ASR engine on unified pipeline -> {target_backend} (cadence: {cadence}ms)...")
         was_capturing = getattr(self, "_is_capturing", True)
@@ -939,12 +970,7 @@ class DesktopApp:
                 pass
             self.window.set_asr_backend_ui(prev_backend)
 
-            is_testing = bool(
-                os.environ.get("TRANSLATION_TEST_MODE")
-                or os.environ.get("PYTEST_CURRENT_TEST")
-                or "unittest" in sys.modules
-            )
-            if not is_testing:
+            if not _is_testing_env():
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self.window,
