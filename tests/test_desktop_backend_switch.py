@@ -11,6 +11,7 @@ class DesktopBackendSwitchTests(unittest.TestCase):
     def setUpClass(cls):
         cls.qapp = QApplication.instance() or QApplication(sys.argv)
 
+    @patch("sys.platform", "win32")
     @patch("desktop_app._pids_on_port")
     @patch("desktop_app.subprocess.run")
     def test_kill_port_kills_listening_pids(self, mock_run, mock_pids):
@@ -31,6 +32,7 @@ class DesktopBackendSwitchTests(unittest.TestCase):
             check=False,
         )
 
+    @patch("sys.platform", "win32")
     @patch("desktop_app.QLocalServer")
     @patch("desktop_app.QtCaptionWindow")
     @patch("desktop_app.Session")
@@ -65,6 +67,7 @@ class DesktopBackendSwitchTests(unittest.TestCase):
             app.window.set_asr_backend_ui.assert_called_with("nemotron")
             app.window.set_block_by_punct.assert_called_with(True)
 
+    @patch("sys.platform", "win32")
     @patch("desktop_app.QLocalServer")
     @patch("desktop_app.QtCaptionWindow")
     @patch("desktop_app.Session")
@@ -77,7 +80,11 @@ class DesktopBackendSwitchTests(unittest.TestCase):
     def test_switch_to_qwen3_kills_stale_port_and_launches_server(
         self, mock_is_ready, mock_kill_port, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
     ):
-        with patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "nemotron"}):
+        with (
+            patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "nemotron"}),
+            patch("server.asr.nemotron._resolve_nemotron_model_path"),
+            patch("server.asr.nemotron._resolve_nemo_speech_dll"),
+        ):
             app = DesktopApp(app=self.qapp)
             app._current_asr_backend = "nemotron"
             old_nemo_asr = MagicMock()
@@ -106,6 +113,46 @@ class DesktopBackendSwitchTests(unittest.TestCase):
             # 4. Must update cadence to 1000ms
             app.window.set_cadence_ui.assert_called_with(1000)
             app.window.set_asr_backend_ui("qwen3")
+
+    @patch("sys.platform", "linux")
+    @patch("desktop_app.QLocalServer")
+    @patch("desktop_app.QtCaptionWindow")
+    @patch("desktop_app.Session")
+    @patch("desktop_app.ProcessLoopbackManager")
+    @patch("desktop_app._ensure_llama_server")
+    @patch("desktop_app._ensure_qwen_server")
+    @patch("desktop_app.build_asr")
+    def test_switch_to_nemotron_on_linux_is_blocked_safely(
+        self, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+    ):
+        with patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "qwen3"}):
+            app = DesktopApp(app=self.qapp)
+            app._current_asr_backend = "qwen3"
+
+            app._switch_asr_backend("nemotron")
+
+            # Must remain on qwen3
+            self.assertEqual(app._current_asr_backend, "qwen3")
+            app.window.set_asr_backend_ui.assert_called_with("qwen3")
+
+    @patch("sys.platform", "linux")
+    @patch("desktop_app.QLocalServer")
+    @patch("desktop_app.QtCaptionWindow")
+    @patch("desktop_app.Session")
+    @patch("desktop_app.ProcessLoopbackManager")
+    @patch("desktop_app._ensure_llama_server")
+    @patch("desktop_app._ensure_qwen_server")
+    @patch("desktop_app.build_asr")
+    def test_startup_with_nemotron_on_linux_auto_recovers_to_qwen3(
+        self, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+    ):
+        with patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "nemotron"}):
+            app = DesktopApp(app=self.qapp)
+
+            # Must auto-recover to qwen3
+            self.assertEqual(app._current_asr_backend, "qwen3")
+            self.assertTrue(hasattr(app, "_startup_warning"))
+            self.assertIn("Windows", app._startup_warning)
 
 
 if __name__ == "__main__":

@@ -637,6 +637,31 @@ class DesktopApp:
         initial_backend = cfg.get("asr_backend", "qwen3")
         self._current_asr_backend = initial_backend
 
+        # Guard: Check Nemotron viability if configured
+        if initial_backend in ("nemotron", "nv", "nemotron-3.5"):
+            nemotron_err = None
+            if sys.platform != "win32":
+                nemotron_err = "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台 (Vulkan C DLL)，Linux 环境暂不支持。"
+            else:
+                try:
+                    from server.asr.nemotron import _resolve_nemotron_model_path, _resolve_nemo_speech_dll
+                    _resolve_nemotron_model_path()
+                    _resolve_nemo_speech_dll()
+                except Exception as e:
+                    nemotron_err = f"模型或动态链接库缺失: {e}"
+
+            if nemotron_err:
+                print(f"[DesktopApp] Nemotron engine unavailable ({nemotron_err}). Auto-recovering to Qwen3-ASR...")
+                initial_backend = "qwen3"
+                self._current_asr_backend = "qwen3"
+                cfg["asr_backend"] = "qwen3"
+                config.save_desktop_config(cfg)
+                self._startup_warning = (
+                    f"⚠️ 语音识别引擎已自动安全回退：\n\n"
+                    f"{nemotron_err}\n\n"
+                    f"系统已为您自动切换并重置为【Qwen3-ASR 电影级通用大模型】，确保程序正常运行。"
+                )
+
         if initial_backend == "qwen3":
             print("[DesktopApp] Loading Qwen3-ASR (Cinema Enhanced Model)...")
             self.qwen_proc = _ensure_qwen_server(splash=self.splash)
@@ -664,14 +689,27 @@ class DesktopApp:
             config.ASR_BACKEND = "nemotron"
             os.environ["TRANSLATION_ASR_BACKEND"] = "nemotron"
             os.environ["TRANSLATION_CHAIN_RUNNING"] = "nv-in"
-            self.asr = build_asr()
+            try:
+                self.asr = build_asr(fallback_on_error=False)
+            except Exception as e:
+                print(f"[DesktopApp] Failed to load Nemotron: {e}. Auto-recovering to Qwen3-ASR...")
+                cfg["asr_backend"] = "qwen3"
+                config.save_desktop_config(cfg)
+                self._startup_warning = f"英伟达 Nemotron 引擎加载失败: {e}。\n已自动为您安全回退至 Qwen3-ASR。"
+                self.qwen_proc = _ensure_qwen_server(splash=self.splash)
+                config.ASR_BACKEND = "qwen3"
+                os.environ["TRANSLATION_ASR_BACKEND"] = "qwen3"
+                os.environ["TRANSLATION_CHAIN_RUNNING"] = "qwen3-in"
+                self.asr = build_asr()
+                initial_backend = "qwen3"
+                self._current_asr_backend = "qwen3"
             self.session = Session(self.asr, tuning=cinema_tuning())
             self.session.set_language("auto")
             self.session.set_target_language("zh")
-            cadence = int(cfg.get("partial_interval_ms", 160))
+            cadence = int(cfg.get("partial_interval_ms", 160 if initial_backend == "nemotron" else 1000))
             apply_partial_interval(self.session.vad, cadence)
             self.window.set_cadence_ui(cadence)
-            self.window.set_asr_backend_ui("nemotron")
+            self.window.set_asr_backend_ui(initial_backend)
 
         # Initialize Native Process Loopback Manager (Windows only)
         if sys.platform == "win32" and ProcessLoopbackManager is not None:
@@ -712,6 +750,18 @@ class DesktopApp:
             self.splash.finish_and_close(self.window, duration_ms=320)
         else:
             self.window.show()
+
+        if hasattr(self, "_startup_warning") and self._startup_warning:
+            is_testing = bool(
+                os.environ.get("TRANSLATION_TEST_MODE")
+                or os.environ.get("PYTEST_CURRENT_TEST")
+                or "unittest" in sys.modules
+            )
+            if not is_testing:
+                from PyQt6.QtWidgets import QMessageBox
+                QTimer.singleShot(500, lambda: QMessageBox.warning(
+                    self.window, "引擎加载回退提示", self._startup_warning
+                ))
 
     def _check_backends_health(self) -> None:
         try:
@@ -788,6 +838,20 @@ class DesktopApp:
         if current_backend == target_backend and (cadence is None or current_cadence == cadence):
             return
 
+        # Pre-flight check: Nemotron platform guard
+        if target_backend == "nemotron" and sys.platform != "win32":
+            msg = "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台（需 Vulkan C 动态库）。\n\n当前 Linux 系统已自动保持使用 Qwen3-ASR 通用模型。"
+            is_testing = bool(
+                os.environ.get("TRANSLATION_TEST_MODE")
+                or os.environ.get("PYTEST_CURRENT_TEST")
+                or "unittest" in sys.modules
+            )
+            if not is_testing:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self.window, "引擎暂不支持", msg)
+            self.window.set_asr_backend_ui("qwen3")
+            return
+
         print(f"[DesktopApp] Seamlessly switching ASR engine on unified pipeline -> {target_backend} (cadence: {cadence}ms)...")
         was_capturing = getattr(self, "_is_capturing", True)
         self._is_capturing = False
@@ -831,11 +895,12 @@ class DesktopApp:
                     "toast", f"已平滑切换至 Qwen3-ASR ({effective_cadence}ms)", time.time(), time.time(), False
                 )
             else:
-                self._kill_qwen_server()
                 config.ASR_BACKEND = "nemotron"
                 os.environ["TRANSLATION_ASR_BACKEND"] = "nemotron"
                 os.environ["TRANSLATION_CHAIN_RUNNING"] = "nv-in"
-                new_asr = build_asr()
+                new_asr = build_asr(fallback_on_error=False)
+
+                self._kill_qwen_server()
                 effective_cadence = cadence if cadence is not None else 160
 
                 if hasattr(self, "session") and getattr(self.session, "asr", None) is not None:
@@ -862,6 +927,30 @@ class DesktopApp:
             print(f"[DesktopApp] Failed to switch ASR backend: {e}")
             import traceback
             traceback.print_exc()
+            # Safe rollback: Revert poisoned config and UI to previous working engine
+            prev_backend = getattr(self, "_current_asr_backend", "qwen3") or "qwen3"
+            config.ASR_BACKEND = prev_backend
+            os.environ["TRANSLATION_ASR_BACKEND"] = prev_backend
+            try:
+                cfg = config.load_desktop_config()
+                cfg["asr_backend"] = prev_backend
+                config.save_desktop_config(cfg)
+            except Exception:
+                pass
+            self.window.set_asr_backend_ui(prev_backend)
+
+            is_testing = bool(
+                os.environ.get("TRANSLATION_TEST_MODE")
+                or os.environ.get("PYTEST_CURRENT_TEST")
+                or "unittest" in sys.modules
+            )
+            if not is_testing:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.window,
+                    "引擎切换失败",
+                    f"无法切换至目标语音识别引擎：\n{e}\n\n系统已自动为您保持当前的 {prev_backend.upper()} 引擎正常工作。",
+                )
             self.window.command_received.emit(
                 "toast", f"切换引擎失败: {e}", time.time(), time.time(), False
             )

@@ -7,6 +7,7 @@ audio source process filtering, and settings callbacks from the main window.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
@@ -177,12 +178,18 @@ class CaptionMenuBuilder:
             self.win.engine_cadence_group.addAction(act)
             self.win._qwen_actions.append(act)
 
-        nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
+        is_win = (sys.platform == "win32")
+        nv_title = "⚡ 端侧极速流式 NV (Nemotron)" if is_win else "⚡ 端侧极速流式 NV (Nemotron - 仅限 Windows)"
+        nv_menu = menu.addMenu(nv_title)
+        if not is_win:
+            nv_menu.setEnabled(False)
         self.win._nv_actions = []
         for label, ms in NV_CADENCES:
             act = nv_menu.addAction(label)
             act.setCheckable(True)
             act.setData({"backend": "nemotron", "ms": ms})
+            if not is_win:
+                act.setEnabled(False)
             self.win.engine_cadence_group.addAction(act)
             self.win._nv_actions.append(act)
 
@@ -343,12 +350,18 @@ class CaptionMenuBuilder:
             self.win.tray_engine_cadence_group.addAction(act)
             self.win._tray_qwen_actions.append(act)
 
-        tray_nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
+        is_win = (sys.platform == "win32")
+        tray_nv_title = "⚡ 端侧极速流式 NV (Nemotron)" if is_win else "⚡ 端侧极速流式 NV (Nemotron - 仅限 Windows)"
+        tray_nv_menu = menu.addMenu(tray_nv_title)
+        if not is_win:
+            tray_nv_menu.setEnabled(False)
         self.win._tray_nv_actions = []
         for label, ms in NV_CADENCES:
             act = tray_nv_menu.addAction(label)
             act.setCheckable(True)
             act.setData({"backend": "nemotron", "ms": ms})
+            if not is_win:
+                act.setEnabled(False)
             self.win.tray_engine_cadence_group.addAction(act)
             self.win._tray_nv_actions.append(act)
 
@@ -463,6 +476,15 @@ class CaptionMenuBuilder:
         return "movie"
 
     def apply_engine_cadence(self, backend: str, ms: int) -> None:
+        if backend == "nemotron" and sys.platform != "win32":
+            QMessageBox.warning(
+                self.win,
+                "引擎不支持",
+                "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台（需 Vulkan C 动态库）。\n\n当前 Linux 系统已自动保持使用 Qwen3-ASR 通用模型。",
+            )
+            self._sync_engine_cadence_actions()
+            return
+
         cfg = config.load_desktop_config()
         rolling = getattr(self.win, "rolling_two_lines", True)
         punct = (backend == "qwen3")
