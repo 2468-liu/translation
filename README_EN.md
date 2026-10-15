@@ -93,6 +93,19 @@ The translation service (port 8080) and Qwen3-ASR service (port 8099) are powere
 | **Accurate** | **560 ms** | Higher transcription accuracy where moderate latency is acceptable |
 | **Most accurate** | **1.12 s (1120 ms)** | High-precision transcription where real-time latency is secondary |
 
+#### 💡 ASR Engine Scenario Selection Guide (Scenario Recommendation)
+
+Empirical testing across movie corpora, documentaries, and live broadcasts shows clear complementary strengths for each engine:
+
+| Content Category | Typical Genres & Scenarios | Recommended Engine | Recommended Cadence | Key Experience Advantage |
+| :--- | :--- | :--- | :--- | :--- |
+| **Colloquial & Fragmented Dialogue** | Sitcoms (*The Big Bang Theory*, *Friends*), drama series, casual vlogs, interactive live streaming | **🧠 General LLM ASR (Qwen3)** | **1000ms (Recommended)** / 500ms | Leveraging strong LLM semantic priors and context reasoning to **handle slurred speech, slang, interruptions, and fragmented words** seamlessly |
+| **Formal & Technical Content** | Economics, military, warfare, science documentaries, keynote speeches, official conferences, international news | **⚡ On-Device Fast Streaming NV (Nemotron)** | **160ms (Recommended)** / 320ms / 80ms | Powered by FastConformer streaming architecture; **significantly more fluid and responsive than LLMs** with real-time acoustic audio-visual synchronization |
+
+> 📌 **Practical Tips**:
+> * For fast-paced dialogue, sitcoms, or live casual talk, use **Qwen3-ASR (1000ms)** by default;
+> * For documentaries, news broadcasts, technical conferences, or serious historical/military films, switch via right-click to **Nemotron (160ms / 320ms)** for ultra-smooth real-time playback.
+
 ---
 
 ## 🚀 Quick Start
