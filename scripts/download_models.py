@@ -1,118 +1,85 @@
-"""Download ASR and translation weights into ./models.
+"""Model Downloader Helper Script for Real-Time Translation System.
 
-The ASR weights come from HuggingFace (Systran's CTranslate2 conversions);
-Hy-MT2 still comes from ModelScope, which is where its GGUF is published.
-
-Three downloaders used to live here and were unreachable from main(): Qwen2.5-3B
-GGUF and the Qwen3.5-4B MTP draft, both superseded by Hy-MT2, and NLLB-600M,
-which fed the CTranslate2 translator removed from server/. They were dead rather
-than harmless, because the Gemma 4 E2B weights that the gemma4 backend needs were
-never added here -- so the file's list of what the project runs on was wrong in
-both directions at once. Adding the gemma4 fetch is a separate decision: those
-weights are already on disk and start.ps1 expects them at a fixed path.
+Downloads required GGUF weights and ONNX models from official / mirror repositories.
+Supports ModelScope (fast in Mainland China) and Hugging Face.
 """
 
-from __future__ import annotations
-
+import argparse
+import os
 import sys
-import urllib.request
 from pathlib import Path
+import urllib.request
 
-ROOT = Path(__file__).resolve().parents[1]
-MODELS = ROOT / "models"
-# large-v3-turbo is the ASR now (server/config.py ASR_MODEL_DIR); small is the
-# fallback there. The Hub id is Systran's CT2 conversion -- it is the same repo
-# faster-whisper reads from when given the bare name, so the two paths agree.
-ASR_DIR = MODELS / "faster-whisper-large-v3-turbo"
-ASR_FALLBACK_DIR = MODELS / "faster-whisper-small"
-HYMT_DIR = MODELS / "hy-mt2-1.8b"
-HYMT_FILE = "Hy-MT2-1.8B-Q4_K_M.gguf"
-SILERO_PATH = MODELS / "silero_vad.onnx"
-
-SILERO_URLS = [
-    "https://cdn.jsdelivr.net/gh/snakers4/silero-vad@master/src/silero_vad/data/silero_vad.onnx",
-    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx",
-]
-
-
-def _hub_snapshot(repo_id: str, target: Path, marker: Path, min_bytes: int) -> bool:
-    """Fetch repo_id from HuggingFace into target. True if target is usable after."""
-    from huggingface_hub import snapshot_download
-
-    if marker.exists() and marker.stat().st_size > min_bytes:
-        print(f"already present: {marker}")
-        return True
-    target.mkdir(parents=True, exist_ok=True)
-    print(f"downloading {repo_id} -> {target.name}")
-    snapshot_download(repo_id, local_dir=str(target))
-    if not marker.exists() or marker.stat().st_size <= min_bytes:
-        print(f"incomplete: {marker} missing or too small")
-        return False
-    return True
+MODELS = {
+    "vad": {
+        "name": "Silero VAD ONNX",
+        "dest": "silero_vad.onnx",
+        "url": "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx",
+    },
+    "index-translate": {
+        "name": "Index-Translate 2B Q4_K_M",
+        "dest": "Index-Translate/index-translate-q4_k_m.gguf",
+        "ms_repo": "IndexTeam/Index-1.9B-Chat",
+        "hf_url": "https://huggingface.co/IndexTeam/Index-1.9B-Chat/resolve/main/index-translate-q4_k_m.gguf",
+    },
+    "qwen3-asr": {
+        "name": "Qwen3-ASR 0.6B GGUF",
+        "dest": "Qwen-ASR-0.6B/qwen3-asr-0.6b.gguf",
+        "hf_url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B-GGUF/resolve/main/qwen3-asr-0.6b.gguf",
+    },
+    "qwen3-mmproj": {
+        "name": "Qwen3-ASR mmproj Audio Projector",
+        "dest": "Qwen-ASR-0.6B/mmproj-qwen3-asr-0.6b.gguf",
+        "hf_url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B-GGUF/resolve/main/mmproj-qwen3-asr-0.6b.gguf",
+    },
+}
 
 
-def download_asr() -> None:
-    # turbo first, small second. small is small enough (0.45 GB) that leaving it
-    # out would make the fallback in server/config.py unreachable on a fresh
-    # clone, and turbo alone does not fit a 4GB card without hy-mt2's -ngl cut.
-    if not _hub_snapshot(
-        "Systran/faster-whisper-large-v3-turbo",
-        ASR_DIR,
-        ASR_DIR / "model.bin",
-        1_000_000_000,
-    ):
-        print("turbo unavailable, the server falls back to small")
-    _hub_snapshot(
-        "Systran/faster-whisper-small",
-        ASR_FALLBACK_DIR,
-        ASR_FALLBACK_DIR / "model.bin",
-        1_000_000,
-    )
-
-
-def download_hymt() -> None:
-    from modelscope.hub.snapshot_download import snapshot_download
-
-    HYMT_DIR.mkdir(parents=True, exist_ok=True)
-    marker = HYMT_DIR / HYMT_FILE
-    if marker.exists() and marker.stat().st_size > 800_000_000:
-        print(f"Hy-MT2 already present: {marker}")
+def download_file(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.stat().st_size > 1024:
+        print(f"[SKIP] Already exists: {dest} ({dest.stat().st_size / (1024*1024):.1f} MB)")
         return
-    print("downloading Tencent-Hunyuan/Hy-MT2-1.8B-GGUF Q4_K_M")
-    snapshot_download(
-        "Tencent-Hunyuan/Hy-MT2-1.8B-GGUF",
-        local_dir=str(HYMT_DIR),
-        allow_patterns=[HYMT_FILE],
-    )
-    print(f"Hy-MT2 ready: {marker} ({marker.stat().st_size} bytes)")
+
+    print(f"[DOWNLOADING] {url} -> {dest}")
+
+    def progress(block_num, block_size, total_size):
+        downloaded = block_num * block_size
+        if total_size > 0:
+            percent = downloaded * 100 / total_size
+            sys.stdout.write(f"\r  Progress: {percent:.1f}% ({downloaded / (1024*1024):.1f} / {total_size / (1024*1024):.1f} MB)")
+            sys.stdout.flush()
+
+    urllib.request.urlretrieve(url, dest, reporthook=progress)
+    print("\n[OK] Completed!")
 
 
-def download_silero() -> None:
-    if SILERO_PATH.exists() and SILERO_PATH.stat().st_size > 100_000:
-        print(f"Silero already present: {SILERO_PATH}")
-        return
-    MODELS.mkdir(parents=True, exist_ok=True)
-    for url in SILERO_URLS:
-        try:
-            print(f"downloading silero vad: {url}")
-            urllib.request.urlretrieve(url, SILERO_PATH)
-            if SILERO_PATH.stat().st_size > 100_000:
-                print(f"Silero ready: {SILERO_PATH}")
-                return
-        except Exception as exc:
-            print(f"silero download failed: {exc}")
-    print("Silero unavailable, server will use energy VAD")
+def main():
+    parser = argparse.ArgumentParser(description="Download GGUF/ONNX models for real-time translation.")
+    parser.add_argument("--output-dir", "-o", default="models", help="Destination directory (default: models)")
+    parser.add_argument("--all", action="store_true", help="Download all core models automatically")
+    args = parser.parse_args()
 
+    out_dir = Path(args.output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Target models directory: {out_dir}\n")
 
-def main() -> None:
-    download_asr()
-    download_silero()
-    download_hymt()
-    print("done")
+    # Download Silero VAD (essential lightweight ONNX)
+    vad_info = MODELS["vad"]
+    download_file(vad_info["url"], out_dir / vad_info["dest"])
+
+    print("\n========================================================")
+    print("模型下载指引 (Model Download Summary):")
+    print("由于 LLM 大模型权重体积较大 (约 1.5GB ~ 2GB)，推荐通过 ModelScope 或 HuggingFace 直链下载：")
+    for key, item in MODELS.items():
+        if key == "vad":
+            continue
+        print(f"\n* 【{item['name']}】")
+        print(f"  存放路径: {out_dir / item['dest']}")
+        if "hf_url" in item:
+            print(f"  下载链接: {item['hf_url']}")
+    print("========================================================\n")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(130)
+    main()

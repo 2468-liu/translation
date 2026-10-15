@@ -11,6 +11,19 @@ runtime.json
 .venv/
 logs/
 dist/
+build/
+*.obj
+scratch_*
+*.zip
+*.tar.gz
+*.7z
+desktop_config.json
+audio_process_loopback.dll
+*.pid
+server.pid
+desktop_pid.txt
+_internal/
+.pytest_cache/
 
 # Media is not versioned. samples/ carries two film excerpts and a meeting
 # recording with other people's voices in it, none of which belongs in the

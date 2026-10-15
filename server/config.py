@@ -134,10 +134,17 @@ def resolve_models_dir() -> Path:
         candidates.append(mroot)
 
     candidates.extend([
-        Path("/mnt/c/Users/20693/Desktop/translation/models"),
         Path.home() / "models",
         Path.home() / ".cache" / "translation" / "models",
     ])
+    if sys.platform != "win32":
+        try:
+            for wsl_user in Path("/mnt/c/Users").glob("*"):
+                if wsl_user.is_dir() and not wsl_user.name.startswith((".", "Default", "Public", "All Users")):
+                    candidates.append(wsl_user / "Desktop" / "translation" / "models")
+                    candidates.append(wsl_user / "TranslationDesktop" / "models")
+        except Exception:
+            pass
 
     # Phase 1: prioritize directories containing full LLM/ASR model suites
     for c in candidates:

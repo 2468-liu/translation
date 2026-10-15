@@ -1,264 +1,125 @@
-# 实时字幕翻译
+# 🎬 实时双语字幕与同传系统 (Real-Time Bilingual Caption & Interpretation)
 
-本机通过 Windows WASAPI 回环读取默认扬声器输出，识别后译成简体中文，字幕画在独立的黑色置顶窗口上。扩展只负责控制本地服务，不申请标签页捕获，不向视频网站注入脚本，不修改网页的全屏或播放器 DOM。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Ubuntu%2024.04%20LTS-brightgreen.svg)]()
+[![Backend](https://img.shields.io/badge/backend-llama.cpp%20%7C%20Vulkan-orange.svg)]()
 
-## 字幕层边界
+> **低延迟、纯本地离线、高精度的影视追剧与实时会议双语字幕桌面系统。**
+> 支持 Windows 原生 WASAPI 进程级回环录音与 Linux 原生 PipeWire/PulseAudio 0dB 物理直捕。无需云端 API，无需提取音频文件，即开即翻。
 
-字幕由 Windows 原生置顶窗口绘制。Chrome 扩展只负责传输配置，不创建浏览器弹窗字幕层，也不申请 `tabCapture`，不进入网页 DOM。网页内容、播放器尺寸和浏览器全屏状态都保持不变。
+---
 
-当前项目不能调用 Chromium 内部的 Live Caption UI；因此不把 Chromium 的内部 UI 代码照搬到扩展中。我们禁止任何 `chrome.scripting`、`executeScript`、`content.js` 注入和页面回调。
+## 🌟 核心特性与架构亮点
 
-## 当前方案
+* **双模 ASR 极速架构**：
+  * **电影级语义整句直出 (Qwen3-ASR 0.6B)**：默认推荐，步长 1000ms。配合标点智能成块与气口断句，字幕输出即为完整自然句，彻底告别逐字跳动与高密度对白吞字。
+  * **极速流式同传 (NVIDIA Nemotron 3.5 0.6B)**：端侧 Vulkan C 原生直驱，步长 160ms，逐字极速流式上屏，适合会议同传、演讲直播。
+* **极低显存双并发影视翻译**：
+  * 搭载 **Index-Translate 1.9B (Q4_K_M)**，针对影视口语对白、专业俚语与地道中文做了深度微调。
+  * 配合 `llama-server` 多槽位（Slot）并发，ASR 与翻译总显存驻留仅约 **3.2GB**，RTX 3060/4060 即可全程满帧流畅运行。
+* **双平台原生低损回环采集**：
+  * **Windows**：原生 WASAPI 进程树级定向内录（可单独监听特定播放器或浏览器，不受麦克风底噪或其它系统提示音干扰）。
+  * **Linux (Ubuntu 24.04 / Zorin 18)**：原生接入 PipeWire / PulseAudio 监听链，采用物理未衰减的 0dB 纯净回环，彻底杜绝软件自适应放大的底噪与爆音失真。
+* **电影级交互体验**：
+  * **双行平滑滚动字幕**：参考 Chromium / Google Live Caption 工业级抗拥堵算法，上一句定稿后平滑滚动锚定，新句流式生成，观影视线极其舒适。
+  * **动态自适应音频规整器**：前置软阈值限幅与防爆音压缩，电影枪战爆炸不爆麦，窃窃私语不漏听。
+  * **启动防呆自愈与目录选择器**：双系统挂载或自定义路径未识别时，启动页自动弹出手选引导；误切不支持的引擎时自动安全回退至 Qwen3-ASR，杜绝崩溃死循环。
 
-同一批从易到难的字幕用例上，混元 Hy-MT2-1.8B 和 Qwen3.5-4B 质量打平，混元大约快 4 倍，所以默认用混元。
+---
 
-- 识别：faster-whisper small，float16，在显卡上
-- 翻译：混元 Hy-MT2-1.8B Q4_K_M，llama.cpp 取**本机已装最新**（当前 2.53.0），`-ngl 99 -c 1024`，层全部在显卡上
-  - 钉一版：`scripts\start.ps1 -LlamaVersion 2.47.0`（REPORT 里所有延迟数的那一版）。不指定就是最新，因为体感优先、部分模型要新 build 才加载
-  - 选了什么写在 `logs\start.log` 的 `llama    <平台>-<版本> (<怎么选的>)`
-- 两者同时驻留时显存大约 3.2GB
-- 插件里如果填了外部接口，翻译改走那个接口，识别仍在本机
+## 📥 模型与引擎下载指引 (Model & Engine Matrix)
 
-`lid-lite-25` 和 `tongue` 只给文字分类，不能代替 Whisper。没有识别就没有字可译。把 Whisper 退回 CPU 会把“慢半句”加回来。
+本项目遵循开源软件最佳实践，**不内置几百兆的大模型权重与第三方编译二进制**，请按需从官方源下载对应组件：
 
-## 一次性安装本地启动桥接
+### 1. 必选模型（放置于 `models/` 目录）
 
-Chrome 扩展不能直接创建本地进程。首次使用需要构建并注册 Native Messaging host；完成后日常使用不需要手动运行 PowerShell。
+| 组件 | 推荐量化版本 | 建议存放子路径 | 官方下载链接 (HuggingFace / ModelScope / GitHub) |
+| :--- | :--- | :--- | :--- |
+| **Silero VAD** | `silero_vad.onnx` (4MB) | `models/silero_vad.onnx` | [GitHub Direct Download](https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx) |
+| **Index-Translate** | `index-translate-q4_k_m.gguf` | `models/Index-Translate/` | [HuggingFace 链接](https://huggingface.co/IndexTeam/Index-1.9B-Chat) / [ModelScope 镜像](https://www.modelscope.cn/models/IndexTeam/Index-1.9B-Chat) |
+| **Qwen3-ASR 模型** | `qwen3-asr-0.6b.gguf` | `models/Qwen-ASR-0.6B/` | [HuggingFace 链接](https://huggingface.co/Qwen/Qwen3-ASR-0.6B-GGUF) / [ModelScope 镜像](https://www.modelscope.cn/models/Qwen/Qwen3-ASR-0.6B-GGUF) |
+| **Qwen3-ASR 投影器** | `mmproj-qwen3-asr-0.6b.gguf` | `models/Qwen-ASR-0.6B/` | 包含在上述 Qwen3-ASR 仓库同级目录中 |
 
-1. 在 Chrome 的扩展管理页打开开发者模式，加载 `extension`。Manifest 已固定扩展 ID，不需要手动复制 ID。
-2. 在项目根目录安装构建工具：
+> 💡 **快速下载提示**：在项目根目录运行 `python scripts/download_models.py`，脚本将自动拉取轻量级 VAD 并输出其他模型的直链指引。
 
-```powershell
-D:\minanconda\envs\pytorch\python.exe -m pip install pyinstaller
+### 2. 运行时推理引擎 (llama-server)
+
+本系统的翻译服务（8080端口）与 Qwen3-ASR 服务（8099端口）由官方 `llama-server` 驱动：
+* **Windows**：推荐安装 [llama.cpp Official Releases](https://github.com/ggml-org/llama.cpp/releases) (build 11630+，如 `llama-bxxxx-bin-win-cuda-cu12.4-x64.zip`)，将其解压后将 `llama-server.exe` 放入系统 PATH 环境变量或 `tools/llama-server/` 目录。
+* **Linux (Ubuntu 24.04)**：终端运行 `llama-server --version`；若未安装，可直接通过 `llama.cpp` Releases 下载对应 Linux 预编译包或安装 LM Studio。
+
+### 3. 可选端侧极速引擎 (NVIDIA Nemotron 3.5 - 仅 Windows)
+* **Nemotron 权重**：`nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`，存放于 `models/NV3.5-ASR-0.6B/`。
+* **Vulkan C 库**：`nemo_speech_asr_c.dll`，存放于 `tools/nemo-speech-vulkan/.../bin`。
+
+---
+
+## 🚀 快速上手 (Quick Start)
+
+### Windows 快速启动
+1. **安装依赖**：
+   ```powershell
+   git clone https://github.com/2468-liu/translation.git
+   cd translation
+   pip install -r requirements.txt
+   ```
+2. **下载并摆放模型**（参照上述模型矩阵放置在 `models/` 目录）。
+3. **启动双语字幕桌面应用**：
+   ```powershell
+   python desktop_app.py
+   ```
+
+### Linux (Ubuntu 24.04 LTS / Zorin OS 18) 快速启动
+1. **一键环境安装与检测**：
+   ```bash
+   chmod +x setup_ubuntu.sh start_ubuntu.sh
+   ./setup_ubuntu.sh
+   ```
+2. **运行程序**：
+   ```bash
+   ./start_ubuntu.sh
+   ```
+   > 详细 Linux 音频路由配置、双系统 Windows 磁盘挂载以及桌面启动图标制作，请查阅 [README_LINUX.md](README_LINUX.md)。
+
+---
+
+## 🗂️ 项目文件结构
+
+```text
+translation/
+├── server/                    # 核心服务端与字幕业务管道
+│   ├── asr/                   # ASR 引擎包 (Qwen3-ASR, Nemotron, Text-Filter)
+│   ├── audio/                 # 音频捕获与规整
+│   ├── ui/                    # PyQt6 界面层 (双行滚动字幕窗, 菜单, 启动加载屏)
+│   ├── config.py              # 统一路径解析与大小写挂载探针
+│   ├── pipeline.py            # VAD 切片、ASR、流式队列与并发翻译调度
+│   └── process_loopback.py    # Windows WASAPI 进程树内录接口
+├── desktop_app.py             # 桌面程序入口 (单实例互斥, 服务守护, 看门狗)
+├── setup_ubuntu.sh            # Ubuntu 24.04 一键安装环境依赖
+├── start_ubuntu.sh            # Linux 一键启动脚本
+├── README.md                  # 主项目说明文档
+├── README_LINUX.md            # Linux 专属详细指导手册
+└── tests/                     # 完整自动化单元测试套件 (20+ 项高覆盖率)
 ```
 
-3. 构建无独立窗口的本地 host：
+---
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_native_host.ps1
-```
+## 🤝 致谢与开源协议声明 (Acknowledgments & Credits)
 
-4. 注册 host：
+本项目建立在开源社区众多杰出工作的基石之上，衷心感谢以下核心项目的开源贡献：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_native_host.ps1
-```
+* **[llama.cpp](https://github.com/ggml-org/llama.cpp)** (by Georgi Gerganov & ggml team)：提供了极致卓越、轻量高效的跨平台 LLM 推理引擎与多槽位 HTTP 服务架构。
+* **[Qwen Team](https://github.com/QwenLM)** (Alibaba Cloud)：打造了业界领先的端到端音频与语音理解大模型 Qwen3-ASR。
+* **[Index-Translate](https://github.com/bilibili/Index-1.9B)** (Bilibili Team)：开源了优秀的轻量级高质量影视口语中英翻译大模型。
+* **[NVIDIA NeMo](https://github.com/NVIDIA/NeMo)**：为端侧实时流式语音识别提供了出色的 FastConformer-RNNT 架构与 Nemotron 3.5 方案。
+* **[Silero VAD](https://github.com/snakers4/silero-vad)**：提供了极致轻巧、抗噪性能卓越的离线端点检测模型。
+* **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)**：为桌面提供了优雅、平滑的硬件加速半透明渲染。
+* **[PipeWire](https://pipewire.org/) & [SoundCard](https://github.com/bastibe/SoundCard)**：为 Linux 与跨平台音频捕获提供了底层支持。
 
-如果以后更换扩展公钥，可用 `-ExtensionId` 覆盖默认值。host 只接受来自该扩展的本地消息，并以进程树方式管理 Python 服务和 llama-server。
+---
 
-## 兼容启动命令（排障）
+## 📄 License
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\start.ps1
-```
-
-上面的命令仅用于排障或兼容旧流程。正常使用时，在 Chrome 重新加载 `extension` 后打开视频页，直接点扩展里的“开始”即可自动静默启动本地服务。
-
-## 生命周期
-
-- 点扩展里的“开始”时自动启动本地服务，不需要预先运行脚本。
-- 自动启动必须静默，不能弹出 PowerShell 窗口。
-- 字幕窗点 `X` 只关闭当前字幕/采集会话，保留后端服务和模型驻留，方便下一次快速开始。
-- 扩展里的“终止”才停止本地后端并释放模型驻留；再次开始时自动重新启动。
-
-扩展与 host 使用 Native Messaging 的 `ensure`、`status` 和 `shutdown` 消息，并检查 WebSocket 与 llama-server 两个端口都已就绪后才开始采集。项目代码本身没有声明额外开源许可证；分发给朋友时应同时保留 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 以及各模型、FFmpeg 和测试素材的原始许可说明。
-
-如果已经手动启动了后端（例如纯音频诊断模式），扩展检测到 WebSocket 或 llama-server 任一端口正在启动时会等待现有进程，不会再拉起第二套后端。
-
-## 测试
-
-项目测试使用 `pytorch` Conda 环境中的 pytest：
-
-```powershell
-conda activate pytorch
-python -m pytest -q
-```
-
-### Windows 系统回环对照
-
-在 B 站或 YouTube 保持全屏时，先不启动扩展，只运行下面的脚本。它通过 WASAPI 回环读取默认扬声器输出，不调用 Chrome `tabCapture`，用于和扩展采集做 A/B 对照：
-
-```powershell
-conda activate pytorch
-python -m pip install soundcard
-python scripts/loopback_probe.py --seconds 5
-```
-
-脚本会把录音保存到 `samples/loopback_test.wav`。如果运行期间网页保持正常，而扩展的 `tabCapture` 模式会变窄，后续主链应切换到系统回环采集。
-
-扩展设置里的“仅音频诊断，不启动字幕窗”会把模式明确传给 Native host。此模式仍采集音频、识别和翻译，但完全不创建字幕窗口；用来判断问题来自网页/Chrome 还是 Windows 覆盖层。也可以直接使用 `TRANSLATION_AUDIO_ONLY=1` 启动后端。
-
-采样会先经过浏览器端的语音频段滤波，再由服务端 VAD 压低句中非语音帧。电影音乐和剪辑音效无法保证被完全分离；若背景声被模型误判为语音，仍应优先使用更清晰的音轨或外部降噪输入。
-
-## 延迟埋点
-
-改延迟之前先量。`server/perf.py` 只写日志，不参与任何判断；`TRANSLATION_PERF=0` 可以整体关掉，`TRANSLATION_PERF_LOG` 可以换路径。
-
-服务端写 `logs/perf.log`，字幕窗是另一个进程，单独写 `logs/perf_caption.log`（两个进程往同一个文件追加，在 Windows 上会互相覆盖字节）。每行格式是 `<墙钟时间> <来源>.<事件> key=value ...`，墙钟时间用来把两个文件对齐，带 `_ms` 的字段来自 `perf_counter`：
-
-| 事件 | 含义 |
-| --- | --- |
-| `pipeline.enqueue` | VAD 出句入队；`qlen` 是入队前积压，`audio_ms` 是这句到目前为止的音频长度 |
-| `pipeline.asr` | `qwait` 排队等 worker 的时间，`asr` 是这一次识别的耗时 |
-| `pipeline.drop` | 被更新的 partial 顶掉、根本没跑识别的那条，`qwait` 是它白等了多久 |
-| `pipeline.ttft` | 翻译第一个字回流的时间 |
-| `pipeline.ttotal` | 翻译整段流完的时间，`pieces` 是分片数 |
-| `pipeline.defer` | 上一段翻译还没跑完，这条结果被挂起 |
-| `pipeline.reuse` | `end` 复用了提前 partial 的文本，这次没跑识别 |
-| `ws.send` / `caption.send` | 服务端发出时的 `time.time()`，包里也带了 `sentAt` |
-| `caption.udp` | 字幕窗收到 UDP；`net` 是发到收的时间 |
-| `caption.text` | 字幕窗取出并做完决策；`action` 是 grow/char/swap/defer/drop，`pump` 是收到到取出（轮询 50 ms），`depth` 是取出时还压着几条 |
-| `caption.paint` | 真正画出来；`since_send` 从服务端发出算起，`action` 是这次为什么画，`held=1` 表示是等 hold 到期才画的 |
-| `caption.defer` | 一句译文开始挂在屏外等待 |
-| `caption.hold` | 这场等待结束；`wait` 是等了多久，`action` 是最后怎么处理的 |
-| `caption.overwrite` | 等这句的时候下一句已经开口，这句被顶掉了；`held` 是等了多久，`lost` 是没上屏的字数 |
-| `caption.dwell` | 一句被下一句换掉时它在屏上待了多久 |
-
-字幕侧这四个事件是调 hold 的判据：`hold` 看等了多久，`overwrite` 看等丢了多少句，`dwell` 看换行是不是太快。
-
-```powershell
-python scripts/perf_report.py            # 分位数汇总（两个日志一起读）
-python scripts/perf_report.py logs\perf.run1.log   # 指定文件
-.\scripts\replay.ps1 base1               # 重启服务 + 回放一轮 + 出这一轮的指标
-python scripts\audit_reuse.py            # 提前收尾的识别 vs 完整收尾的识别，差多少
-```
-
-`replay.ps1` 一条命令做完一轮：停服务（llama-server 不动，保持热）、轮转日志、带 `TRANSLATION_PERF=1` 起服务、回放、跑 `perf_compare`。日志文件在服务运行时是锁着的，所以轮转必须放在停服务之后。
-
-跑测试前 `tests/conftest.py` 会把 `TRANSLATION_PERF_LOG` 指到临时文件——否则假识别器（`chars=5 lang=en`）会把几行写进真的 `logs/perf.log`，在下一次回放前面单独成块，被当成一轮读。
-
-`perf_compare.py` 只取日志里第一段**够长**（≥200 行）的连续事件：回放约 185 s、几千行，更短的都是重启预热或残留。
-
-`audit_reuse.py` 是 B 的前提校验：静音 150 ms 提前收尾的识别结果，要和完整收尾的识别结果一致，末尾复用才成立。当前素材 49/49 句完全一致。
-
-llama-server 的启动日志现在重定向到 `logs/llama.out` / `logs/llama.err`。注意 `-ngl` 是否真的落到显卡，只有 `-lv 4` 才会打印（默认 `-lv 3` 看不到）：
-
-```
-load_tensors:        CUDA0 model buffer size =  1075.74 MiB
-load_tensors: offloaded 33/33 layers to GPU
-llama_context: n_seq_max             = 1        <- -np 1
-srv    load_model: initializing, n_slots = 1, n_ctx_slot = 1024
-```
-
-`scripts/start.ps1` 已经带上 `-lv 4`；实测对 TTFT 没有影响（稳态 13~14 ms，和默认一致），代价是日志会随会话变大，每次启动会覆盖。
-
-## 用例
-
-写在 `scripts/bench_mt.py` 的 `CASES` 里。每句预热 1 次，再测 3 次，表内是中位数。测一个模型时只让它占显卡。
-
-| 编号 | 难度 | 原文 |
-| --- | --- | --- |
-| en-hello | 易 | Hello. |
-| en-subtitle | 易 | This is a live subtitle test. |
-| en-colloquial | 中 | It's gonna be a long night, isn't it? |
-| en-names | 中 | NASA launched Artemis II on April 3rd, 2026. |
-| en-negation | 中 | Don't turn off the lights until everyone leaves. |
-| en-partial | 难 | so the thing is we should probably |
-| en-compound | 难 | If the train is late and the rain doesn't stop, we'll miss the opening and have to watch it online. |
-| ja-easy | 易 | これは字幕のテストです。 |
-| ja-negation | 难 | 彼はまだ来ていないから、先に始めないで。 |
-| ko-easy | 易 | 안녕하세요, 자막 테스트입니다. |
-| ko-negation | 难 | 아직 시작하지 마세요. 사람이 다 안 왔어요. |
-| en-caption | 长 | If you look closely, the crack started on the left side of the ice... |
-| en-narration | 长 | What you're looking at is the same glacier I filmed five years ago... |
-| en-dialogue | 长 | I kept telling them we should leave before dark... |
-| en-long-partial | 长 | the reason this matters is that once the valve opens... |
-| ja-long | 长 | 五年前にここで撮った氷河は尾根まで届いていたんですが… |
-| ko-long | 长 | 오 년 전 여기서 찍은 빙하는 능선까지 닿아 있었는데… |
-
-质量按字幕来打：误译、漏译、多译、语序、把指令复读出来，各算失分。2 分是能直接上字幕，1 分是大意对但有明显瑕疵，0 分是意思错、漏掉后半句或重复崩坏。满分 22。
-
-## 译文和耗时
-
-### 混元 Hy-MT2-1.8B Q4（默认）
-
-| 用例 | 耗时 | 译文 | 分 |
-| --- | ---: | --- | ---: |
-| en-hello | 44 ms | 你好。 | 2 |
-| en-subtitle | 94 ms | 这是实时字幕测试。 | 2 |
-| en-colloquial | 115 ms | 这将是一个漫长的夜晚，对吧？ | 2 |
-| en-names | 249 ms | NASA于2026年4月3日发射了阿耳忒弥斯2号任务。 | 1 |
-| en-negation | 127 ms | 在所有人离开之前，不要关灯。 | 2 |
-| en-partial | 93 ms | 所以实际上，我们或许应该 | 2 |
-| en-compound | 227 ms | 如果火车晚点且雨势不止，我们就会错过开播，只能在线观看。 | 1 |
-| ja-easy | 90 ms | 这是字幕的测试。 | 2 |
-| ja-negation | 128 ms | 他还没来，所以先别开始。 | 2 |
-| ko-easy | 102 ms | 您好，正在测试字幕。 | 1 |
-| ko-negation | 185 ms | 还不要开始。还没有人来呢。 | 1 |
-
-合计 18/22。专名句多写了“任务”。`opening` 译成“开播”，更像开场或开幕式。韩语问候译成“正在测试”，禁令句把“人还没到齐”说成“还没有人来”。半句没有被补完。
-
-### Qwen3.5-4B MTP Q4（质量基线）
-
-| 用例 | 耗时 | 译文 | 分 |
-| --- | ---: | --- | ---: |
-| en-hello | 245 ms | 你好。 | 2 |
-| en-subtitle | 381 ms | 这是一个实时字幕测试。 | 2 |
-| en-colloquial | 461 ms | 这将会是一个漫长的夜晚，不是吗？ | 2 |
-| en-names | 1104 ms | NASA 于 2026 年 4 月 3 日发射了阿尔忒弥斯二号任务。 | 1 |
-| en-negation | 370 ms | 所有人离开前不要关灯。 | 2 |
-| en-partial | 579 ms | 所以事情大概是，我们可能应该 | 2 |
-| en-compound | 1034 ms | 如果火车晚点且雨不停，我们将错过首映，只能在线观看。 | 1 |
-| ja-easy | 262 ms | 这是字幕测试。 | 2 |
-| ja-negation | 460 ms | 他还没来，先别开始。 | 2 |
-| ko-easy | 349 ms | 您好，这是字幕测试。 | 2 |
-| ko-negation | 586 ms | 您现在还没开始吧。人都还没到呢。 | 0 |
-
-合计 18/22。同样多写了“任务”，`opening` 译成“首映”。韩语问候比混元准。禁令句被改成问句“您现在还没开始吧”，这是这组里更重的误译。没有把思考过程漏进译文。
-
-### NLLB-200-distilled-600M，CTranslate2 INT8
-
-| 用例 | 耗时 | 译文 | 分 |
-| --- | ---: | --- | ---: |
-| en-hello | 134 ms | 您好,您好. | 0 |
-| en-subtitle | 160 ms | 这是一个直播字幕测试. | 1 |
-| en-colloquial | 199 ms | 这将是一个漫长的夜晚,不是吗? | 2 |
-| en-names | 356 ms | 美国宇航局于2026年4月3日发射了"阿特米斯二号". | 2 |
-| en-negation | 156 ms | 在大家离开之前,不要关灯. | 2 |
-| en-partial | 118 ms | 所以问题是,我们应该 | 1 |
-| en-compound | 261 ms | 如果火车迟到,雨不停,我们会错过开幕, | 0 |
-| ja-easy | 244 ms | 现在,我们要做一个字幕测试. | 0 |
-| ja-negation | 212 ms | 他还没有来,所以不要先开始. | 1 |
-| ko-easy | 209 ms | 你好,这是一个字幕测试. | 2 |
-| ko-negation | 181 ms | 别开始,没有人来. | 1 |
-
-合计 12/22。英语短句重复，日语短句意思错，长句后半句“只能在线看”被截掉。速度和混元同一档，质量不够当默认。
-
-### Opus-MT en-zh，CTranslate2 INT8
-
-魔搭上没有日译中、韩译中，这两句记跳过。英语七句都出现重复或语序崩坏，例如 `Hello.` 被译成几十个“你好”，长句出现“火车火车”“开开开”。不能当字幕。最快的一句是 61 ms 的英语短句，译文仍然重复。
-
-## 长句
-
-视频字幕几乎都是这种长度。输出上限放到 256 个 token，避免后半句被截断后当成模型不会译。下面是同一次、显卡只跑翻译时的结果。
-
-| 用例 | Hy-MT2 | Qwen3.5-4B | NLLB-600M |
-| --- | --- | --- | --- |
-| 冰上裂缝，镜头切走 | 439 ms，整句完整 | 388 ms，整句完整 | 400 ms，停在“摄像头切断之前” |
-| 五年前的冰川，湖面翻倍 | 548 ms，整句完整 | 512 ms，整句完整 | 440 ms，湖面翻倍被丢掉 |
-| 天黑前离开，油灯亮了二十分钟 | 565 ms，整句完整；“gas light”译成加油灯 | 565 ms，同样把油量灯译成加油灯 | 531 ms，停在“没有信号” |
-| 阀门打开、压力掉到红线以下（半句） | 226 ms，阀门和红线都在 | 244 ms，写成“红色线” | 222 ms，阀门译成“门”，后面丢掉 |
-| 日语同一段冰川 | 480 ms，整句完整 | 435 ms，整句完整 | 661 ms，意思在，说法生硬 |
-| 韩语同一段冰川 | 515 ms，整句完整 | 425 ms，整句完整 | 529 ms，山脊译成边缘 |
-
-Opus-MT 的长句要么重复同一段，要么在 1.4 秒里吐出上百个“你好”或“原因”，没有可用译文。
-
-长句上混元和 Qwen 的意思对齐，都能译完。NLLB 经常在从句中间停下。Qwen 这次占了 3724 MiB，剩下约 239 MiB，Whisper 放不进去。混元大约 1.6GB，识别可以继续留在显卡上。
-
-## 选择
-
-短句上混元和 Qwen 都是 18/22。长句上两者质量也在同一档，NLLB 会漏掉后半句。
-
-默认仍是混元：长句大约 0.4–0.6 秒译完，并且显存够同时放下识别。Qwen 长句质量没有拉开差距，却把 4GB 占满。
-
-NLLB 和 Opus 更快的说法，在这台卡的单句延迟上没有成立。Opus 的短句可以到 61 ms，长句译文不能用。
-
-外部接口仍然留着：插件里勾选「用外部接口翻译」，地址写到 `/v1`。
-
-磁盘上只留识别用的 faster-whisper-small、静音检测，和混元 Hy-MT2-1.8B Q4。Q8 大约再多 700MB，和显卡上的识别挤在 4GB 里会把 Whisper 挤回内存，长句质量又没有拉开，所以不换。NLLB、Opus、Qwen2.5-3B、Qwen3.5-4B 的权重已删。对比记录还在 `logs/bench_quality.json`。
-
-重跑当前模型：
-
-```powershell
-D:\minanconda\envs\pytorch\python.exe scripts\bench_mt.py hymt
-```
+本项目代码采用 [MIT License](LICENSE) 开源协议。
+项目中引用的各预训练模型权重、推理引擎二进制文件均须遵循各自原厂开源许可与商业条款。

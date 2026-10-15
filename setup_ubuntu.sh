@@ -62,7 +62,7 @@ pip install -r requirements_ubuntu.txt
 echo "[4/4] 检测模型目录 (models)..."
 if [ ! -d "models" ]; then
     # 自动探测 Windows 双系统或 WSL 挂载点
-    WINDOWS_C_MODELS="/mnt/c/Users/20693/Desktop/translation/models"
+    WINDOWS_C_MODELS=$(ls -d /mnt/c/Users/*/Desktop/translation/models 2>/dev/null | head -n 1)
     WINDOWS_D_MODELS="/mnt/d/TranslationDesktop/models"
     if [ -d "$WINDOWS_D_MODELS" ]; then
         echo "  -> 自动发现 Windows D盘已下载模型: $WINDOWS_D_MODELS"
