@@ -24,7 +24,16 @@ from PyQt6.QtGui import (
     QPen,
     QPixmap,
 )
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .tray_manager import find_app_icon_path
 
@@ -147,8 +156,157 @@ class SplashScreen(QWidget):
         self._fade_anim.finished.connect(self.close)
         self._fade_anim.start()
         app = QApplication.instance()
+    def prompt_missing_models(self, title: str = "未检测到本地大模型目录", tried_candidates: list[Path] | None = None) -> Optional[Path]:
+        """Display an interactive dialog when models are missing or unmounted,
+        allowing the user to manually select the models directory.
+        """
+        from server import config
+
+        self.set_progress(0.15, "⚠️ 未检测到模型目录，等待用户指定...")
+        app = QApplication.instance()
         if app:
             app.processEvents()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("未检测到大模型存放目录")
+        dialog.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.FramelessWindowHint
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        dialog.setFixedSize(500, 240)
+        # Center over splash screen
+        dialog.move(
+            self.x() + (self.width() - dialog.width()) // 2,
+            self.y() + (self.height() - dialog.height()) // 2
+        )
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(0)
+
+        # Container card with dark fluent styling
+        card = QWidget(dialog)
+        card.setStyleSheet("""
+            QWidget {
+                background-color: #0b111e;
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 12px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(22, 18, 22, 18)
+        card_layout.setSpacing(12)
+
+        title_lbl = QLabel(f"⚠️ {title}", card)
+        title_lbl.setStyleSheet("color: #f8fafc; font-size: 15px; font-weight: bold; border: none;")
+        card_layout.addWidget(title_lbl)
+
+        desc_text = (
+            "系统未能在默认位置检测到模型文件（可能未挂载数据盘或路径不同）。\n"
+            "若您的模型存放在外部硬盘、/mnt/DATA、/media/... 或自定义目录，\n"
+            "请点击下方按钮选择存放文件夹 (包含 Qwen-ASR / Index-Translate)："
+        )
+        desc_lbl = QLabel(desc_text, card)
+        desc_lbl.setStyleSheet("color: #94a3b8; font-size: 12px; line-height: 1.5; border: none;")
+        desc_lbl.setWordWrap(True)
+        card_layout.addWidget(desc_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        btn_browse = QPushButton("📁 手动选择模型目录...", card)
+        btn_browse.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 16px;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+            }
+        """)
+
+        btn_rescan = QPushButton("🔄 重新扫描", card)
+        btn_rescan.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #cbd5e1;
+                font-size: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 7px 14px;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                color: #ffffff;
+            }
+        """)
+
+        btn_exit = QPushButton("退出", card)
+        btn_exit.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #64748b;
+                font-size: 12px;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 12px;
+            }
+            QPushButton:hover {
+                color: #ef4444;
+            }
+        """)
+
+        btn_row.addWidget(btn_browse)
+        btn_row.addWidget(btn_rescan)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_exit)
+        card_layout.addLayout(btn_row)
+
+        layout.addWidget(card)
+
+        selected_dir: list[Optional[Path]] = [None]
+
+        def on_browse():
+            start_dir = "/mnt" if sys.platform != "win32" and Path("/mnt").exists() else str(Path.home())
+            folder = QFileDialog.getExistingDirectory(
+                dialog,
+                "请选择模型存放文件夹 (包含 Index-Translate / Qwen-ASR)",
+                start_dir,
+            )
+            if folder:
+                p = Path(folder).resolve()
+                selected_dir[0] = p
+                dialog.accept()
+
+        def on_rescan():
+            p = config.resolve_models_dir()
+            if p.exists() and any((p / cand).exists() for cand in ("Qwen-ASR-0.6B", "Index-Translate", "silero_vad.onnx")):
+                selected_dir[0] = p
+                dialog.accept()
+            else:
+                title_lbl.setText("⚠️ 重新扫描仍未发现模型，请手动选择目录")
+
+        def on_exit():
+            dialog.reject()
+            sys.exit(0)
+
+        btn_browse.clicked.connect(on_browse)
+        btn_rescan.clicked.connect(on_rescan)
+        btn_exit.clicked.connect(on_exit)
+
+        dialog.exec()
+
+        if selected_dir[0]:
+            self.set_progress(0.20, f"已绑定模型目录: {selected_dir[0].name}，正在装载...")
+            return selected_dir[0]
+        return None
 
     def paintEvent(self, event):
         painter = QPainter(self)

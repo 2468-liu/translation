@@ -380,6 +380,11 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
 
     if not model_path:
         print(f"[DesktopApp] WARNING: Translation model missing. Checked candidates: {model_candidates}")
+        if splash:
+            chosen = splash.prompt_missing_models("未检测到本地翻译大模型文件", model_candidates)
+            if chosen:
+                config.set_models_dir(chosen)
+                return _ensure_llama_server(splash=splash)
         return None
 
     is_index = "index" in model_path.name.lower()
@@ -512,6 +517,11 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
 
     if not model_path:
         print(f"[DesktopApp] WARNING: Qwen3-ASR model missing. Checked candidates: {model_candidates}")
+        if splash:
+            chosen = splash.prompt_missing_models("未检测到 Qwen3-ASR 语音大模型文件", model_candidates)
+            if chosen:
+                config.set_models_dir(chosen)
+                return _ensure_qwen_server(splash=splash)
         return None
 
     mmproj_candidates = [
@@ -1070,9 +1080,10 @@ def main():
             qapp = QApplication.instance() or QApplication(sys.argv)
             window = QtCaptionWindow()
             print("[DesktopApp] Qt window initialized successfully.")
-            config.ASR_BACKEND = "nemotron"
-            asr_nemo = build_asr()
-            print(f"[DesktopApp] Nemotron ASR built successfully: {type(asr_nemo).__name__}")
+            if sys.platform == "win32":
+                config.ASR_BACKEND = "nemotron"
+                asr_nemo = build_asr()
+                print(f"[DesktopApp] Nemotron ASR built successfully: {type(asr_nemo).__name__}")
             config.ASR_BACKEND = "qwen3"
             asr_qwen = build_asr()
             print(f"[DesktopApp] Qwen3 ASR built successfully: {type(asr_qwen).__name__}")

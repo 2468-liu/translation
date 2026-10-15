@@ -139,13 +139,19 @@ def resolve_models_dir() -> Path:
         Path.home() / ".cache" / "translation" / "models",
     ])
 
+    # Phase 1: prioritize directories containing full LLM/ASR model suites
     for c in candidates:
         if c.exists() and (
-            (c / "NV3.5-ASR-0.6B").exists()
+            (c / "Index-Translate").exists()
             or (c / "Qwen-ASR-0.6B").exists()
-            or (c / "Index-Translate").exists()
-            or (c / "silero_vad.onnx").exists()
+            or (c / "NV3.5-ASR-0.6B").exists()
+            or (c / "hy-mt2-1.8b").exists()
         ):
+            return c.resolve()
+
+    # Phase 2: directory with VAD or standalone gguf
+    for c in candidates:
+        if c.exists() and ((c / "silero_vad.onnx").exists() or list(c.glob("*.gguf"))):
             return c.resolve()
 
     for c in candidates:

@@ -370,7 +370,8 @@ class QtCaptionWindow(QWidget):
         self._context_menu = self.menu_manager.build_context_menu()
         self._tray_menu = self.menu_manager.build_tray_menu()
 
-        if QSystemTrayIcon.isSystemTrayAvailable():
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("TRANSLATION_TEST_MODE") or "unittest" in sys.modules)
+        if QSystemTrayIcon.isSystemTrayAvailable() and not is_test:
             self._tray_icon = QSystemTrayIcon(_create_tray_icon(), self)
             self._update_tray_tooltip()
             self._tray_icon.setContextMenu(self._tray_menu)
@@ -378,6 +379,14 @@ class QtCaptionWindow(QWidget):
             self._tray_icon.show()
         else:
             self._tray_icon = None
+
+    def closeEvent(self, event):
+        if getattr(self, "_tray_icon", None):
+            try:
+                self._tray_icon.hide()
+            except Exception:
+                pass
+        super().closeEvent(event)
 
     def _update_tray_tooltip(self):
         if not getattr(self, "_tray_icon", None):
