@@ -124,6 +124,14 @@ translation/
 * **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)**：为桌面提供了优雅、平滑的硬件加速半透明渲染。
 * **[PipeWire](https://pipewire.org/) & [SoundCard](https://github.com/bastibe/SoundCard)**：为 Linux 与跨平台音频捕获提供了底层支持。
 
+### 🤖 AI 协同与开发工具致谢 (AI Assistance & Tooling)
+
+特别鸣谢以下前沿大模型与智能 Agent 开发平台在全流程系统工程中的深度协同：
+
+* **[Google Gemini & Antigravity](https://deepmind.google/technologies/gemini/)** (Google DeepMind)：在端到端系统架构设计、跨平台（Windows WASAPI / Linux PipeWire）底层音频对齐、异常熔断自愈与复杂并发逻辑审查中提供了强悍的 Agentic 结对编程与红队质检支持。
+* **[DeepSeek](https://www.deepseek.com/)**：在密集对白时序对齐分析、提示词调优与复杂算法逻辑深度推理中提供了卓越的智能支持。
+* **OpenCode & 现代 Agent 生态**：提供了高敏捷度的本地协同与多工具自动化执行工作流。
+
 ---
 
 ## 📄 License
