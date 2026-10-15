@@ -396,7 +396,7 @@ class CinemaTuningTests(unittest.TestCase):
         self.assertEqual(t.min_speech_ms, 100)
         self.assertEqual(t.threshold, 0.40)
         self.assertEqual(t.sustain_threshold, 0.32)
-        self.assertEqual(t.min_silence_ms, 220)
+        self.assertEqual(t.min_silence_ms, 450)
         self.assertEqual(t.merge_window_ms, 500)
 
     def test_preroll_does_not_duplicate_speech_onset_frame(self):

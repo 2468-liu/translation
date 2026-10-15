@@ -204,14 +204,20 @@ def whisper_tuning() -> Tuning:
 
 
 def cinema_tuning() -> Tuning:
-    """Limits tailored for cinema/movies: 500ms pre-roll, 100ms speech floor, 500ms merge window, 220ms natural pause endpointing, 0.40 threshold."""
+    """Limits tailored for cinema/movies: 500ms pre-roll, 100ms speech floor, 500ms merge window, 450ms natural pause endpointing, 250ms speech pad."""
+    min_silence = _env_int("TRANSLATION_CINEMA_MIN_SILENCE_MS", 450)
+    speech_pad = _env_int("TRANSLATION_CINEMA_SPEECH_PAD_MS", 250)
+    soft_silence = _env_int("TRANSLATION_CINEMA_SOFT_SILENCE_MS", 300)
+    soft_speech = _env_int("TRANSLATION_CINEMA_SOFT_SPEECH_MS", 3500)
+    max_utterance = _env_int("TRANSLATION_CINEMA_MAX_UTTERANCE_MS", 8000)
+    early_end = _env_int("TRANSLATION_CINEMA_EARLY_END_MS", 200)
     return Tuning(
-        min_silence_ms=220,
-        max_utterance_ms=2500,
-        speech_pad_ms=150,
-        early_end_ms=140,
-        soft_cut_speech_ms=1100,
-        soft_cut_silence_ms=180,
+        min_silence_ms=min_silence,
+        max_utterance_ms=max_utterance,
+        speech_pad_ms=speech_pad,
+        early_end_ms=early_end,
+        soft_cut_speech_ms=soft_speech,
+        soft_cut_silence_ms=soft_silence,
         partial_interval_ms=_effective_partial_interval(),
         min_speech_ms=100,
         merge_window_ms=500,
