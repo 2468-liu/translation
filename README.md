@@ -1,11 +1,18 @@
-# 🎬 实时双语字幕与同传系统 (Real-Time Bilingual Caption & Interpretation)
+<div align="center">
+
+# 🎬 实时双语字幕与同传系统
+### Real-Time Bilingual Caption & Interpretation Desktop System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Ubuntu%2024.04%20LTS-brightgreen.svg)]()
 [![Backend](https://img.shields.io/badge/backend-llama.cpp%20%7C%20Vulkan-orange.svg)]()
 
-> **低延迟、纯本地离线、高精度的影视追剧与实时会议双语字幕桌面系统。**
+[ 简体中文 ](README.md) | [ English ](README_EN.md)
+
+</div>
+
+> **低延迟、纯本地离线、高精度的影视追剧与实时会议双语字幕桌面系统。**  
 > 支持 Windows 原生 WASAPI 进程级回环录音与 Linux 原生 PipeWire/PulseAudio 0dB 物理直捕。无需云端 API，无需提取音频文件，即开即翻。
 
 ---
