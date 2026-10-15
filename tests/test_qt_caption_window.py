@@ -652,6 +652,44 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', src)
         self.assertIn('from server.ui.caption_window import main', src)
 
+    def test_engine_switch_unified_block_by_punct(self):
+        """Verify engine switch to Nemotron maintains unified block_by_punct=True."""
+        self.window.menu_manager.apply_engine_cadence("nemotron", 160)
+        self.assertTrue(self.window._block_by_punct)
+        self.window.menu_manager.apply_engine_cadence("qwen3", 1000)
+        self.assertTrue(self.window._block_by_punct)
+
+    def test_begin_segment_safeguards_dismiss_timer(self):
+        """begin_segment must not indefinitely strand captions if new segment has no text."""
+        self.window.line = "现有字幕正在显示"
+        self.window.dismiss_ms = 5000
+        self.window._start_dismiss_timer()
+        self.assertTrue(self.window._dismiss_timer.isActive())
+
+        # New audio onset arrives
+        self.window.begin_segment()
+        # Main dismiss timer is cancelled, but safety timer MUST be armed so subtitle dismisses if no words follow!
+        self.assertFalse(self.window._dismiss_timer.isActive())
+        self.assertTrue(self.window._segment_safety_timer.isActive())
+
+    def test_dismiss_timeout_full_cleanup(self):
+        """_on_dismiss_timeout must completely clean up all buffers and pending states."""
+        self.window.line = "将要消散的字幕"
+        self.window.display_buffer.push_new_sentence("将要消散的字幕")
+        self.window.rolling_buffer.commit("将要消散的字幕")
+        self.window._clause_pending = "残留片段"
+        self.window.source_line = "source"
+
+        self.window._on_dismiss_timeout()
+
+        self.assertEqual(self.window.line, "")
+        self.assertEqual(self.window.source_line, "")
+        self.assertEqual(self.window._clause_pending, "")
+        self.assertEqual(self.window.display_buffer.line1, "")
+        self.assertEqual(self.window.display_buffer.line2, "")
+        self.assertEqual(self.window.rolling_buffer.anchor_line, "")
+        self.assertEqual(self.window.rolling_buffer.active_line, "")
+
 
 if __name__ == "__main__":
     unittest.main()

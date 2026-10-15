@@ -152,16 +152,17 @@ class ChromiumRollingBuffer:
 class CaptionDisplayBuffer:
     """Zero-delay visual persistence buffer using space over time.
 
-    Rule 1: Inline concatenation if incoming sentence arrives within min_dwell_sec (<0.85s)
-            and total chars <= max_inline_chars (24).
+    Rule 1: Inline concatenation if incoming sentence arrives within min_dwell_sec (<1.5s)
+            and total chars <= max_inline_chars (30).
     Rule 2: Two-line rolling buffer if inline cannot fit: active rolls to anchor, new becomes active.
-    Rule 3: Auto-clear anchor line if no new sentence for 4.0s.
+    Rule 3: Human reading speed-aware dynamic retention for anchor line (1.5s + chars*220ms, min 6.0s).
     """
 
-    def __init__(self, max_inline_chars: int = 24, min_dwell_sec: float = 0.85):
+    def __init__(self, max_inline_chars: int = 30, min_dwell_sec: float = 1.5):
         self.line1 = ""               # 上一行（历史留存行 / 锚定行）
         self.line2 = ""               # 当前行（最新字幕行 / 动作行）
         self.last_update_ts = 0.0     # line2 最近一次独立刷新的时间
+        self.line1_update_ts = 0.0    # line1 最近一次滚动锚定的时间
         self.max_inline_chars = max_inline_chars
         self.min_dwell_sec = min_dwell_sec
 
@@ -169,6 +170,7 @@ class CaptionDisplayBuffer:
         self.line1 = ""
         self.line2 = ""
         self.last_update_ts = 0.0
+        self.line1_update_ts = 0.0
 
     def push_new_sentence(self, text: str) -> str:
         text = (text or "").strip()
@@ -178,22 +180,31 @@ class CaptionDisplayBuffer:
         now = time.monotonic()
         dt = (now - self.last_update_ts) if self.last_update_ts > 0 else 999.0
 
-        # 规则 1：如果上一句刚出不到 0.85 秒，且两句合起来不超过 24 字 -> 同行直接拼接！
+        # 规则 1：如果上一句刚出不到 min_dwell_sec 秒，且两句合起来不超过 max_inline_chars 字 -> 同行直接拼接！
         if self.line2 and dt < self.min_dwell_sec and (len(self.line2) + len(text) <= self.max_inline_chars):
-            self.line2 = f"{self.line2}  {text}"
-            # 注意：这里不重置 last_update_ts，避免连续第 3 句无限往后接
+            if text != self.line2 and not self.line2.endswith(text):
+                self.line2 = f"{self.line2}  {text}"
+            # 注意：这里不重置 last_update_ts，避免连续多句无限往后接
         else:
-            # 规则 2：拼不下或上一句已看够 0.85 秒 -> 原先的 line2 顶到 line1 继续停留，新句进 line2
-            if self.line2:
+            # 规则 2：拼不下或上一句已看够 min_dwell_sec 秒 -> 原先的 line2 顶到 line1 继续停留，新句进 line2
+            if self.line2 and text != self.line2:
                 self.line1 = self.line2
+                self.line1_update_ts = now
             self.line2 = text
             self.last_update_ts = now
 
         return self.render()
 
     def render(self) -> str:
-        # 如果超过 4 秒没有新话，自动把旧的 line1 清掉，保持界面干净
-        if self.last_update_ts > 0 and (time.monotonic() - self.last_update_ts > 4.0):
+        # 基于人类生理阅读速度的动态留存保护：
+        # 成年人扫视基线 1.5s + 每个汉字/词 220ms 解码时间，最低留存 6.0 秒
+        now = time.monotonic()
+        if self.line1 and self.line1_update_ts > 0:
+            char_count = len(self.line1.strip())
+            line1_ttl = max(6.0, 1.5 + char_count * 0.22)
+            if now - self.line1_update_ts > line1_ttl:
+                self.line1 = ""
+        elif self.last_update_ts > 0 and (now - self.last_update_ts > 8.0):
             self.line1 = ""
         if self.line1 and self.line2:
             return f"{self.line1}\n{self.line2}"
