@@ -68,7 +68,14 @@ try:
     from server.audio_enhancer import AudioEnhancer
     from server.loopback import run_loopback
     from server.pipeline import Session
-    from server.process_loopback import ProcessLoopbackManager
+    if sys.platform == "win32":
+        try:
+            from server.process_loopback import ProcessLoopbackManager
+        except Exception as e:
+            print(f"[DesktopApp] Windows process loopback error: {e}")
+            ProcessLoopbackManager = None
+    else:
+        ProcessLoopbackManager = None
     from server.qt_caption_window import QtCaptionWindow
     from server.ui import SplashScreen
     from server.vad import apply_partial_interval, cinema_tuning
@@ -597,13 +604,19 @@ class DesktopApp:
             self.window.set_cadence_ui(cadence)
             self.window.set_asr_backend_ui("nemotron")
 
-        # Initialize Native Process Loopback Manager
-        if self.splash:
-            self.splash.set_progress(0.95, "正在初始化 WASAPI 音频捕获引擎...")
-        self.loopback_mgr = ProcessLoopbackManager()
-        self._on_pcm_received = None
-        if self.loopback_mgr.is_available:
-            print("[DesktopApp] Native Process-Tree Loopback DLL loaded successfully.")
+        # Initialize Native Process Loopback Manager (Windows only)
+        if sys.platform == "win32" and ProcessLoopbackManager is not None:
+            if self.splash:
+                self.splash.set_progress(0.95, "正在初始化 WASAPI 音频捕获引擎...")
+            self.loopback_mgr = ProcessLoopbackManager()
+            self._on_pcm_received = None
+            if self.loopback_mgr and self.loopback_mgr.is_available:
+                print("[DesktopApp] Native Process-Tree Loopback DLL loaded successfully.")
+        else:
+            if self.splash:
+                self.splash.set_progress(0.95, "正在初始化 PipeWire/PulseAudio 回环捕获引擎...")
+            self.loopback_mgr = None
+            self._on_pcm_received = None
 
         # Hook Window Config Changes directly to Session
         self.window.config_changed.connect(self._on_config_changed)
@@ -1011,6 +1024,23 @@ def main():
         # Early Splash Screen: Instant visual response upon user double-click (< 100ms)
         qapp = QApplication.instance() or QApplication(sys.argv)
         qapp.setQuitOnLastWindowClosed(False)
+
+        # Linux / Ubuntu High-DPI & Anti-aliased Font Family Fallback
+        if sys.platform != "win32":
+            from PyQt6.QtGui import QFont
+            app_font = QFont()
+            app_font.setFamilies([
+                "Noto Sans CJK SC",
+                "Source Han Sans CN",
+                "WenQuanYi Micro Hei",
+                "Ubuntu Sans",
+                "Ubuntu",
+                "DejaVu Sans",
+                "sans-serif",
+            ])
+            app_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
+            qapp.setFont(app_font)
+
         splash = SplashScreen()
         splash.show()
         splash.set_progress(0.10, "正在初始化实时同传系统与硬件加速...")

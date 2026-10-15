@@ -30,13 +30,26 @@ ls -l ./models
 
 ### 1. 运行一键配置脚本
 ```bash
-chmod +x setup_ubuntu.sh start_ubuntu.sh
+chmod +x setup_ubuntu.sh start_ubuntu.sh create_desktop_shortcut.sh
 ./setup_ubuntu.sh
 ```
 该脚本会自动：
 - 安装 Ubuntu 24.04 / Zorin OS 18 所需的系统级音频库（`libpulse0`, `libasound2t64`）、X11/XCB 动态库；
+- 安装高清无衬线中文字体包（`fonts-noto-cjk`, `fonts-wqy-microhei`），彻底消除 Linux 下字幕发虚发灰、锯齿倒退的视觉问题；
 - 创建隔离的 Python 虚拟环境 `venv/`（完美避开 Ubuntu 24.04 PEP 668 的 externally-managed 限制）；
-- 安装 `PyQt6`, `soundcard`, `onnxruntime`, `numpy`, `websockets` 等核心依赖。
+- 安装 `PyQt6`, `soundcard`, `onnxruntime`, `numpy`, `websockets` 等核心依赖；
+- 自动在您的 Linux 桌面生成【实时双语字幕】一键双击启动快捷方式！
+
+---
+
+## 三、 生成桌面一键启动图标（可选独立运行）
+
+如果您想在桌面重新生成或修复启动图标，可直接运行：
+```bash
+./create_desktop_shortcut.sh
+```
+生成后，在桌面即可看到【实时双语字幕】应用图标，双击即可无缝启动！
+*(若 Ubuntu 24.04 GNOME 46 首次双击未弹出，右键图标选择【允许启动 (Allow Launching)】即可)*
 
 ---
 

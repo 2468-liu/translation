@@ -58,15 +58,21 @@ _LEVEL_QUANTILE = 0.90
 
 def _find_loopback_microphone(soundcard, speaker):
     microphones = soundcard.all_microphones(include_loopback=True)
+    # 1. Exact match
     for microphone in microphones:
         if microphone.name == speaker.name:
             return microphone
+    # 2. Substring match (e.g. "Monitor of <Speaker Name>" on PulseAudio/PipeWire)
     for microphone in microphones:
         if speaker.name in microphone.name or microphone.name in speaker.name:
             return microphone
-    # Linux (PulseAudio / PipeWire) loopback monitor device fallback
+    # 3. Explicit isloopback flag
     for microphone in microphones:
-        if getattr(microphone, "isloopback", False) or "monitor" in microphone.name.lower():
+        if getattr(microphone, "isloopback", False):
+            return microphone
+    # 4. Any monitor device in name
+    for microphone in microphones:
+        if "monitor" in microphone.name.lower():
             return microphone
     return None
 
@@ -276,9 +282,9 @@ async def run_loopback(session, send, stop_event: asyncio.Event) -> None:
             microphone, speaker_name = await asyncio.to_thread(_open_loopback)
             retry_count = 0
             with microphone.recorder(samplerate=SAMPLE_RATE, channels=2) as recorder:
-                is_prevolume = True
-                level = LoopbackLevel(passthrough=True)
-                mode_desc = " (100% 原始透传 & 智能管道接管)"
+                is_prevolume = _PREVOLUME_ACTIVE if sys.platform == "win32" else False
+                level = LoopbackLevel(passthrough=is_prevolume)
+                mode_desc = " (100% 原始透传 & 智能管道接管)" if is_prevolume else " (自适应电平增益 & 智能防抖)"
                 await send({
                     "type": "status",
                     "level": "info",

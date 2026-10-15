@@ -140,7 +140,7 @@ class CaptionMenuBuilder:
                 border: 1px solid rgba(255, 255, 255, 0.14);
                 border-radius: 8px;
                 padding: 6px;
-                font-family: 'Microsoft YaHei', 'Segoe UI';
+                font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans CN', 'WenQuanYi Micro Hei', 'Ubuntu Sans', 'Segoe UI', sans-serif;
                 font-size: 13px;
             }
             QMenu::item {

@@ -37,6 +37,8 @@ if command -v apt &> /dev/null; then
         libxcb-render-util0 \
         libxcb-shape0 \
         libxkbcommon-x11-0 \
+        fonts-noto-cjk \
+        fonts-wqy-microhei \
         psmisc \
         lsof \
         curl
@@ -92,7 +94,16 @@ if ! command -v llama-server &> /dev/null && [ ! -f "tools/llama-server/llama-se
 fi
 
 chmod +x start_ubuntu.sh 2>/dev/null || true
+chmod +x create_desktop_shortcut.sh 2>/dev/null || true
+
+# 6. 生成桌面一键启动快捷方式
+if [ -f "./create_desktop_shortcut.sh" ]; then
+    echo "[6/6] 正在创建桌面一键启动快捷方式..."
+    ./create_desktop_shortcut.sh || true
+fi
 
 echo "=========================================================="
-echo "  配置完成！执行 ./start_ubuntu.sh 即可直接启动字幕程序！ "
+echo "  配置完成！"
+echo "  您可双击桌面上的【实时双语字幕】图标直接启动，"
+echo "  或在终端执行 ./start_ubuntu.sh 启动！"
 echo "=========================================================="
