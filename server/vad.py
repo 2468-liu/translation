@@ -14,13 +14,18 @@ from .config import (
     VAD_MIN_SILENCE_MS,
     VAD_MIN_SPEECH_MS,
     VAD_PREROLL_MAX_MS,
+    VAD_SUSTAIN_THRESHOLD,
     VAD_THRESHOLD,
+    VAD_SPEECH_PAD_MS,
+    SOFT_CUT_SPEECH_MS,
+    SOFT_CUT_SILENCE_MS,
     PARTIAL_INTERVAL_MS,
     GEMMA_MAX_UTTERANCE_MS,
     GEMMA_MIN_SILENCE_MS,
     GEMMA_SOFT_CUT_SILENCE_MS,
     GEMMA_SOFT_CUT_SPEECH_MS,
     GEMMA_VAD_SPEECH_PAD_MS,
+    _env_int,
 )
 
 FRAME = 512  # 32ms at 16kHz
@@ -50,19 +55,8 @@ def _silence_bin(ms: float) -> str:
         if ms < edge:
             return f"lt{edge}"
     return f"ge{SILENCE_BINS_MS[-1]}"
-# An utterance only closes after 400ms of silence, but the words are already
-# over after the first pause. Emitting one extra partial as soon as the pause
-# reaches 150ms hands the tail to ASR 250ms earlier, and the closing event
-# then reuses that text instead of transcribing the same audio again.
-EARLY_END_SILENCE_MS = 150
-# Once five seconds of speech are in, a200ms pause is already a sentence
-# boundary; holding out for 400ms only delays the closing events, and it caps
-# how long one recogniser call can grow.
-SOFT_CUT_SPEECH_MS = 5_000
-SOFT_CUT_SILENCE_MS = 200
-# Silence frames are zeroed (NON_SPEECH_GAIN), so the tail can be cut back to
-# a120ms release: whisper still hears the last word, the buffer is shorter.
-VAD_SPEECH_PAD_MS = 120
+# Early end silence threshold for pre-close partial (env-configurable)
+EARLY_END_SILENCE_MS = _env_int("TRANSLATION_EARLY_END_SILENCE_MS", 150)
 
 
 class _Silero:
@@ -103,8 +97,9 @@ class _Silero:
 class _Energy:
     def prob(self, frame: np.ndarray) -> float:
         rms = float(np.sqrt(np.mean(np.square(frame)) + 1e-10))
-        # Map typical speech RMS (~0.02-0.1) onto 0..1 around the Silero threshold.
-        return max(0.0, min(1.0, (rms - 0.008) / 0.04))
+        # Map typical speech RMS (~0.003-0.08) onto 0..1 around the Silero threshold.
+        # Sensitive floor (0.003) ensures quiet speech/whispers are detected.
+        return max(0.0, min(1.0, (rms - 0.003) / 0.035))
 
     def reset(self) -> None:
         return None
@@ -151,6 +146,8 @@ class Tuning:
         min_speech_ms: int = VAD_MIN_SPEECH_MS,
         merge_window_ms: int = VAD_MERGE_WINDOW_MS,
         preroll_max_ms: int = VAD_PREROLL_MAX_MS,
+        threshold: float = VAD_THRESHOLD,
+        sustain_threshold: float = VAD_SUSTAIN_THRESHOLD,
     ):
         self.min_silence_ms = min_silence_ms
         self.max_utterance_ms = max_utterance_ms
@@ -169,11 +166,13 @@ class Tuning:
         # Silence allowed while holding a too-short utterance open for a
         # neighbour. 0 = never hold, i.e. discard it the way this used to.
         self.merge_window_ms = merge_window_ms
+        self.threshold = threshold
+        self.sustain_threshold = sustain_threshold
         self.name = name
 
 
-def whisper_tuning() -> Tuning:
-    """Limits for whisper, which re-reads fragments and stitches context."""
+def standard_tuning() -> Tuning:
+    """Standard limits for speech segmentation."""
     return Tuning(
         min_silence_ms=VAD_MIN_SILENCE_MS,
         max_utterance_ms=MAX_UTTERANCE_MS,
@@ -182,7 +181,44 @@ def whisper_tuning() -> Tuning:
         soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
         soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
         partial_interval_ms=_effective_partial_interval(),
+        threshold=VAD_THRESHOLD,
+        sustain_threshold=VAD_SUSTAIN_THRESHOLD,
+        name="standard",
+    )
+
+
+def whisper_tuning() -> Tuning:
+    """Whisper offline/batch limits: 400ms closing silence."""
+    return Tuning(
+        min_silence_ms=400,
+        max_utterance_ms=MAX_UTTERANCE_MS,
+        speech_pad_ms=VAD_SPEECH_PAD_MS,
+        early_end_ms=EARLY_END_SILENCE_MS,
+        soft_cut_speech_ms=SOFT_CUT_SPEECH_MS,
+        soft_cut_silence_ms=SOFT_CUT_SILENCE_MS,
+        partial_interval_ms=_effective_partial_interval(),
+        threshold=VAD_THRESHOLD,
+        sustain_threshold=VAD_SUSTAIN_THRESHOLD,
         name="whisper",
+    )
+
+
+def cinema_tuning() -> Tuning:
+    """Limits tailored for cinema/movies: 500ms pre-roll, 100ms speech floor, 500ms merge window, 220ms natural pause endpointing, 0.40 threshold."""
+    return Tuning(
+        min_silence_ms=220,
+        max_utterance_ms=2500,
+        speech_pad_ms=150,
+        early_end_ms=140,
+        soft_cut_speech_ms=1100,
+        soft_cut_silence_ms=180,
+        partial_interval_ms=_effective_partial_interval(),
+        min_speech_ms=100,
+        merge_window_ms=500,
+        preroll_max_ms=500,
+        threshold=0.40,
+        sustain_threshold=0.32,
+        name="cinema",
     )
 
 
@@ -331,7 +367,16 @@ class UtteranceSplitter:
         while self.pending.size >= FRAME:
             frame = self.pending[:FRAME]
             self.pending = self.pending[FRAME:]
-            speech = self.engine.prob(frame) >= VAD_THRESHOLD
+            prob = self.engine.prob(frame)
+            onset_thresh = getattr(self.tuning, "threshold", VAD_THRESHOLD)
+            sustain_thresh = getattr(self.tuning, "sustain_threshold", VAD_SUSTAIN_THRESHOLD)
+            # Dual-threshold hysteresis:
+            # - Onset threshold (higher): avoids false activation on quiet background noise
+            # - Sustain threshold (lower): preserves quiet speech, whispers, and low-energy female continuation
+            if self.in_speech:
+                speech = prob >= sustain_thresh
+            else:
+                speech = prob >= onset_thresh
             # Rolling pre-buffer for the leading pre-roll. Kept before the branch
             # so it holds the frames that preceded this decision, which is the
             # only place they exist: once a frame is classified it is either
@@ -446,7 +491,7 @@ class UtteranceSplitter:
                         early_partial=1,
                         delivered=1,
                     )
-                    events.append(("end", self._take(), True))
+                    events.append(("end", self._take(), self.early_partial))
                     continue
                 if (
                     t.partial_interval_ms
@@ -599,7 +644,11 @@ class UtteranceSplitter:
         want = min(int(cap / self.frame_ms), self._silence_run_before)
         if want <= 0:
             return []
-        return self._prebuffer[-want:]
+        # Pre-roll MUST only take frames that preceded the current speech frame.
+        # self._prebuffer has already had the current speech frame appended at the end (-1),
+        # so taking from self._prebuffer[:-1] avoids duplicating the speech onset frame.
+        history = self._prebuffer[:-1]
+        return history[-want:] if want <= len(history) else history
 
     def _copy(self) -> np.ndarray:
         if not self.utterance:
