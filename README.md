@@ -60,6 +60,16 @@
 * **Nemotron 权重**：`nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`，存放于 `models/NV3.5-ASR-0.6B/`。
 * **Vulkan C 库**：`nemo_speech_asr_c.dll`，存放于 `tools/nemo-speech-vulkan/.../bin`。
 
+#### 官方推荐分块档位 (Streaming Chunk Size Matrix)
+
+| 配置档位 | 分块大小 (Chunk Size) | 适用场景 |
+| :--- | :--- | :--- |
+| **最低延迟 (Lowest latency)** | **80 ms** | 追求极致响应速度，对准确率要求相对宽松的场景 |
+| **快速 (Fast)** | **160 ms** | 官方推荐 (Recommended)，在延迟与准确率之间取得良好平衡 |
+| **均衡 (Balanced)** | **320 ms** | 模型默认配置，适合大多数通用流式转录任务 |
+| **高准确率 (Accurate)** | **560 ms** | 对转录准确率要求更高，可以接受稍高延迟的场景 |
+| **最高准确率 (Most accurate)** | **1.12 s (1120 ms)** | 用于离线或对实时性要求不高的高精度转录任务 |
+
 ---
 
 ## 🚀 快速上手 (Quick Start)

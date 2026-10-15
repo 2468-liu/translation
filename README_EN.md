@@ -76,6 +76,16 @@ The translation service (port 8080) and Qwen3-ASR service (port 8099) are powere
 * **Model Weights**: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`, placed in `models/NV3.5-ASR-0.6B/`.
 * **Vulkan C Library**: `nemo_speech_asr_c.dll`, placed in `tools/nemo-speech-vulkan/.../bin`.
 
+#### Official Recommended Streaming Chunk Size Matrix
+
+| Profile | Chunk Size | Recommended Scenarios |
+| :--- | :--- | :--- |
+| **Lowest latency** | **80 ms** | Ultra-low latency requirements with relaxed accuracy demands |
+| **Fast** | **160 ms** | **Official Recommendation**, optimal balance between latency and accuracy |
+| **Balanced** | **320 ms** | Model default configuration, suitable for general streaming transcription |
+| **Accurate** | **560 ms** | Higher transcription accuracy where moderate latency is acceptable |
+| **Most accurate** | **1.12 s (1120 ms)** | High-precision transcription where real-time latency is secondary |
+
 ---
 
 ## 🚀 Quick Start
