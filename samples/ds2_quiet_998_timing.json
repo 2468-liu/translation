@@ -1,0 +1,30 @@
+{
+ "src": "奇异博士2 (2022) 院线版 126:31",
+ "ref": "D:/jianpianDownload/奇异博士2.srt (双语, 99.8% 时间覆盖)",
+ "shape": "quiet",
+ "why": "isolated 1.1s line, gaps 8.5s/7.7s",
+ "wav": "ds2_quiet_998.wav",
+ "sha256": "7c757f0a305f43eff45a4b4d9188cc960aecd59848d26a9c7e4653d798b7cb9e",
+ "segments": [
+  {
+   "start": 1001.19,
+   "end": 1002.01,
+   "text": "证明给我看\nProve it."
+  },
+  {
+   "start": 1010.54,
+   "end": 1011.66,
+   "text": "那不是梦\nIt wasn't a dream"
+  },
+  {
+   "start": 1019.36,
+   "end": 1020.41,
+   "text": "意味着\nThat means."
+  },
+  {
+   "start": 1022.38,
+   "end": 1025.97,
+   "text": "梦是窥探我们在多元宇宙中的自我的窗口\nDreams are windows into the lives of our Multiversal selves."
+  }
+ ]
+}

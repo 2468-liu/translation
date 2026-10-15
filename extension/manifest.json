@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "本地实时字幕",
+  "version": "1.0.0",
+  "description": "从播放器读取声音，在 Windows 原生置顶字幕层显示译文，不修改网页内容或全屏状态。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApZhAPn0xPQERDSdoLe6VWDiHvqz1UTl5s4qu0PnGorgLgB3wUXP1tHlIXG9GH0FN14ygWQ07x1sx4YK08EGKsUgLffsIaZz8MYFkibTYPSw1SPQ0+pnv3M5BqtF3Y7zUrTnrSUktAWHJuo1/cBE52gE2io+RGXjQvCdGkx97EZuu2tbL8oQeWqtcYPNo23mEPqRtcit3YgVKAry/EzFneRXxAB+Avk1zkvRNLQepDjkiYwluHPOZJSxg5Gxyyfen9Shscjx5/euDF7RSFA5gTjgHpthIY00ltRMN4yEEjZYARINnbIUbH5DQgBtdPkx5hGzga+4M5sEP/15UtMZBXQIDAQAB",
+  "permissions": ["offscreen", "storage", "nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "实时字幕翻译",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "minimum_chrome_version": "116",
+  "commands": {
+    "toggle-caption": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "Command+Shift+C"
+      },
+      "description": "开启或停止实时字幕"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,20 @@
+{
+ "src": "奇异博士2 (2022) 院线版 126:31",
+ "ref": "D:/jianpianDownload/奇异博士2.srt (双语, 99.8% 时间覆盖)",
+ "shape": "action",
+ "why": "2 cue(s) in 25s, dialogue under the music",
+ "wav": "ds2_action_40.wav",
+ "sha256": "371871ab1cca62083d045cabaa5fe2dc5c96b1f634af0d12d6fbbadee340344e",
+ "segments": [
+  {
+   "start": 63.5,
+   "end": 64.95,
+   "text": "那招杀死它了吗 没有\nDid that kill it? No."
+  },
+  {
+   "start": 64.95,
+   "end": 66.57,
+   "text": "那个可以杀了它\nThat, that will kill it."
+  }
+ ]
+}

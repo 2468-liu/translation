@@ -1,0 +1,2078 @@
+"""Parentless subtitle window. No title bar, no minimize, text only by default."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import queue
+import re
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import TclError
+from pathlib import Path
+
+from . import perf
+from .config import BLOCK_OUTPUT, _env_int
+from .translate import CHAR_RUN_MAX, CLAUSE_RUN_MAX, collapse_caption_repeats
+
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+CAPTION_PORT = 8766
+STATE_PORT = 8767
+# The 3-minute blog is a reference, not a schedule. There the gap between
+# spoken pieces had a 3.25s median and a typical line was about 13 characters.
+# Other videos sit on either side of that, so the curve below is the comfort
+# center and live utterance gaps scale it between PACE_MIN and PACE_MAX.
+# Length bands at pace 1 (a 13-character line is about 2.4s, under that 3.25s gap):
+#   1–3 chars   glance, fixed 1.0s
+#   4–8 chars   short clause, 150ms for each extra character
+#   9–18 chars  reference band, 130ms each (blog-like lines)
+#   19+ chars   long line, 80ms each; absolute cap HOLD_ABS_MAX_MS
+REF_GAP_S = 3.25
+PACE_MIN = 0.62
+PACE_MAX = 1.48
+PACE_MIN_GAPS = 3
+READABLE_RATIO = 0.70
+# The floor on how long a line stays up, whatever its length or the speaker's pace.
+#
+# This was tried at 600 and put back, and the reason is worth keeping: it is the wrong
+# knob for the stall. Lowering it to 600 moved held-group gap p50 from 1482ms to 1502ms
+# and waiting p50 from 808ms to 820ms -- both inside noise -- while costing 180ms on
+# every one-to-three-character line, the only band the floor reaches. The floor only
+# clamps when the reference table scaled below it, and the table bottoms out at 1000ms,
+# so 620ms is the smallest value the table and the fastest pace factor can produce
+# together. At 800 that floor still clamped those lines; at 600 it stopped clamping
+# anything at all, which makes 600 an inert parameter rather than a tighter hold.
+#
+# What drives the median instead is the 9-to-18 character band: 13 characters is
+# 2400ms in the reference table and 1488ms after the 0.62 factor, which is the measured
+# held-group p50 almost exactly. Only that band and the pace factor can move it, and the
+# factor is a readability trade rather than a free win.
+#
+# ⚠️ One inference here was wrong and is worth not repeating. The 600 run was chosen
+# because waiting p50 measured 808ms against a floor of 800, which reads like the floor
+# setting the wait. It does not: the 800 floor was never in that number, because hold_ms
+# is one candidate among several and the wait it produces is the remainder, not the
+# hold. The same numbers' smallest values were 54ms and 157ms. Two figures landing near
+# each other is not one figure explaining the other.
+#
+# Injectable, like every other threshold, so an experiment moves one number instead of
+# editing the file the last one measured.
+HOLD_ABS_MIN_MS = _env_int("TRANSLATION_HOLD_ABS_MIN_MS", 800)
+HOLD_ABS_MAX_MS = 4200
+
+# Block mode: paint a clause when its terminating punctuation arrives, instead of
+# drawing every arriving fragment.
+#
+# The boundary is taken on the translation text, never on the recogniser's output.
+# Measured over four runs: introducing a new punctuation mark happens 16.4 and 16.7
+# times a minute on the translation stream, against 0.7 and 1.7 on the ASR stream --
+# the clause counts were 17.3 and 18.7 a minute, so the translation side is where the
+# boundary actually exists.
+#
+# The test is "this packet introduces a mark the line did not already carry", NOT
+# "this packet contains any mark". Punctuation stays in the line once drawn, so 62%
+# and 78% of packets contain one while only 16.5 a minute add one. Keying on presence
+# would fire on every packet and reduce the design to per-batch painting.
+TERMINAL_PUNCT = "。！？；，、：…"
+# Fallback for the quarter of clauses whose punctuation arrives more than a second
+# late. Chosen between the measured p25 of 14ms and p75 of 966ms, not tuned.
+CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
+# Off by default. Three runs on blog_3min against a matched baseline:
+#
+#                     baseline  BLK1     BLK2     BLK3
+#   draws per minute     93.7    68.1     33.9     36.1
+#   first char p50       37ms   366ms    354ms    342ms
+#   bursts of >=3         11.7     0.0      0.0      0.0
+#   frame gap p50          2ms   827ms   1224ms   1206ms
+#   fallback share          -     100%    100%      60%
+#
+# The chain of >=3 and the frame gap are real wins and they are what the flicker was
+# measured as. The first-character cost is not: 342ms is past the 200ms floor, and the
+# fallback still draws three out of five times, so the number is the fallback's 400ms
+# rather than the cost of waiting for a clause.
+#
+# Both boundary predicates were tried. Comparing sets fires too rarely -- once the line
+# has collected the handful of marks Chinese uses, almost nothing new can be introduced.
+# Comparing counts was predicted to fire 63.5 and 89.2 times a minute and it fired 14.2,
+# because the offline measurement counted each packet against the previous packet while
+# the gate counts against the last drawn line. Switching predicates was neutral, not
+# harmful, and neither reaches the 17 a minute that was registered.
+#
+# The code stays because the switch, the instrumentation and the baselines do: the next
+# attempt has a comparison to make against rather than a blank page.
+#
+# 输出方式现在是**路线的属性**，声明在 config.CHAINS 里（whisper-hy / gemma-e2e 流式，
+# qwen3-hy 块状·按标点分块）。显示层只读结论，不再自己比较识别器的名字 ——
+# 这一步之前是"由识别后端派生"（cf2dbc0），再之前是一个独立的 TRANSLATION_BLOCK_BY_PUNCT
+# 开关；两个开关会打架，而打架的代价就是上面那几张表。
+#
+# Derived, not measured per backend: the block arm's cost (first-character p50 342ms
+# against a 37ms baseline) was measured on the whisper material, and the premise that
+# qwen3 needs block mode at all is the reported flicker rather than a measurement -- the
+# two arms are indistinguishable on every display-side metric that was recorded.
+BLOCK_BY_PUNCT = BLOCK_OUTPUT
+
+# How long a dropped row or a moved block takes to settle. Zero means it does not move
+# at all: the line is drawn where it belongs the first time and no timer is armed.
+#
+# It was 120ms, chosen as seven frames at 60Hz, and the user reported the movement as
+# worse than the jump it replaced. So it is off by default. The threshold below and the
+# measurement behind it are kept, because they are what a future attempt would start
+# from, and because with the duration at zero they cost nothing.
+#
+# The distinction that matters when turning it off: the duration going to zero must also
+# take the *offset* with it. Drawing at the offset and jumping back a frame later is a
+# flash in the wrong place, which is worse than either the move or the jump.
+SLIDE_MS = _env_int("TRANSLATION_CAPTION_SLIDE_MS", 0)
+
+# How far the centred block has to move before it is worth animating.
+#
+# Measured on a block-mode run, 1200 consecutive paints, width 760 at 24px:
+#
+#   p25  12px   p50  24px   p75  24px      the fallback draws, one or two characters
+#   p90  60px   p95 120px   p99 300px      a whole clause arriving
+#
+# Two populations, not one curve. 40 sits in the gap between p75 and p90, so about 12%
+# of paints move and the rest land directly. Animating the small ones would give a
+# caption that never sits still -- the fallback fires on roughly two thirds of block-mode
+# paints, and those change the line by a character at a time.
+#
+# Only block mode animates horizontally. Streaming moves 12px per character, which is a
+# creep rather than a jump, and it is the path that works today.
+X_SETTLE_MIN_PX = _env_int("TRANSLATION_CAPTION_X_SETTLE_MIN_PX", 40)
+
+
+def punctuation_marks(text: str) -> tuple:
+    """The terminal marks the text carries, in order and with repeats kept.
+
+    A tuple rather than a set: whether a mark is *new* to the line is decided by how
+    many there are, and a set drops the second comma of a two-clause line.
+    """
+    return tuple(ch for ch in text if ch in TERMINAL_PUNCT)
+
+
+def introduces_boundary(shown: str, incoming: str) -> bool:
+    """True when the incoming text carries more terminal marks than the line does.
+
+    Counted, not compared as sets. Set difference was measured firing 13.5 times a
+    minute against a clause rate of 17.7: once the line has collected the handful of
+    marks Chinese uses, almost no later clause can introduce one that is new as a
+    character, so two thirds of the draws fell through to the 400ms fallback and
+    first-character latency sat at 354ms against a 37ms baseline.
+
+    The cost is the other direction. Measured over the same logs, counting fires 63.5
+    and 89.2 times a minute against 53 and 56 clauses -- a revised clause makes the
+    count oscillate and every swing counts. So this trades draw count for latency
+    rather than landing on the 17 a minute that was registered.
+    """
+    return len(punctuation_marks(incoming)) > len(punctuation_marks(shown))
+# Settle is the pause after a one-character revision before the change is drawn,
+# so a stream of single-character corrections does not flicker. It is also a
+# candidate for the swap deadline, which makes it a latency cost and not only a
+# rendering one.
+#
+# It was made injectable because the display leg's median sat near 450 and settle
+# was the obvious suspect. Measured, and it is not: over 6831 and 6906 decisions
+# at 450 and 150 respectively, settle set the deadline 5 times and 2 times, or
+# 0.07% and 0.03%. The hold did it 91% and 93% of the time.
+#
+# That is structural rather than a small sample. hold_ms() never returns less than
+# HOLD_ABS_MIN_MS, so the hold candidate is at least 800 ms away from the moment a
+# line is drawn, while settle_until is at most SETTLE_MS past the same moment. Any
+# SETTLE_MS below HOLD_ABS_MIN_MS therefore cannot bind, except in the one case
+# where growth_stopped_at is still 0 -- the state before any line has been drawn.
+# Sweeping it below 800 is a no-op by construction; to make settle matter it would
+# have to exceed the minimum hold, which is a different question and a worse idea.
+#
+# Injected through the environment like every other threshold, so an experiment
+# can move it without editing the file the previous experiment measured.
+SETTLE_MS = _env_int("TRANSLATION_SETTLE_MS", 450)
+_MIN_LENGTH_RATIO = 0.75
+_MIN_SIMILARITY = 0.72
+_KEY = "#010203"
+_COMMANDS: queue.Queue = queue.Queue()
+_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+_STATE_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+HWND_TOPMOST = -1
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_SYSMENU = 0x00080000
+WS_MINIMIZEBOX = 0x00020000
+WS_MAXIMIZEBOX = 0x00010000
+WS_EX_LAYERED = 0x00080000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TOPMOST = 0x00000008
+WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TRANSPARENT = 0x00000020
+EDGE = 12
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+SWP_SHOWWINDOW = 0x0040
+SW_SHOWNOACTIVATE = 4
+
+_LANG = {
+    "en": "英语",
+    "ja": "日语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "zh": "中文",
+}
+
+
+def settle_shift(previous: str, incoming: str, width: int, wrap: int, measure,
+                 block_mode: bool) -> float:
+    """How far to offset the new line so it starts where the old one did. 0 means snap.
+
+    A centred block moves by half the change in the width of its text, so a clause
+    arriving moves it by a lot and a character arriving moves it by half a character.
+    Only block mode settles: streaming changes the line by a character at a time, which
+    is a creep rather than a jump, and it is the path that works today.
+
+    Pure so the threshold can be tested against real text instead of against a copy of
+    the formula. The first version of that test recomputed both edges itself and compared
+    the result to the constant, so it passed with the constant set to zero.
+    """
+    if not block_mode or not previous or previous == incoming:
+        return 0.0
+    moved = ((width / 2 - wrap / 2 + (wrap - measure(previous)) / 2)
+             - (width / 2 - wrap / 2 + (wrap - measure(incoming)) / 2))
+    return moved if abs(moved) >= X_SETTLE_MIN_PX else 0.0
+
+
+def fit_caption_width(measured: int, current: int, screen_width: int, locked: bool) -> int:
+    """Never changes the caption width. The name is the history.
+
+    It used to widen the window for long captions and was turned off in ba17911
+    ("Stabilize repeat start and caption width", 2026-10-01), which also added
+    test_width_never_auto_expands to pin the decision. The commit does not record why,
+    and the likeliest reading is that a window that changes width on every paint
+    hides the row-drop jump this repository has since been chasing -- a caption that
+    reflows instead of holding still is not a caption whose wrapping can be studied.
+
+    So it stays as it is. Two things are deliberately kept rather than deleted:
+
+      the function, so the decision stays visible at the place someone would otherwise
+        re-add the behaviour, with this paragraph attached
+      its parameters, unused, because removing them would make the signature agree with
+        the body while hiding that a deliberate decision ever existed
+
+    Its caller measured the whole line on every paint and threw the number away.
+    That is not free: font.measure costs 1.33ms per character for Korean against
+    0.066ms for Chinese, so a 45-character Korean caption spent up to 136ms measuring
+    text it then discarded -- the same shape as the 169ms blank canvas that the paint
+    order was reordered to remove. The measurement is gone; see `_paint`.
+    """
+    return current
+
+
+def wrap_all(text: str, width: int, measure) -> list[str]:
+    """Every display line the text needs, with no cap.
+
+    Separate from `wrap_caption` because the capped version cannot say whether it
+    dropped anything. Knowing that is the whole point: `wrap_caption` keeps the *last*
+    `max_lines` rows, so when a caption outgrows the box the front row disappears, the
+    rows below move up one place, and the window does not resize -- the height formula
+    sees the same row count either way. The result is content jumping upward with no
+    transition, which is what a caption window must never do.
+    """
+    if not text:
+        return []
+    lines: list[str] = []
+    current = ""
+    units = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’./:-]*|\s+|.", text, re.DOTALL)
+    for unit in units:
+        if unit == "\n":
+            lines.append(current.rstrip())
+            current = ""
+            continue
+        if unit.isspace() and not current:
+            continue
+        candidate = current + unit
+        if current and measure(candidate) > width:
+            lines.append(current.rstrip())
+            current = unit.lstrip()
+        else:
+            current = candidate
+    if current or not lines:
+        lines.append(current.rstrip())
+    return [line for line in lines if line]
+
+
+def wrap_caption(text: str, width: int, measure, max_lines: int = 2) -> list[str]:
+    return wrap_all(text, width, measure)[-max_lines:] if max_lines else wrap_all(
+        text, width, measure
+    )
+
+
+def _port_busy() -> bool:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("127.0.0.1", CAPTION_PORT))
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+
+
+def caption_running() -> bool:
+    """True while a caption window is up (it holds CAPTION_PORT).
+
+    The server asks this before forwarding a state question, so "there is no window"
+    can be said plainly instead of being guessed at with a timeout. Guessing is what
+    produced an occasional false "字幕窗没有回应" right after the backend restart a line
+    switch performs -- the socket was open, the window was not up yet, and the popup
+    turned that into an error the user could do nothing with.
+    """
+    return _port_busy()
+
+
+def _listen(commands: queue.Queue) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", CAPTION_PORT))
+    while True:
+        data, _addr = sock.recvfrom(65535)
+        recv_at = time.time()
+        try:
+            message = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        kind = message.get("kind")
+        sent_at = message.get("sentAt")
+        perf.emit(
+            "caption",
+            "udp",
+            kind=kind,
+            net=perf.wall_ms(sent_at) if isinstance(sent_at, (int, float)) else -1.0,
+        )
+        commands.put(
+            (kind, message.get("value"), sent_at, recv_at, bool(message.get("final")))
+        )
+
+
+def _enable_dpi() -> float:
+    if not ctypes:
+        return 1.0
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+    try:
+        hdc = ctypes.windll.user32.GetDC(0)
+        dpi = int(ctypes.windll.gdi32.GetDeviceCaps(hdc, 88))
+        ctypes.windll.user32.ReleaseDC(0, hdc)
+        return max(1.0, dpi / 96.0)
+    except Exception:
+        return 1.0
+
+
+class _Caption:
+    dismiss_ms: int = 5000
+    _dismiss_job: object = None
+
+    def __init__(self, scale: float) -> None:
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.text_only = False
+        # Last state frame actually put on the wire, so an identical one is not repeated.
+        self._broadcast_last = ""
+        self.visible = False
+        self.closed = False
+        self.have_translation = False
+        self.status = ""
+        self.line = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._pending = ""
+        self._hold_job = None
+        self._gaps: list[float] = []
+        self._last_segment_at = 0.0
+        self._next_utterance_at = 0.0
+        self._trace_sent = 0.0
+        self._trace_recv = 0.0
+        self._trace_action = ""
+        self._defer_t0 = 0.0
+        self._defer_text = ""
+        self._defer_chars = 0
+        self._segment_seq = 0
+        self._wait_segment = 0
+        # Block mode owns its own timer rather than borrowing the hold deadline.
+        # flush_caption's deadline is the swap deadline, and threading a clause cap
+        # into it would have put a fourth candidate into 12 tested pure functions for
+        # a behaviour that is opt-out. The 400ms fallback is a separate job instead.
+        self._slide_job = None
+        self._slide_item = None
+        self._slide_from = 25.0
+        self._slide_shift = 0.0
+        self._drawn_text = ""
+        self._slide_t0 = 0.0
+        self._block_by_punct = bool(BLOCK_BY_PUNCT)
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+        self._clause_job = None
+        self._clause_fell_back = False
+        self._block_hits = 0
+        self._block_timeouts = 0
+        self._line_since = 0.0
+        self._prev_chars = 0
+        self._held_paint = False
+        # When text first became drawable since the last grow/swap, or 0.0 if nothing
+        # has arrived. Read-only, and it exists so a dwell can be attributed: a gap
+        # with text sitting in _pending is the hold delaying something that was ready,
+        # and a gap with nothing in _pending is the material having no speech in it.
+        # Those are different problems and the fix is opposite for each -- the first
+        # is the hold being too long, the second is nothing to fix.
+        self._pending_since = 0.0
+        # Last cadence the server confirmed, from ack_switch. Recorded and never drawn:
+        # the readout moved to the extension, and this survives so the ack is not a
+        # packet the window silently swallows.
+        self._cadence_applied = 0
+        self.dismiss_ms = _env_int("TRANSLATION_CAPTION_DISMISS_MS", 5000)
+        self._dismiss_job = None
+        self.font_status = tkfont.Font(family="Microsoft YaHei", size=-max(12, round(12 * scale)))
+        self.font_px = 20
+        self.font_color = "#ffffff"
+        self.font_line = tkfont.Font(family="Microsoft YaHei", size=-self.font_px)
+        self.screen_width = self.root.winfo_screenwidth()
+        self.width = max(round(760 * scale), self.font_line.measure("实时字幕") + 120)
+        self.width = min(self.width, max(420, self.screen_width - 80))
+        self.width_locked = False
+        self.height = self.font_line.metrics("linespace") + 38
+        screen_h = self.root.winfo_screenheight()
+        x = max(0, (self.screen_width - self.width) // 2)
+        y = max(0, screen_h - self.height - 120)
+        self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
+
+        self.canvas = tk.Canvas(self.root, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+
+        self.close = tk.Label(
+            self.root,
+            text="×",
+            fg="#ffffff",
+            font=("Segoe UI", 11),
+            cursor="hand2",
+            padx=2,
+            pady=0,
+        )
+        self.close.bind("<Button-1>", lambda _event: self.hide())
+        self.text_only_var = tk.BooleanVar(value=self.text_only)
+        self.text_only_control = tk.Checkbutton(
+            self.root,
+            text="只有字",
+            variable=self.text_only_var,
+            command=lambda: self.apply_text_only(bool(self.text_only_var.get())),
+            fg="#ffffff",
+            bg="#000000",
+            activeforeground="#ffffff",
+            activebackground="#000000",
+            selectcolor="#000000",
+            font=("Microsoft YaHei", 9),
+            bd=0,
+            highlightthickness=0,
+            padx=2,
+            pady=0,
+        )
+
+        # The ms readout that used to sit here is gone, along with show_cadence.
+        #
+        # It was read-only and it was honest feedback: ack_switch carries the value the
+        # server actually applied, so a switch that landed silently was visible. That
+        # argument no longer applies, because the control is now a continuous slider
+        # rather than two buttons -- confirming a choice you just made, by eye, while
+        # watching, is not what anyone uses a slider for. And the extension shows the
+        # applied value itself, so the information did not go away with the pixels.
+        #
+        # What stays is the ack path, because it is the server's confirmation and not a
+        # display decision: ws_server._switch_partial_interval calls ack_switch, which
+        # sends switch_ok, and the pump below still receives it.
+
+        self._drag = None
+        self._resize_origin = None
+        self.canvas.bind("<Motion>", self._hover)
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<ButtonPress-3>", self._press_resize)
+        self.canvas.bind("<B3-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-3>", self._release)
+        self.root.bind("<Enter>", lambda _event: self._show_close())
+        self.root.bind("<Leave>", lambda _event: self.close.place_forget())
+        self._apply_colors()
+        self.root.after(50, self._pump)
+        self.root.after(300, self._pin)
+
+    def hwnd(self) -> int:
+        self.root.update_idletasks()
+        child = int(self.root.winfo_id())
+        if not ctypes:
+            return child
+        parent = ctypes.windll.user32.GetParent(child)
+        return int(parent or child)
+
+    def _strip_frame(self) -> None:
+        if not ctypes:
+            return
+        # This is a native Windows topmost window. It never enters the page or
+        # changes the browser's fullscreen state.
+        hwnd = self.hwnd()
+        user32 = ctypes.windll.user32
+        get_long = user32.GetWindowLongPtrW
+        set_long = user32.SetWindowLongPtrW
+        get_long.restype = ctypes.c_ssize_t
+        get_long.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        set_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        style = get_long(hwnd, GWL_STYLE)
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        set_long(hwnd, GWL_STYLE, style)
+        exstyle = get_long(hwnd, GWL_EXSTYLE)
+        extra = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
+        if self.text_only:
+            # Layered is what makes -transparentcolor take effect, and it also has to be
+            # re-applied when 只有字 is switched on for a window that is already up --
+            # hence the call from apply_text_only, not just from show().
+            extra |= WS_EX_LAYERED
+        set_long(hwnd, GWL_EXSTYLE, exstyle | extra)
+        user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+        )
+        if self.text_only:
+            self.root.attributes("-transparentcolor", _KEY)
+
+    def _pin(self) -> None:
+        if ctypes and self.visible:
+            ctypes.windll.user32.SetWindowPos(
+                self.hwnd(),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        self.root.after(300, self._pin)
+
+    def _apply_colors(self) -> None:
+        bg = _KEY if self.text_only else "#000000"
+        self.root.configure(bg=bg)
+        self.canvas.configure(bg=bg)
+        self.close.configure(bg=bg)
+        # 只有字 hides the header, itself included.
+        #
+        # That is deliberate and it is the point of the mode: nothing but the text is
+        # left on the video, which is what makes it comfortable over fullscreen. The
+        # cost is real and is paid on the other surface: once this control is gone the
+        # only way back is the popup, so the popup's checkbox has to be showing the
+        # truth -- see the state cache in ws_server and the ask on popup open. A caption
+        # control that stays visible here instead (tried 2026-10-09, reverted the same
+        # day) puts a checkbox and a black indicator square on the video forever.
+        self.text_only_control.configure(
+            bg=bg,
+            activebackground=bg,
+            selectcolor=bg,
+        )
+        if self.text_only:
+            self.text_only_control.place_forget()
+        else:
+            self.text_only_control.place(x=8, y=3, anchor="nw")
+        if self.text_only:
+            self.root.attributes("-transparentcolor", _KEY)
+        else:
+            self.root.attributes("-transparentcolor", "")
+        self._set_input_mode()
+        self._paint()
+
+    def _set_input_mode(self) -> None:
+        if not ctypes:
+            return
+        hwnd = self.hwnd()
+        user32 = ctypes.windll.user32
+        get_long = user32.GetWindowLongPtrW
+        set_long = user32.SetWindowLongPtrW
+        get_long.restype = ctypes.c_ssize_t
+        get_long.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        set_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        exstyle = get_long(hwnd, GWL_EXSTYLE)
+        if self.text_only:
+            exstyle |= WS_EX_LAYERED | WS_EX_NOACTIVATE
+        else:
+            exstyle |= WS_EX_NOACTIVATE
+        # WS_EX_TRANSPARENT is click-through, and the only thing that ever set it was the
+        # position lock. The lock is gone (2026-10-09), so nothing sets it now; it is
+        # still cleared here so a window that once had it cannot come back undraggable.
+        exstyle &= ~WS_EX_TRANSPARENT
+        set_long(hwnd, GWL_EXSTYLE, exstyle)
+
+    def _show_close(self) -> None:
+        if self.visible:
+            self.close.place(relx=1, x=-5, y=3, anchor="ne")
+
+    def _fit_width(self, text: str, wrap: int) -> int:
+        """The width the caption will be drawn at: whatever it already is.
+
+        It used to measure the line and hand the number to fit_caption_width, which
+        returned `self.width` unchanged, so the measurement was discarded on every
+        paint. Removing it is not only tidiness -- for Korean that measurement costs
+        1.33ms per character against 0.066ms for Chinese, measured up to 136ms for a
+        45-character line. Nothing else in the paint path needed it: wrap_caption
+        measures per candidate break anyway and the geometry branch below never ran.
+        """
+        return self.width
+
+    def _paint(self) -> None:
+        # The canvas is cleared *after* the new text exists, not before. Clearing
+        # first left it empty for the whole of wrap_caption / metrics,
+        # because canvas.delete("all") was the first statement in the method.
+        # For Chinese that gap is about 0.5ms and was never visible; for Korean it
+        # reaches 169ms, because font.measure falls back to a font search and costs
+        # 1.33ms per character against 0.066ms for Chinese, and wrap_caption measures
+        # at every candidate break. 169ms is ten frames at 60Hz of blank canvas.
+        #
+        # The empty-body path below still clears first: segment changes set self.line
+        # to "" and rely on the text being taken off the screen, so deleting there is
+        # the point rather than an accident of ordering.
+        body = self.line or ("实时字幕" if self.visible else "")
+        if not body:
+            self.canvas.delete("all")
+            return
+        wrap = max(240, self.width - 48)
+        # No width branch here any more. _fit_width returns self.width, so the old
+        # `if fitted != self.width` could not be taken; keeping it would have left a
+        # window-geometry path that reads as live and is not. The width is the user's,
+        # changed by dragging, and only the row count moves the window here.
+        display_lines = wrap_caption(body, wrap, self.font_line.measure)
+        # One pass, both answers. Asking wrap_caption again for the uncapped count would
+        # measure every unit twice, and the measure is the expensive part for Korean
+        # (1.33ms per character against 0.066ms for Chinese).
+        all_lines = display_lines
+        if len(display_lines) >= 2:
+            all_lines = wrap_all(body, wrap, self.font_line.measure)
+        display_body = "\n".join(display_lines)
+        line_h = max(1, self.font_line.metrics("linespace"))
+        lines = len(display_lines)
+        height = 30 + lines * line_h + 8
+        if height != self.height:
+            delta = height - self.height
+            self.height = height
+            if self.visible:
+                self.root.update_idletasks()
+                x = self.root.winfo_x()
+                y = max(0, self.root.winfo_y() - delta)
+                self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
+            else:
+                self.root.geometry(f"{self.width}x{self.height}")
+        # Draw first, then drop what the draw replaced. Ordering it this way is what
+        # keeps the canvas non-empty across the paint.
+        #
+        # The y it starts at is not always 25. wrap_caption keeps the *last* max_lines
+        # rows, so a caption that outgrows the box loses its front row and everything
+        # below moves up one place -- while `lines` stays at two, so the height formula
+        # above sees no change and the window does not resize. Measured at width 760 and
+        # a 32px font, 45 characters is enough to cross that boundary; at 24px it needs
+        # more than 58, which is why this reads as rare when the text happens to stay
+        # short and as constant once it does not.
+        #
+        # Starting the new row where the old one was and easing it up turns that jump
+        # into a move. The item is created once and moved with `coords`, never recreated
+        # per frame, so the animation does not reintroduce the clear-and-redraw that the
+        # paint order above exists to avoid.
+        dropped = max(0, len(all_lines) - len(display_lines))
+        # How far the centred block is about to jump sideways. Streaming changes the line
+        # by a character at a time, which is a creep and is left alone; block mode adds a
+        # whole clause at once, and that reads as a jump. The threshold is the measured
+        # gap between those two populations, not a taste judgement.
+        #
+        # SLIDE_MS at or below zero turns the movement off entirely, and both the offset
+        # and the timer go with it. Setting only the duration to zero would be worse than
+        # doing nothing: the item would still be *created* at the offset position and then
+        # jumped back one frame later, which is a flash at the wrong place rather than a
+        # move. Turning it off has to mean the line is drawn where it belongs the first
+        # time.
+        #
+        # It is off because the movement read as worse than the jump it replaced, not
+        # because it was measured to be wrong. The row drop is still a content swap; what
+        # is gone is the attempt to make it look deliberate.
+        moving = SLIDE_MS > 0
+        shift = settle_shift(self._drawn_text, display_body, self.width, wrap,
+                             self.font_line.measure, self._block_by_punct and moving)
+        self._cancel_slide()
+        start_y = 25 + dropped * line_h if (dropped and moving) else 25
+        fresh = self._draw(display_body, self.font_line, wrap, start_y, shift)
+        for stale in self.canvas.find_all():
+            if stale != fresh:
+                self.canvas.delete(stale)
+        self._drawn_text = display_body
+        if moving and (dropped or shift):
+            self._slide_item = fresh
+            self._slide_from = start_y
+            self._slide_shift = shift
+            self._slide_t0 = time.monotonic()
+            self._slide_job = self.root.after(16, self._step_slide)
+            perf.emit("caption", "slide", rows=dropped, shift=round(shift, 1),
+                      chars=len(display_body))
+        now = time.monotonic()
+        self._report_dwell(now)
+        if self._trace_action in ("grow", "swap"):
+            self._line_since = now
+        if self._trace_sent:
+            # First draw after a packet: this is "actually on screen".
+            perf.emit(
+                "caption",
+                "paint",
+                action=self._trace_action,
+                since_send=perf.wall_ms(self._trace_sent),
+                since_recv=perf.wall_ms(self._trace_recv) if self._trace_recv else -1.0,
+                chars=len(display_body),
+                # Rendered line count, and therefore whether this paint moved the
+                # window. The height is 30 + lines*line_h + 8, and a change makes
+                # the window grow and shift up by the same amount so its bottom edge
+                # stays put -- about one line height, which is plainly visible.
+                #
+                # The sig below cannot see this: it hashes the wrapped text, so a
+                # reflow reads as new content rather than as the same sentence being
+                # laid out again. That is what left "how often does it flicker"
+                # unanswerable from the log -- the one thing that moves on screen was
+                # the one thing the content hash was blind to.
+                lines=lines,
+                # Rows the caption outgrew, which wrap_caption dropped from the front.
+                # Recorded here rather than only on the slide event because the movement
+                # is off by default: without this the fact that a row was discarded would
+                # leave no trace at all, and turning the animation off would quietly turn
+                # off the measurement of what the animation was for.
+                dropped=dropped,
+                held=1 if self._held_paint else 0,
+                # A hash of what was actually shown, so a recorder can tell
+                # whether this fragment's translation reached the screen at all.
+                # Length alone is not enough: two fragments share one.
+                sig=_signature(display_body),
+            )
+            self._trace_sent = 0.0
+            self._trace_recv = 0.0
+            self._trace_action = ""
+
+    def _cancel_slide(self) -> None:
+        if self._slide_job is not None:
+            try:
+                self.root.after_cancel(self._slide_job)
+            except (ValueError, TclError):
+                pass
+            self._slide_job = None
+        self._slide_item = None
+
+    def _step_slide(self) -> None:
+        """Ease the item from where the dropped rows left it back to its resting place.
+
+        Both axes, because both have the same cause. A dropped row moves the text up;
+        a clause arriving changes how much of the width the text takes, and a centred
+        block moves sideways by half that. Same object, same clock, same easing.
+
+        Only `coords` moves it. Recreating the text each frame would rebuild the glyph
+        runs sixty times a second and put back the flicker the paint order avoids.
+        """
+        self._slide_job = None
+        item = self._slide_item
+        if item is None or not self.canvas.find_all():
+            self._slide_item = None
+            return
+        elapsed = (time.monotonic() - self._slide_t0) * 1000.0
+        if elapsed >= SLIDE_MS:
+            self.canvas.coords(item, self.width / 2, 25)
+            self._slide_item = None
+            return
+        # Ease out cubic: fast at first, settling on place, which reads as arriving
+        # rather than sliding mechanically.
+        t = 1.0 - (1.0 - elapsed / SLIDE_MS) ** 3
+        self.canvas.coords(item, self.width / 2 + self._slide_shift * (1.0 - t),
+                           self._slide_from + (25 - self._slide_from) * t)
+        self._slide_job = self.root.after(16, self._step_slide)
+
+    def _visual_left(self, text: str, wrap: int) -> float:
+        """Where the left edge of a centred line of this text lands on screen.
+
+        The same arithmetic Tk does for `anchor="n"` plus `justify="center"` inside a
+        block of `wrap` pixels: the block starts half a wrap left of centre, and each
+        line is centred within it. Written out rather than read back from the canvas so
+        the shift can be computed before the item exists.
+        """
+        return self.width / 2 - wrap / 2 + (wrap - self.font_line.measure(text)) / 2
+
+    def _draw(self, text: str, font: tkfont.Font, wrap: int, y: float = 25,
+              x_shift: float = 0.0) -> int:
+        # x_shift offsets the whole centred block. Anchoring left instead would be the
+        # obvious way to make the position animatable, and it would also left-align
+        # every row of a two-line caption -- a visible change to how the caption looks,
+        # made to fix how it moves.
+        return self.canvas.create_text(
+            self.width / 2 + x_shift,
+            y,
+            text=text,
+            anchor="n",
+            justify="center",
+            fill=self.font_color,
+            font=font,
+            width=wrap,
+        )
+
+    def _edges(self, event) -> tuple[bool, bool, str]:
+        """Which edge the pointer is on: the right, the left, or neither.
+
+        The left edge used not to be here at all -- the test was only
+        `event.x >= width - EDGE` -- so the window could be dragged open from the right
+        and never from the left. Dragging the left edge has to move the window as well
+        as resize it, because the right edge is the one that should hold still; that is
+        why the side is returned rather than a bare "on a vertical edge" flag.
+
+        Returns ("left"|"right"|None) as the third element. Both edges can be true at
+        once on a window narrower than twice EDGE, and then the pointer is deeper into
+        one of them, which is the one it means.
+        """
+        width = max(self.canvas.winfo_width(), 1)
+        on_left = event.x <= EDGE
+        on_right = event.x >= width - EDGE
+        side = None
+        if on_left and on_right:
+            side = "left" if event.x < width - event.x else "right"
+        elif on_right:
+            side = "right"
+        elif on_left:
+            side = "left"
+        return side is not None, False, side
+
+    def _hover(self, event) -> None:
+        if self._resize_origin or self._drag:
+            return
+        on_x, _on_y, _side = self._edges(event)
+        if on_x:
+            cursor = "sb_h_double_arrow"
+        else:
+            cursor = "arrow"
+        self.canvas.configure(cursor=cursor)
+
+    def _press(self, event) -> None:
+        on_x, on_y, side = self._edges(event)
+        if on_x or on_y:
+            self._begin_resize(event, side)
+            return
+        self._resize_origin = None
+        self._drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+
+    def _press_resize(self, event) -> None:
+        self._begin_resize(event, "right")
+
+    def _begin_resize(self, event, side: str | None = "right") -> None:
+        self._drag = None
+        if side:
+            self.width_locked = True
+        self.width = self.root.winfo_width()
+        self.height = self.root.winfo_height()
+        self._resize_origin = (event.x_root, event.y_root, self.width, self.height, side,
+                               self.root.winfo_x())
+
+    def _resize_geometry(self, event) -> tuple[int, int, int, int] | None:
+        """(x, y, width, height) for a drag in progress, or None when there is none.
+
+        The right edge holds its screen position and the width follows the pointer. The
+        left edge does the opposite -- the right edge holds, so the width shrinks as the
+        pointer moves right and the window's x moves with it. That is why the origin
+        carries the window's x: without it a left-edge drag would resize from the wrong
+        anchor and the text would slide sideways while being dragged.
+        """
+        if not self._resize_origin:
+            return None
+        x0, _y0, width, height, side, origin_x = self._resize_origin
+        y = self.root.winfo_y()
+        if side == "left":
+            new_width = max(120, width - (event.x_root - x0))
+            return origin_x + (width - new_width), y, new_width, height
+        if side == "right":
+            return origin_x, y, max(120, width + event.x_root - x0), height
+        return None
+
+    def _motion(self, event) -> None:
+        geometry = self._resize_geometry(event)
+        if geometry is not None:
+            x, y, width, height = geometry
+            self.width = width
+            self.height = height
+            self.root.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
+            self._paint()
+            return
+        if not self._drag:
+            return
+        x = event.x_root - self._drag[0]
+        y = event.y_root - self._drag[1]
+        self.root.geometry(f"+{x}+{y}")
+
+    def _release(self, _event) -> None:
+        # Nothing to apply here: _motion already set the geometry on the last move, and
+        # re-applying it on release would resize a second time from a pointer that has
+        # already left the window.
+        self._drag = None
+        self._resize_origin = None
+
+    def apply_text_only(self, enabled: bool) -> None:
+        self.text_only = bool(enabled)
+        self.text_only_var.set(self.text_only)
+        # 只有字 is a view mode -- transparent, frameless, and still draggable. There is
+        # no lock to pair it with any more: 锁定 and its checkbox were removed on
+        # 2026-10-09 because they turned 只有字 into a state you could not drag out of.
+        #
+        # The frame has to be stripped on this path as well as on show(). A window that
+        # is already on screen never runs show() again, and the transparency that
+        # actually removes the black bar comes from WS_EX_LAYERED, which only
+        # _strip_frame sets -- without this the bar just turns near-black (#010203).
+        if self.visible:
+            self._strip_frame()
+        elif self.text_only:
+            self.show()
+        self._apply_colors()
+        self._broadcast_state()
+
+    def apply_font(self, px: int) -> None:
+        size = clamped_font_px(px, self.font_px)
+        if size is None:
+            return
+        self.font_px = size
+        self.font_line = tkfont.Font(family="Microsoft YaHei", size=-size)
+        self._broadcast_state()
+        if self.line or self.visible:
+            self._paint()
+
+    def apply_color(self, color: str) -> None:
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            return
+        normalized = color.lower()
+        if normalized == self.font_color:
+            return
+        self.font_color = normalized
+        self._broadcast_state()
+        if self.line or self.visible:
+            self._paint()
+
+    def apply_dismiss_timeout(self, ms: int) -> None:
+        try:
+            val = int(ms)
+        except (TypeError, ValueError):
+            return
+        self.dismiss_ms = max(0, min(30000, val))
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        if self.line and self.visible and self.dismiss_ms > 0:
+            self._dismiss_job = self.root.after(self.dismiss_ms, self._on_dismiss_timeout)
+
+    def _on_dismiss_timeout(self) -> None:
+        self._dismiss_job = None
+        if self._pending:
+            return
+        self.line = ""
+        self._drawn_text = ""
+        if self.text_only:
+            self.visible = False
+            try:
+                self.root.withdraw()
+            except (AttributeError, TclError):
+                pass
+        else:
+            # 有黑框模式：黑框保持在屏幕上，仅清除字幕文字，防止窗体反复隐藏/重新弹出产生闪烁
+            try:
+                self.canvas.delete("all")
+            except (AttributeError, TclError):
+                pass
+        perf.emit("caption", "dismiss", why="timeout")
+
+    def _broadcast_state(self, force: bool = False) -> None:
+        payload = {
+            "kind": "state",
+            "value": {
+                "textOnly": bool(self.text_only),
+                "fontPx": int(self.font_px),
+                "fontColor": self.font_color,
+            },
+        }
+        # Sent when the value changed, or when someone asked (force=True).
+        #
+        # The extension answers a state frame with a style frame carrying the same
+        # value; that comes back here as apply_text_only, which broadcasts again. Neither
+        # side compared before sending, so the pair echoed on a WebSocket+UDP round trip
+        # for as long as the process lived. The first repeat is the one the extension
+        # needs -- it is how a click on this window's own checkbox reaches the popup --
+        # and a second identical frame carries nothing.
+        #
+        # force exists because "nothing changed" is not the same as "nobody needs to
+        # know": this window is the only holder of this state (the server keeps no copy),
+        # so a popup asking what it is set to has to be answered even when the answer is
+        # unchanged. That is the whole reason the popup's checkbox can be trusted.
+        body = json.dumps(payload, ensure_ascii=False)
+        if not force and body == self._broadcast_last:
+            return
+        try:
+            _STATE_SOCK.sendto(body.encode("utf-8"), ("127.0.0.1", STATE_PORT))
+        except OSError:
+            return
+        # Recorded only after a successful send, so a dropped packet is retried by the
+        # next caller instead of being remembered as delivered.
+        self._broadcast_last = body
+
+    def arm(self) -> None:
+        # A new capture may show the next non-empty line. Do not reveal an empty bar.
+        self.closed = False
+
+    def show(self) -> None:
+        self.closed = False
+        self.visible = True
+        self._strip_frame()
+        if ctypes:
+            ctypes.windll.user32.ShowWindow(self.hwnd(), SW_SHOWNOACTIVATE)
+        else:
+            self.root.deiconify()
+        self._paint()
+
+    def _note_pending(self, pending: str) -> None:
+        """Stamp when text first became drawable in the current gap.
+
+        Read-only bookkeeping, factored out because the same assignment happens on two
+        paths (a packet arriving and the hold expiring) and the test needs to reach it
+        without a Tk loop. Only the first text of a gap is stamped: a later partial must
+        not push the time forward, or the waiting share would shrink every time one
+        lands.
+        """
+        if pending and not self._pending_since:
+            self._pending_since = time.monotonic()
+
+    def _report_dwell(self, now: float) -> None:
+        """Emit how long the previous sentence stayed up, and what filled the gap.
+
+        Streaming repaints do not count; the clock starts when a sentence appears.
+
+        `why` is the point of this. A dwell is either the hold still sitting on text
+        that was already ready ("held") or the stream having nothing to say ("empty"),
+        and those call for opposite responses -- one is the hold being too long, the
+        other is the material and must not be tuned against at all. On
+        samples/lecture_mix.wav gap alone does not tell them apart: p50 1622ms against a
+        3.25s reference gap, 68 of 68 gaps over a second, and 18 to 22 second stretches
+        of film-only audio that cannot paint anything.
+
+        waiting is the share of the gap during which text was ready and undrawn, which is
+        the part a shorter hold would actually recover. idle is the rest.
+        """
+        if not (self._line_since and self._trace_action == "swap"):
+            self._pending_since = 0.0
+            return
+        waited = (now - self._pending_since) if self._pending_since else 0.0
+        gap = now - self._line_since
+        waited = max(0.0, waited)
+        perf.emit(
+            "caption",
+            "dwell",
+            gap=round(gap * 1000.0, 1),
+            lost=self._prev_chars,
+            shown=len(self.line),
+            why="held" if self._pending_since else "empty",
+            waiting=round(waited * 1000.0, 1),
+            idle=round(max(0.0, gap - waited) * 1000.0, 1),
+        )
+        # Cleared here so the next gap cannot inherit this one's arrival time, which
+        # would report a wait that began before its own clock started.
+        self._pending_since = 0.0
+
+    def hide(self) -> None:
+        self.visible = False
+        self.closed = True
+        self.line = ""
+        self.status = ""
+        self._pending = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._gaps.clear()
+        self._last_segment_at = 0.0
+        self._next_utterance_at = 0.0
+        self._trace_sent = 0.0
+        self._trace_recv = 0.0
+        self._trace_action = ""
+        self._close_wait("", "hide")
+        self._line_since = 0.0
+        self._prev_chars = 0
+        self._pending_since = 0.0
+        self._held_paint = False
+        self._wait_segment = self._segment_seq
+        self.have_translation = False
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        self.close.place_forget()
+        self.root.withdraw()
+
+    def set_status(self, lang: str) -> None:
+        name = _LANG.get(lang or "", "")
+        self.status = f"{name} → 中文" if name and name != "中文" else ""
+
+    def clear(self) -> None:
+        """Blank the line but leave the window up and armed.
+
+        Swapping the text out rather than closing, because the next fragment
+        belongs to the new configuration and must be able to land immediately.
+        The deadline state is reset with it: a hold left over from the previous
+        cadence would delay the first line of the new one by a wait that was
+        never meant for it.
+        """
+        self.line = ""
+        self._pending = ""
+        self._growth_stopped_at = 0.0
+        self._settle_until = 0.0
+        self._next_utterance_at = 0.0
+        self._line_since = 0.0
+        self._prev_chars = 0
+        self._pending_since = 0.0
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        self._close_wait("", "clear")
+        if self.visible:
+            self._paint()
+
+    def begin_segment(self) -> None:
+        now = time.monotonic()
+        self._segment_seq += 1
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        if self._last_segment_at:
+            gap = now - self._last_segment_at
+            if 0.45 <= gap <= 8.0:
+                self._gaps.append(gap)
+                del self._gaps[:-6]
+        self._last_segment_at = now
+        if self.line and self._growth_stopped_at and now > self._growth_stopped_at + 0.2:
+            self._next_utterance_at = now
+        self.have_translation = False
+        if self._block_by_punct:
+            # A new segment starts a new clause. Leaving the old clause's timer armed
+            # would let it fire against the previous segment's text and draw a line
+            # that belongs to the utterance before this one.
+            self._cancel_clause()
+        if self._pending:
+            self._arm_hold()
+
+    def _pace(self) -> float:
+        return pace_scale(self._gaps)
+
+    def show_source(self, text: str) -> None:
+        if self.line or self.have_translation or self.closed:
+            return
+        cleaned = _collapse_repeats((text or "").strip())
+        if not cleaned:
+            return
+        self._growth_stopped_at = time.monotonic()
+        self._settle_until = 0.0
+        self._apply_line(cleaned, "note")
+
+    def _open_wait(self, pending: str) -> None:
+        """Start, or move, the window in which this sentence is kept off screen."""
+        if not self._defer_t0:
+            perf.emit("caption", "defer", chars=len(pending))
+            self._wait_segment = self._segment_seq
+        self._defer_t0 = time.monotonic() if not self._defer_t0 else self._defer_t0
+        self._defer_text = pending
+        self._defer_chars = len(pending)
+
+    def _close_wait(self, pending: str, action: str) -> None:
+        """Close the wait once nothing is pending any more.
+
+        A wait ends however it ends -- drawn, swapped in, or dropped -- so that
+        the next sentence starts its own clock. Leaving it open would report one
+        sentence's wait as part of the next one.
+        """
+        if not self._defer_t0 or pending:
+            return
+        perf.emit(
+            "caption",
+            "hold",
+            wait=round((time.monotonic() - self._defer_t0) * 1000.0, 1),
+            action=action,
+            chars=self._defer_chars,
+            shown=len(self.line),
+        )
+        self._defer_t0 = 0.0
+        self._defer_text = ""
+        self._defer_chars = 0
+
+    def _punct_gate(self, cleaned: str, is_final: bool = False) -> str:
+        """Block mode: draw a clause when its punctuation arrives, not before.
+
+        Returns the action so callers keep their usual vocabulary. Nothing is drawn
+        until a boundary or the fallback fires, which is what makes mid-clause
+        revisions impossible rather than merely uncommon: there is no draw to revise.
+
+        The exception is the final, and it is the exception that matters most. The
+        boundary test asks whether the incoming text carries more terminal marks than the
+        line does, and on a final it can never be true: the sentence's own fragments
+        brought its punctuation first, so the final arrives with the same count and is
+        declined. Measured, that test held 0 times out of 49 finals, and with the
+        fallback already spent, the final was never drawn at all -- half the finals never
+        reached the screen, and the line settled on a mid-sentence fragment. A final is
+        the complete version of the sentence, so it is drawn whatever the marks say.
+
+        No sentence-identity check is needed for this. `promote` -- the case where an
+        end event arrives before its own translation finishes -- sends the final when
+        that job completes, not when the next sentence starts, and `pipeline.defer` was
+        zero across the run, so the next sentence's translation is never queued behind
+        this one. What is on screen when the final lands is this sentence's own text.
+        """
+        now = time.monotonic()
+        if not self._clause_t0:
+            self._clause_t0 = now
+        if is_final and cleaned != self.line:
+            self._cancel_clause()
+            self._apply_line(cleaned, "final")
+            self._block_hits += 1
+            perf.emit(
+                "caption",
+                "block",
+                why="final",
+                chars=len(cleaned),
+                shown=len(self.line),
+                wait=round((now - (self._clause_t0 or now)) * 1000.0, 1),
+                hits=self._block_hits,
+                timeouts=self._block_timeouts,
+            )
+            return "final"
+        if introduces_boundary(self.line, cleaned):
+            started = self._clause_t0 or now
+            self._cancel_clause()
+            self._apply_line(cleaned, "block")
+            self._block_hits += 1
+            # The boundary path emitted nothing, so the run reported why=timeout for
+            # every draw that came from here -- 42 of 104 on the last run, which read as
+            # "the punctuation boundary never fires" when it fired 13.5 times a minute.
+            # A `why` that cannot see half the draws is worse than no `why`.
+            perf.emit(
+                "caption",
+                "block",
+                why="boundary",
+                chars=len(cleaned),
+                shown=len(self.line),
+                wait=round((now - started) * 1000.0, 1),
+                hits=self._block_hits,
+                timeouts=self._block_timeouts,
+            )
+            return "block"
+        self._clause_pending = cleaned
+        if self._clause_fell_back:
+            # This clause has already spent its one fallback and is waiting for its
+            # punctuation. Measured on the first run: a three-second clause without
+            # punctuation was drawn seven times, once every 400ms, with the text growing
+            # each time -- which is the gradual growth block mode exists to remove, and
+            # it put first-character latency at 366ms against the 37ms baseline.
+            return "block_wait"
+        if self._clause_job is not None:
+            self.root.after_cancel(self._clause_job)
+        wait = max(50, int(round((self._clause_t0 + CLAUSE_MAX_MS / 1000.0 - now) * 1000)))
+        self._clause_job = self.root.after(wait, self._flush_clause)
+        return "block_wait"
+
+    def _cancel_clause(self) -> None:
+        if self._clause_job is not None:
+            self.root.after_cancel(self._clause_job)
+            self._clause_job = None
+        self._clause_t0 = 0.0
+        self._clause_pending = ""
+        self._clause_fell_back = False
+
+    def _flush_clause(self) -> None:
+        """The 400ms fallback, spent once per clause."""
+        self._clause_job = None
+        text = self._clause_pending
+        started = self._clause_t0
+        # Deliberately not clearing _clause_t0. Clearing it made the next fragment open
+        # a fresh clause, so the fallback re-armed every 400ms for as long as the
+        # punctuation stayed away. _clause_pending is kept too, so the text that finally
+        # arrives at the boundary is the whole clause rather than the part that existed
+        # when the fallback fired.
+        self._clause_fell_back = True
+        if not text or not started:
+            return
+        why = "boundary" if introduces_boundary(self.line, text) else "timeout"
+        self._apply_line(text, "block")
+        if why == "timeout":
+            self._block_timeouts += 1
+        perf.emit(
+            "caption",
+            "block",
+            why=why,
+            chars=len(text),
+            shown=len(self.line),
+            wait=round((time.monotonic() - started) * 1000.0, 1),
+            hits=self._block_hits,
+            timeouts=self._block_timeouts,
+        )
+
+    def set_text(self, text: str, is_final: bool = False) -> str:
+        cleaned = _collapse_repeats((text or "").strip())
+        if not cleaned:
+            return "empty"
+        self.have_translation = True
+        if self._block_by_punct:
+            return self._punct_gate(cleaned, is_final)
+        previous = self._pending
+
+        # B1: diff pre-check — if new text just extends current line, append directly
+        if self.line and cleaned.startswith(self.line):
+            appended = cleaned[len(self.line):]
+            if appended:
+                # Grow by the new characters only, bypassing hold/settle logic
+                self.line = cleaned
+                self._apply_line(self.line, "grow")
+                return "grow"
+
+        action, line, pending, anchor, settle, _deadline = step_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            cleaned,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        if action == "drop":
+            return action
+        if action == "defer":
+            # A translation arrives one character at a time, so most of what
+            # arrives while a sentence waits is that same sentence growing or
+            # being revised. Text from the next utterance can only appear after a
+            # segment boundary, and only then does the waiting sentence get lost.
+            if (
+                previous
+                and self._segment_seq != self._wait_segment
+                and classify_caption(previous, pending) == "sentence"
+            ):
+                perf.emit(
+                    "caption",
+                    "overwrite",
+                    held=round((time.monotonic() - self._defer_t0) * 1000.0, 1)
+                    if self._defer_t0
+                    else -1.0,
+                    chars=len(pending),
+                    lost=len(previous),
+                )
+            self._open_wait(pending)
+        self._pending = pending
+        self._note_pending(pending)
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        self._close_wait(pending, action)
+        # Only on the packet-arrival path. The flush path has just reassigned the
+        # anchor to now, so it would report a fresh hold rather than the one that
+        # expired, which is the opposite of what this column is for.
+        self._emit_deadline(action)
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            self._apply_line(line, action)
+        self._arm_hold()
+        return action
+
+    def _swap_deadline(self) -> float:
+        return swap_deadline_why(
+            self._growth_stopped_at,
+            self._settle_until,
+            self.line,
+            self._pace(),
+            self._next_utterance_at,
+        )[0]
+
+    def _emit_deadline(self, action: str) -> None:
+        """Record every candidate deadline and the one that actually applied.
+
+        Emitted on each decision rather than derived later, because the three
+        candidates overlap in time and a draw blocked by one of them looks
+        identical to a draw blocked by another unless the reason was written down
+        at the moment it was true.
+        """
+        if not self._growth_stopped_at:
+            return
+        deadline, name, candidates = swap_deadline_why(
+            self._growth_stopped_at,
+            self._settle_until,
+            self.line,
+            self._pace(),
+            self._next_utterance_at,
+        )
+        now = time.monotonic()
+        perf.emit(
+            "caption",
+            "deadline",
+            action=action,
+            # Which of the three clocks set it. This is the column that answers
+            # "is the display leg the hold, the settle, or the next utterance".
+            why=name,
+            wait=round((deadline - now) * 1000.0, 1),
+            hold_in=round(
+                (candidates.get("hold", deadline) - now) * 1000.0, 1
+            ),
+            settle_in=round(
+                (candidates.get("settle", deadline) - now) * 1000.0, 1
+            ),
+            readable_in=round(
+                (candidates.get("readable_at", deadline) - now) * 1000.0, 1
+            ),
+            next_utt_in=round(
+                (candidates.get("next_utterance", deadline) - now) * 1000.0, 1
+            ),
+            hold_ms=hold_ms(self.line, self._pace()),
+            chars=len(self.line),
+        )
+
+    def _arm_hold(self) -> None:
+        if self._hold_job is not None:
+            self.root.after_cancel(self._hold_job)
+            self._hold_job = None
+        if not self._pending:
+            return
+        wait = int(round((self._swap_deadline() - time.monotonic()) * 1000))
+        self._hold_job = self.root.after(max(50, wait), self._flush_pending)
+
+    def _flush_pending(self) -> None:
+        self._hold_job = None
+        action, line, pending, anchor, settle, _deadline = flush_caption(
+            self.line,
+            self._pending,
+            self._growth_stopped_at,
+            self._settle_until,
+            time.monotonic(),
+            self._pace(),
+            self._next_utterance_at,
+        )
+        self._pending = pending
+        self._note_pending(pending)
+        self._growth_stopped_at = anchor
+        self._settle_until = settle
+        self._close_wait(pending, action)
+        if action in ("grow", "swap"):
+            self._next_utterance_at = 0.0
+        if action in ("grow", "char", "swap"):
+            # Name the action here too. Without it a paint that came out of the
+            # hold is reported as whatever the last packet was, and every swap
+            # that had to wait looks like a defer.
+            self._held_paint = True
+            self._apply_line(line, action)
+            self._held_paint = False
+        if action == "wait" or self._pending:
+            self._arm_hold()
+
+    def _apply_line(self, text: str, action: str = "") -> None:
+        # The caller says why this line is changing, so the paint probe can
+        # tell an immediate redraw apart from a held one.
+        if self._dismiss_job is not None:
+            try:
+                self.root.after_cancel(self._dismiss_job)
+            except (ValueError, TclError):
+                pass
+            self._dismiss_job = None
+        if action:
+            self._trace_action = action
+        self._prev_chars = len(self.line)
+        self.line = (text or "").strip()
+        action = caption_action(self.closed, self.line, self.visible)
+        if action == "withdraw":
+            self.visible = False
+            self.root.withdraw()
+            return
+        if action == "stay":
+            return
+        if action == "paint":
+            self._paint()
+        else:
+            self.show()
+        if self.line and self.dismiss_ms > 0:
+            self._dismiss_job = self.root.after(self.dismiss_ms, self._on_dismiss_timeout)
+
+    def _pump(self) -> None:
+        while True:
+            try:
+                kind, value, sent_at, recv_at, is_final = _COMMANDS.get_nowait()
+            except queue.Empty:
+                break
+            lag = perf.wall_ms(recv_at) if isinstance(recv_at, (int, float)) else -1.0
+            sent_wall = sent_at if isinstance(sent_at, (int, float)) else 0.0
+            if kind == "text":
+                # Keep our own copies: _paint clears the shared trace when the
+                # packet turns into an immediate draw.
+                self._trace_sent = sent_wall
+                self._trace_recv = recv_at if isinstance(recv_at, (int, float)) else 0.0
+                self._trace_action = ""
+                action = self.set_text(value or "", is_final)
+                if action in ("empty", "drop"):
+                    # Nothing will be drawn for this packet; stop attributing
+                    # a later repaint to it.
+                    self._trace_sent = 0.0
+                    self._trace_recv = 0.0
+                    self._trace_action = ""
+                else:
+                    # An immediate draw already recorded itself inside
+                    # _apply_line; a held one keeps the decision for later.
+                    self._trace_action = action
+                perf.emit(
+                    "caption",
+                    "text",
+                    action=action,
+                    net=perf.wall_ms(sent_wall) if sent_wall else -1.0,
+                    pump=lag,
+                    depth=_COMMANDS.qsize(),
+                    final=1 if is_final else 0,
+                    chars=len(value or ""),
+                )
+            elif kind == "asr":
+                pass
+            elif kind == "note":
+                self._trace_sent = sent_wall
+                self._trace_recv = recv_at if isinstance(recv_at, (int, float)) else 0.0
+                self._trace_action = "note"
+                self.show_source(value or "")
+            elif kind == "segment":
+                self.begin_segment()
+            elif kind == "status":
+                self.set_status(value or "")
+            elif kind == "style":
+                self.apply_text_only(bool(value))
+            elif kind == "font":
+                self.apply_font(value)
+            elif kind == "color":
+                self.apply_color(value)
+            elif kind == "dismiss":
+                self.apply_dismiss_timeout(value)
+            elif kind == "arm":
+                self.arm()
+            elif kind == "clear":
+                self.clear()
+            elif kind == "state?":
+                # The server asking "what are you set to", on behalf of the popup.
+                # Forced, because the asker has no other copy: answering "nothing
+                # changed" would leave the popup's checkbox showing a value this window
+                # is not in, which is the one press the user then wastes.
+                self._broadcast_state(force=True)
+            elif kind == "switch_ok":
+                # The server's confirmation that it applied the cadence, kept as state
+                # and nothing more. The readout is gone from the window and the
+                # extension shows the value, but the ack still has to land here:
+                # it is what proves the frame arrived, and a control whose confirmation
+                # is dropped is a control that cannot be judged while watching.
+                self._cadence_applied = int(value) if value is not None else 0
+            elif kind == "raise":
+                if self.line:
+                    self.show()
+            elif kind == "hide":
+                self.hide()
+        self.root.after(50, self._pump)
+
+
+def _main() -> None:
+    app = _Caption(_enable_dpi())
+    print("caption window ready", flush=True)
+    app.root.mainloop()
+
+
+def _qt_available() -> bool:
+    try:
+        import PyQt6.QtWidgets  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def start_caption() -> None:
+    if _port_busy():
+        return
+    root = Path(__file__).resolve().parents[1]
+    kwargs = {}
+    if sys.platform == "win32":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0
+        kwargs["startupinfo"] = startup
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    env = dict(os.environ)
+    # The caption window is a second process. Appending to one shared file from
+    # two processes collides on Windows, so it gets its own.
+    env.setdefault("TRANSLATION_PERF_LOG", str(root / "logs" / "perf_caption.log"))
+    backend = os.environ.get("TRANSLATION_CAPTION_BACKEND", "").strip().lower()
+    use_qt = backend == "qt" or (backend != "tk" and _qt_available())
+    module_name = "server.qt_caption_window" if use_qt else "server.caption_window"
+    subprocess.Popen(
+        [sys.executable, "-m", module_name],
+        cwd=root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        **kwargs,
+    )
+
+
+# The repeat rules live in translate.py and are shared: the generators need the
+# clause rule as much as the window does, and two copies of a threshold drift.
+_CHAR_RUN_MAX = CHAR_RUN_MAX
+_CLAUSE_RUN_MAX = CLAUSE_RUN_MAX
+
+
+def _collapse_repeats(text: str) -> str:
+    return collapse_caption_repeats(text)
+
+
+def _read_units(text: str) -> int:
+    units = 0
+    in_word = False
+    for ch in (text or "").strip():
+        if ch.isspace() or ch in "，。！？、；：,.!?;:…—-「」\"'（）()【】":
+            in_word = False
+            continue
+        if ord(ch) < 128 and (ch.isalnum() or ch == "'"):
+            if not in_word:
+                units += 1
+                in_word = True
+            continue
+        in_word = False
+        units += 1
+    return units
+
+
+def _reference_hold_ms(count: int) -> int:
+    if count <= 3:
+        return 1000
+    if count <= 8:
+        return 1000 + (count - 3) * 150
+    if count <= 18:
+        return 1750 + (count - 8) * 130
+    return 3050 + (count - 18) * 80
+
+
+def pace_scale(gaps: list[float]) -> float:
+    usable = [gap for gap in gaps if 0.45 <= gap <= 8.0]
+    if len(usable) < PACE_MIN_GAPS:
+        return 1.0
+    ordered = sorted(usable[-6:])
+    mid = ordered[len(ordered) // 2]
+    return max(PACE_MIN, min(PACE_MAX, mid / REF_GAP_S))
+
+
+def speech_hold_factor(pace: float = 1.0) -> float:
+    """Subtitle comfort bands tuned for more live, low-latency display.
+
+    The speech line is kept short enough to feel timely in a live captioning
+    situation, but still leaves a little extra room when the pace falls below a
+    comfortable reading speed.
+    """
+    pace_val = float(pace if pace is not None else 1.0)
+    if pace_val <= 0.75:
+        return 0.62
+    if pace_val <= 0.90:
+        return 0.70
+    if pace_val <= 1.10:
+        return 0.80
+    if pace_val <= 1.30:
+        return 0.90
+    return 0.98
+
+
+def hold_ms(text: str, pace: float = 1.0) -> int:
+    count = _read_units(text)
+    if count <= 0:
+        return HOLD_ABS_MIN_MS
+    scale = speech_hold_factor(pace)
+    scaled = int(round(_reference_hold_ms(count) * scale))
+    return max(HOLD_ABS_MIN_MS, min(HOLD_ABS_MAX_MS, scaled))
+
+
+def swap_deadline(
+    growth_stopped_at: float,
+    settle_until: float,
+    line: str = "",
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> float:
+    return swap_deadline_why(
+        growth_stopped_at, settle_until, line, pace, next_utterance_at
+    )[0]
+
+
+# Which candidate actually set the deadline. The display leg was reported as one
+# number and then split two ways, and neither split held up: the hold explains
+# the tail but not the median, and the median sits near SETTLE_MS. Three
+# different clocks can push the deadline out, and which one did is the whole
+# question -- so it is recorded rather than inferred afterwards from overlapping
+# intervals, which also avoids having to assume a hold never re-enters.
+#
+# Returned alongside the deadline so the caller does not have to recompute any of
+# it. The name is the constraint that produced the returned value.
+def swap_deadline_why(
+    growth_stopped_at: float,
+    settle_until: float,
+    line: str = "",
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[float, str, dict]:
+    candidates: dict[str, float] = {}
+    # Unconditional, including when growth_stopped_at is 0.0. _arm_hold reaches
+    # here with pending text set and the anchor still at its initial value, and
+    # dropping the hold candidate there would fire the flush immediately instead
+    # of one hold later. The equivalence check over 1280 combinations is what
+    # caught this; the guard looked harmless because it agrees with the truthy
+    # case.
+    candidates["hold"] = growth_stopped_at + hold_ms(line, pace) / 1000.0
+    if settle_until:
+        candidates["settle"] = settle_until
+    if next_utterance_at > growth_stopped_at and growth_stopped_at:
+        readable_ms = max(
+            HOLD_ABS_MIN_MS,
+            int(round(READABLE_RATIO * _reference_hold_ms(max(1, _read_units(line))))),
+        )
+        candidates["readable_at"] = growth_stopped_at + readable_ms / 1000.0
+        candidates["next_utterance"] = next_utterance_at
+
+    if next_utterance_at > growth_stopped_at and growth_stopped_at:
+        # The next-utterance branch clamps the max, so it can pull the deadline
+        # earlier rather than push it later.
+        ceiling = max(
+            candidates["readable_at"],
+            candidates["next_utterance"],
+            candidates.get("settle", 0.0),
+        )
+        floor = max(candidates["hold"], candidates.get("settle", 0.0))
+        deadline = min(floor, ceiling)
+    else:
+        deadline = max(candidates["hold"], candidates.get("settle", 0.0))
+
+    # Name the candidate that equals the answer. On a tie the later one wins,
+    # because that is the one still running when the clock expired.
+    name = "none"
+    for key in ("hold", "settle", "readable_at", "next_utterance"):
+        if key in candidates and abs(candidates[key] - deadline) < 1e-6:
+            name = key
+    return (deadline, name, candidates)
+
+
+def _signature(text: str) -> str:
+    """Short stable digest of a line, for matching probes against a recording."""
+    return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
+
+
+def classify_caption(current: str, new: str) -> str:
+    if not new:
+        return "empty"
+    if not current:
+        return "grow"
+    if new == current:
+        return "same"
+    if len(new) > len(current) and new.startswith(current):
+        return "grow"
+    if len(new) < len(current) and current.startswith(new):
+        return "rewind"
+    if _is_char_edit(current, new):
+        return "char"
+    return "sentence"
+
+
+def _is_char_edit(current: str, new: str) -> bool:
+    current_len = len(current)
+    new_len = len(new)
+    if current_len == 0 or new_len == 0:
+        return False
+    if new_len < _MIN_LENGTH_RATIO * current_len or current_len < _MIN_LENGTH_RATIO * new_len:
+        return False
+    longest = max(current_len, new_len)
+    distance = _edit_distance(current, new)
+    if distance / longest > 1.0 - _MIN_SIMILARITY:
+        return False
+    lcs_ratio = _lcs_len(current, new) / longest
+    edit_ratio = 1.0 - distance / longest
+    return max(lcs_ratio, edit_ratio) >= _MIN_SIMILARITY
+
+
+def _edit_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+    previous = list(range(len(right) + 1))
+    for i, ca in enumerate(left, 1):
+        current = [i]
+        for j, cb in enumerate(right, 1):
+            current.append(min(current[-1] + 1, previous[j] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def _lcs_len(left: str, right: str) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    for ca in left:
+        current = [0]
+        for j, cb in enumerate(right, 1):
+            if ca == cb:
+                current.append(previous[j - 1] + 1)
+            else:
+                current.append(max(previous[j], current[-1]))
+        previous = current
+    return previous[-1]
+
+
+def _shadow_pending(line: str, pending: str) -> str:
+    if not pending or not line:
+        return ""
+    if classify_caption(line, pending) in ("same", "rewind"):
+        return ""
+    if len(pending) < _MIN_LENGTH_RATIO * len(line):
+        return ""
+    return pending
+
+
+def step_caption(
+    line: str,
+    pending: str,
+    growth_stopped_at: float,
+    settle_until: float,
+    text: str,
+    now: float,
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[str, str, str, float, float, float]:
+    deadline = swap_deadline(growth_stopped_at, settle_until, line, pace, next_utterance_at)
+    if not text:
+        return ("drop", line, pending, growth_stopped_at, settle_until, deadline)
+    if not line:
+        return ("grow", text, "", now, 0.0, swap_deadline(now, 0.0, text, pace))
+    kind = classify_caption(line, text)
+    if kind in ("same", "rewind", "empty"):
+        return ("drop", line, pending, growth_stopped_at, settle_until, deadline)
+    if kind == "grow":
+        return ("grow", text, _shadow_pending(text, pending), now, 0.0, swap_deadline(now, 0.0, text, pace))
+    if kind == "char":
+        settle = max(settle_until, now + SETTLE_MS / 1000.0)
+        return (
+            "char",
+            text,
+            _shadow_pending(text, pending),
+            growth_stopped_at,
+            settle,
+            swap_deadline(growth_stopped_at, settle, text, pace, next_utterance_at),
+        )
+    chosen = text
+    if pending and classify_caption(pending, text) in ("same", "rewind"):
+        chosen = pending
+    if now >= deadline:
+        return ("swap", chosen, "", now, 0.0, swap_deadline(now, 0.0, chosen, pace))
+    return ("defer", line, chosen, growth_stopped_at, settle_until, deadline)
+
+
+def flush_caption(
+    line: str,
+    pending: str,
+    growth_stopped_at: float,
+    settle_until: float,
+    now: float,
+    pace: float = 1.0,
+    next_utterance_at: float = 0.0,
+) -> tuple[str, str, str, float, float, float]:
+    deadline = swap_deadline(growth_stopped_at, settle_until, line, pace, next_utterance_at)
+    if not pending:
+        return ("idle", line, "", growth_stopped_at, settle_until, deadline)
+    if now < deadline:
+        return ("wait", line, pending, growth_stopped_at, settle_until, deadline)
+    kind = classify_caption(line, pending)
+    if kind in ("same", "rewind", "empty"):
+        return ("drop", line, "", growth_stopped_at, settle_until, deadline)
+    if kind == "char":
+        settle = max(settle_until, now + SETTLE_MS / 1000.0)
+        return (
+            "char",
+            pending,
+            "",
+            growth_stopped_at,
+            settle,
+            swap_deadline(growth_stopped_at, settle, pending, pace, next_utterance_at),
+        )
+    if kind == "grow":
+        return ("grow", pending, "", now, 0.0, swap_deadline(now, 0.0, pending, pace))
+    return ("swap", pending, "", now, 0.0, swap_deadline(now, 0.0, pending, pace))
+
+
+def caption_action(closed: bool, text: str, visible: bool) -> str:
+    line = (text or "").strip()
+    if not line:
+        return "stay" if closed else "withdraw"
+    if closed:
+        return "stay"
+    return "paint" if visible else "show"
+
+
+def clamped_font_px(px, current=None):
+    try:
+        size = int(px)
+    except (TypeError, ValueError):
+        return None
+    size = max(16, min(40, size))
+    if current is not None and size == int(current):
+        return None
+    return size
+
+
+def _send(kind: str, value, final: bool = False) -> None:
+    try:
+        # Wall clock inside the packet: the caption window compares its own
+        # receipt and paint times against it, so both sides join on one clock.
+        #
+        # `final` rides along because the boundary test cannot recognise a final on its
+        # own and that is what costs half the coverage. Measured: the test "the incoming
+        # text carries more terminal marks than the line does" held 0 times out of 49
+        # finals, because the streaming fragments of a sentence bring its punctuation
+        # first and the final arrives with the same count. The caption window had no way
+        # to know which packet was the final -- the flag was dropped here, at the only
+        # place the two processes meet.
+        sent_at = time.time()
+        payload = json.dumps(
+            {"kind": kind, "value": value, "sentAt": sent_at, "final": bool(final)},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        _SOCK.sendto(payload, ("127.0.0.1", CAPTION_PORT))
+    except OSError:
+        return
+    perf.emit("caption", "send", kind=kind, bytes=len(payload), sent_at=sent_at,
+              final=1 if final else 0)
+
+
+def update_caption(payload: dict) -> None:
+    kind = payload.get("type")
+    if kind == "segment_start":
+        _send("segment", "")
+    elif kind == "translation":
+        _send("text", payload.get("text") or "", final=bool(payload.get("final")))
+    elif kind == "capture-error":
+        _send("text", payload.get("error") or payload.get("message") or "")
+    elif kind == "status" and payload.get("level") == "warn":
+        _send("text", payload.get("message") or "")
+
+
+def note_caption(text: str) -> None:
+    _send("note", text)
+
+
+def hide_caption() -> None:
+    _send("hide", None)
+
+
+def set_text_only(enabled: bool) -> None:
+    _send("style", enabled)
+
+
+def request_caption_state() -> None:
+    """Ask the window to report what it is set to.
+
+    The answer is a normal `kind="state"` frame back over UDP 8767, so it travels the
+    same path as a caption-side click: the server forwards it, the extension stores it,
+    and the popup's checkbox ends up showing this window's real state. Holding a copy
+    anywhere else is what produced a checkbox that disagreed with the screen.
+    """
+    _send("state?", None)
+
+
+def set_font_size(px: int) -> None:
+    try:
+        size = int(px)
+    except (TypeError, ValueError):
+        return
+    _send("font", size)
+
+
+def set_font_color(color: str) -> None:
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        _send("color", color.lower())
+
+
+def set_dismiss_timeout(ms: int) -> None:
+    try:
+        val = int(ms)
+    except (TypeError, ValueError):
+        return
+    _send("dismiss", val)
+
+
+def arm_caption() -> None:
+    _send("arm", None)
+
+
+def clear_caption() -> None:
+    """Drop whatever is on screen, without closing the window.
+
+    Distinct from hide_caption: that also marks the window closed, so the next
+    packet has to re-arm it. This is for a configuration change mid-playback,
+    where the window should stay up and simply stop showing the old cadence's
+    text.
+    """
+    _send("clear", None)
+
+
+def ack_switch(ms: int) -> None:
+    """Tell the window the cadence change landed, so it can stop saying 切换中."""
+    _send("switch_ok", int(ms))
+
+
+def raise_caption() -> None:
+    _send("raise", None)
+
+
+if __name__ == "__main__":
+    threading.Thread(target=_listen, args=(_COMMANDS,), daemon=True).start()
+    _main()

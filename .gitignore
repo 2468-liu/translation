@@ -1,0 +1,71 @@
+__pycache__/
+*.pyc
+models/**
+!models/.gitkeep
+tools/
+scripts/native-host/
+scripts/build/
+scripts/*.spec
+*.spec
+runtime.json
+.venv/
+logs/
+dist/
+build/
+*.obj
+scratch_*
+*.zip
+*.tar.gz
+*.7z
+desktop_config.json
+audio_process_loopback.dll
+*.pid
+server.pid
+desktop_pid.txt
+_internal/
+.pytest_cache/
+
+# Media is not versioned. samples/ carries two film excerpts and a meeting
+# recording with other people's voices in it, none of which belongs in the
+# repository, and no sweep needs the binaries committed to be reproducible: the
+# timings JSON next to each clip is what the tests read, and the clips are
+# rebuildable from the user's own recordings.
+#
+# An earlier version of this file anchored the rule to the root as "/*.wav" on
+# the reasoning that samples/ was tracked and the tests read it. That reasoning
+# was about the timing files, not the audio, and it let 95 MB of film and a
+# meeting recording in through a single `git add samples/`. Anything ending in a
+# media extension is ignored regardless of directory, with an explicit exception
+# list below for the few files a test genuinely needs.
+*.wav
+*.mp4
+*.webm
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# Exceptions: test inputs small enough to keep. fixtures/ holds one short
+# hand-made clip used by the caption-window repeat tests; the others are
+# rebuilt by scripts from a real recording.
+/fixtures/cc-sixty-seconds-16k.wav
+
+# Cut fragments the cost probes make, one per length and model combination.
+logs/asr_cost/
+
+# Ad-hoc probes. Not committed by convention: each one is written to answer one
+# question on one set of logs and then stops being true. scripts/probe_line_dwell.py
+# and scripts/probe_gemma_claims.py are the current pair -- both found real problems,
+# and both are kept out of the record so nobody reads them as instruments.
+scripts/probe_*.py
+probe_*.py
+
+# Run metadata archived after the BOM incident of 2026-10-13. Kept out of logs/ on
+# purpose: a recursive scan of logs/ counts whatever it finds as a live run, and a
+# second copy of every meta under logs/_archive/ doubled that count to 238 -- half
+# of them unparseable, which reads as "could not judge" rather than "duplicate".
+# That is the same shape as the loopback contamination in REPORT 23: one directory
+# holding two populations, with nothing on the face of it saying which is which.
+# Not committed either -- logs/ as a whole is not tracked, and an archive of it
+# should not become the one tracked part.
+scripts/_archive/metas-*/

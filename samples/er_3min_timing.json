@@ -1,0 +1,384 @@
+{
+ "audio_total": 205.8,
+ "covered_span": 147.82,
+ "segments": [
+  {
+   "start": 6.76,
+   "end": 8.64,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.985,
+   "text": "I think you are the amateur now.",
+   "i": 0
+  },
+  {
+   "start": 9.64,
+   "end": 13.1,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.976,
+   "text": "I think you should go with your instincts. With your first instinct.",
+   "i": 1
+  },
+  {
+   "start": 13.92,
+   "end": 19.88,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.987,
+   "text": "I'm the same man who was not good enough for you before, and I'm just not good enough for you now.",
+   "i": 2
+  },
+  {
+   "start": 34.68,
+   "end": 40.62,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.973,
+   "text": "The problem with gun runners going to war is that there's no shortage of ammunition.",
+   "i": 3
+  },
+  {
+   "start": 44.36,
+   "end": 47.4,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.996,
+   "text": "This was the chaos that the old guard had always feared.",
+   "i": 4
+  },
+  {
+   "start": 48.22,
+   "end": 51.58,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.993,
+   "text": "As far as they were concerned, I was giving arms dealers a bad name.",
+   "i": 5
+  },
+  {
+   "start": 52.0,
+   "end": 54.62,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "but then they could hardly report me to the Better Business Bureau.",
+   "i": 6
+  },
+  {
+   "start": 57.24,
+   "end": 62.06,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.995,
+   "text": "And Ukraine wasn't the only former state with an unpaid army and stockpiles of guns.",
+   "i": 7
+  },
+  {
+   "start": 62.78,
+   "end": 69.08,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.99,
+   "text": "There was Bulgaria, Hungary, Poland, Belarus, all there for the taking.",
+   "i": 8
+  },
+  {
+   "start": 69.08,
+   "end": 76.34,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.988,
+   "text": "of all the weapons in the vast soviet arsenal",
+   "i": 9
+  },
+  {
+   "start": 76.86,
+   "end": 81.5,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.988,
+   "text": "Nothing was more profitable than off-demand Kalashnikova model of 1946.",
+   "i": 10
+  },
+  {
+   "start": 82.12,
+   "end": 85.82,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.994,
+   "text": "more commonly known as the AK-47 or Kalashnikov.",
+   "i": 11
+  },
+  {
+   "start": 85.82,
+   "end": 88.98,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.992,
+   "text": "is the world's most popular assault rifle.",
+   "i": 12
+  },
+  {
+   "start": 88.98,
+   "end": 91.02,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "A weapon all fighters love.",
+   "i": 13
+  },
+  {
+   "start": 91.02,
+   "end": 95.34,
+   "lang": "en",
+   "src": "auto",
+   "p": 1.0,
+   "text": "An elegantly simple nine-pound amalgamation of forged steel and plywood.",
+   "i": 14
+  },
+  {
+   "start": 95.34,
+   "end": 98.26,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.998,
+   "text": "It doesn't break, jam, or overheat.",
+   "i": 15
+  },
+  {
+   "start": 98.26,
+   "end": 101.54,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "It will shoot whether it's covered in mud or filled with sand.",
+   "i": 16
+  },
+  {
+   "start": 101.54,
+   "end": 104.36,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.994,
+   "text": "It's so easy, even a child can use it",
+   "i": 17
+  },
+  {
+   "start": 105.24,
+   "end": 107.48,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "The Soviets put the gun on a coin.",
+   "i": 18
+  },
+  {
+   "start": 107.48,
+   "end": 109.7,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.994,
+   "text": "Mozambique put it on their flag",
+   "i": 19
+  },
+  {
+   "start": 109.7,
+   "end": 111.7,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.97,
+   "text": "Since the end of the Cold War...",
+   "i": 20
+  },
+  {
+   "start": 111.7,
+   "end": 115.0,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.985,
+   "text": "that Kleshnikov has become the Russian people's greatest export.",
+   "i": 21
+  },
+  {
+   "start": 115.64,
+   "end": 118.88,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.998,
+   "text": "After that comes vodka, caviar, and suicidal novelists.",
+   "i": 22
+  },
+  {
+   "start": 120.04,
+   "end": 121.24,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.997,
+   "text": "One thing's for sure.",
+   "i": 23
+  },
+  {
+   "start": 121.6,
+   "end": 123.46,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.99,
+   "text": "No one was lining up to buy their car.",
+   "i": 24
+  },
+  {
+   "start": 123.46,
+   "end": 140.22,
+   "lang": "ru",
+   "src": "auto",
+   "p": 0.958,
+   "text": "Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда! Войди сюда!",
+   "i": 25
+  },
+  {
+   "start": 141.14,
+   "end": 149.86,
+   "lang": "ru",
+   "src": "auto",
+   "p": 0.902,
+   "text": "Ты слушаешь, что я тебе говорю Лейтенант, ты попридержи Как можно дольше",
+   "i": 26
+  },
+  {
+   "start": 150.56,
+   "end": 153.02,
+   "lang": "ru",
+   "src": "auto",
+   "p": 0.936,
+   "text": "Престает нас быть позади Москва!",
+   "i": 27
+  },
+  {
+   "start": 155.06,
+   "end": 156.88,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.997,
+   "text": "Thought you were supposed to be watching out for these people.",
+   "i": 28
+  },
+  {
+   "start": 158.7,
+   "end": 160.18,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.949,
+   "text": "You keep selling my helicopter.",
+   "i": 29
+  },
+  {
+   "start": 160.66,
+   "end": 161.7,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.961,
+   "text": "You are too greedy, you...",
+   "i": 30
+  },
+  {
+   "start": 161.7,
+   "end": 163.88,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.86,
+   "text": "I can't hold him forever",
+   "i": 31
+  },
+  {
+   "start": 163.88,
+   "end": 165.4,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.984,
+   "text": "I've got paperwork.",
+   "i": 32
+  },
+  {
+   "start": 165.4,
+   "end": 167.48,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.896,
+   "text": "not for the gunships.",
+   "i": 33
+  },
+  {
+   "start": 167.48,
+   "end": 169.78,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.896,
+   "text": "you know the penalty for the sanctioned",
+   "i": 34
+  },
+  {
+   "start": 169.78,
+   "end": 172.8,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.712,
+   "text": "selling the military helicopter is a major violation.",
+   "i": 35
+  },
+  {
+   "start": 172.8,
+   "end": 174.94,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.982,
+   "text": "Military helicopter.",
+   "i": 36
+  },
+  {
+   "start": 174.94,
+   "end": 180.69,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "It's not a military helicopter",
+   "i": 37
+  },
+  {
+   "start": 180.69,
+   "end": 182.67,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.992,
+   "text": "It's a rescue helicopter",
+   "i": 38
+  },
+  {
+   "start": 182.67,
+   "end": 184.81,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.999,
+   "text": "Get to work, son.",
+   "i": 39
+  },
+  {
+   "start": 184.81,
+   "end": 186.59,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.584,
+   "text": "Show show.",
+   "i": 40
+  },
+  {
+   "start": 186.59,
+   "end": 189.66,
+   "lang": "en",
+   "src": "auto",
+   "p": 0.991,
+   "text": "The law's on our side.",
+   "i": 41
+  }
+ ]
+}

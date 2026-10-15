@@ -1,0 +1,15 @@
+{
+ "src": "奇异博士2 (2022) 院线版 126:31",
+ "ref": "D:/jianpianDownload/奇异博士2.srt (双语, 99.8% 时间覆盖)",
+ "shape": "action",
+ "why": "1 cue(s) in 25s, dialogue under the music",
+ "wav": "ds2_action_245.wav",
+ "sha256": "fde8d1c6fe5654f7464d5e53169d52e5b74f7bc2b418be659f33f7826f7397a6",
+ "segments": [
+  {
+   "start": 268.44,
+   "end": 270.22,
+   "text": "借过一下\nExcuse me."
+  }
+ ]
+}

@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>实时字幕与翻译</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --card-bg: #f5f2eb;
+      --card-hover: #ece8df;
+      --border: #e0dcd5;
+      --border-light: #ece8e1;
+      --text-main: #1f1f1f;
+      --text-muted: #5f6368;
+      --text-sub: #757575;
+      --accent-olive: #6c6314;
+      --accent-olive-hover: #58500e;
+      --accent-gold: #e5bd38;
+      --danger: #b91c1c;
+      --danger-hover: #991b1b;
+      --danger-bg: #fee2e2;
+      --success: #15803d;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-pill: 9999px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1e1e;
+        --card-bg: #2d2b27;
+        --card-hover: #383530;
+        --border: #44413c;
+        --border-light: #383632;
+        --text-main: #f3f3f3;
+        --text-muted: #a3a19b;
+        --text-sub: #8c8983;
+        --accent-olive: #8f8426;
+        --accent-olive-hover: #a89c32;
+        --accent-gold: #e5bd38;
+        --danger: #ef4444;
+        --danger-hover: #f87171;
+        --danger-bg: #451a1a;
+        --success: #4ade80;
+      }
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    body {
+      width: 350px;
+      font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background: var(--bg);
+      user-select: none;
+      overflow-x: hidden;
+    }
+    main {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* -------------------------------------------------------------
+       Top Session Header Card (Authentic AI Translation Hub)
+    ------------------------------------------------------------- */
+    .session-card {
+      background: var(--card-bg);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      transition: background 0.15s ease;
+    }
+    .session-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .session-tag-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: #0288d1;
+    }
+    .session-tag-row svg {
+      width: 13px;
+      height: 13px;
+      fill: currentColor;
+    }
+    .session-title {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: -0.2px;
+    }
+    .session-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .live-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #aaa39b;
+      transition: background 0.2s;
+    }
+    .live-dot.active {
+      background: #16a34a;
+      box-shadow: 0 0 6px #16a34a;
+    }
+
+    /* Primary Action Start/Stop Button */
+    #toggle {
+      min-width: 82px;
+      height: 38px;
+      padding: 0 14px;
+      border-radius: var(--radius-pill);
+      border: 0;
+      background: var(--accent-olive);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+      transition: background 0.15s, transform 0.08s, box-shadow 0.15s;
+      flex-shrink: 0;
+    }
+    #toggle:hover {
+      background: var(--accent-olive-hover);
+      transform: scale(1.02);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+    }
+    #toggle:active {
+      transform: scale(0.97);
+    }
+    #toggle.stop {
+      background: var(--danger);
+    }
+    #toggle.stop:hover {
+      background: var(--danger-hover);
+    }
+    #toggle svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
+
+    /* -------------------------------------------------------------
+       Key Primary Options (Directly Accessible)
+    ------------------------------------------------------------- */
+    .primary-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 2px 2px;
+    }
+
+    /* Form Option Card */
+    .option-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .option-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 28px;
+    }
+    .option-label-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .option-icon {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .option-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+    .option-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-olive);
+      font-variant-numeric: tabular-nums;
+    }
+    .option-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.35;
+      padding-left: 24px;
+    }
+
+    /* Material 3 Pill Switch */
+    .m3-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .m3-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .m3-switch .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--border);
+      transition: background-color 0.2s, box-shadow 0.2s;
+      border-radius: 22px;
+    }
+    .m3-switch .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #ffffff;
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    .m3-switch input:checked + .slider {
+      background-color: var(--accent-olive);
+    }
+    .m3-switch input:checked + .slider:before {
+      transform: translateX(18px);
+    }
+
+    /* Language Select Box */
+    .lang-select-box {
+      width: 100%;
+      height: 36px;
+      padding: 0 12px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg);
+      color: var(--text-main);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%235f6368'%3e%3cpath d='M7 10l5 5 5-5z'/%3e%3c/svg%3e");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      background-size: 18px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .lang-select-box:focus {
+      border-color: var(--accent-olive);
+      box-shadow: 0 0 0 1px var(--accent-olive);
+    }
+
+    /* Range Sliders */
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      margin: 4px 0 2px;
+      background: var(--border);
+      border-radius: 2px;
+      accent-color: var(--accent-olive);
+      cursor: pointer;
+    }
+    .range-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+    }
+    .range-grid output {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      min-width: 4ch;
+      text-align: right;
+    }
+
+    /* Golden Accent Divider */
+    .golden-divider {
+      height: 2px;
+      background: var(--accent-gold);
+      border-radius: 1px;
+      margin: 4px 0 2px;
+    }
+
+    /* -------------------------------------------------------------
+       Footer: Settings Collapsible Trigger
+    ------------------------------------------------------------- */
+    .settings-footer-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 6px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      transition: background 0.15s;
+    }
+    .settings-footer-btn:hover {
+      background: var(--card-bg);
+    }
+    .settings-footer-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .settings-footer-left svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--text-muted);
+    }
+    .settings-footer-right svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--text-muted);
+      transition: transform 0.2s;
+    }
+    .settings-footer-btn.open .settings-footer-right svg {
+      transform: rotate(180deg);
+    }
+
+    /* -------------------------------------------------------------
+       Expandable Settings Drawer (Secondary Customizer)
+    ------------------------------------------------------------- */
+    .settings-drawer {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      background: var(--card-bg);
+      border-radius: var(--radius-md);
+      margin-top: 2px;
+      animation: fadeIn 0.18s ease;
+    }
+    .settings-drawer.open {
+      display: flex;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .drawer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 26px;
+    }
+    .drawer-label {
+      font-size: 12.5px;
+      color: var(--text-main);
+    }
+    .drawer-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-olive);
+      font-variant-numeric: tabular-nums;
+    }
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
+    .color-presets {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .color-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: transform 0.12s;
+    }
+    .color-dot:hover {
+      transform: scale(1.2);
+    }
+    #fontColor {
+      width: 26px;
+      height: 20px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.35;
+      margin-top: 2px;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      height: 30px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      font: inherit;
+      font-size: 12px;
+      color: var(--text-main);
+      outline: none;
+      margin-top: 4px;
+    }
+    input[type="text"]:focus, input[type="password"]:focus {
+      border-color: var(--accent-olive);
+    }
+
+    /* Status Bar */
+    #status {
+      min-height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.35;
+    }
+    #status.error {
+      background: var(--danger-bg);
+      color: var(--danger);
+      font-weight: 500;
+    }
+
+    /* Screen Reader Only (Automated Test Hooks) */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <!-- Top Session Header Card -->
+  <div class="session-card">
+    <div class="session-info">
+      <div class="session-tag-row">
+        <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
+        <span id="mediaDomain">实时音视频翻译</span>
+      </div>
+      <div class="session-title" id="mediaTitle">AI 智能实时字幕</div>
+      <div class="session-meta">
+        <span class="live-dot" id="liveDot"></span>
+        <span id="sessionStatusText">服务已就绪</span>
+      </div>
+    </div>
+
+    <!-- Primary Action Toggle Button -->
+    <button id="toggle" type="button">开始</button>
+  </div>
+
+  <!-- Primary Key Options (Exposed directly for easy use) -->
+  <div class="primary-options">
+    <!-- Option 1: 识别源语种 -->
+    <div class="option-item">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Language / Translate Icon -->
+            <svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.08c1.74-1.94 2.98-4.17 3.71-6.49H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
+          </div>
+          <span>识别语种</span>
+        </div>
+      </div>
+      <select id="language" class="lang-select-box">
+        <optgroup label="常用语言 (Popular)">
+          <option value="auto">自动检测 (默认)</option>
+          <option value="zh">中文 (普通话)</option>
+          <option value="en">英语 (English)</option>
+          <option value="ja">日语 (日本語)</option>
+          <option value="ko">韩语 (한국어)</option>
+          <option value="yue">粤语 (Cantonese)</option>
+          <option value="fr">法语 (Français)</option>
+          <option value="de">德语 (Deutsch)</option>
+          <option value="es">西班牙语 (Español)</option>
+          <option value="ru">俄语 (Русский)</option>
+        </optgroup>
+        <optgroup label="亚洲与东南亚 (Asia & SE Asia)">
+          <option value="vi">越南语 (Tiếng Việt)</option>
+          <option value="th">泰语 (ไทย)</option>
+          <option value="id">印尼语 (Bahasa Indonesia)</option>
+          <option value="ms">马来语 (Bahasa Melayu)</option>
+          <option value="tl">菲律宾语 (Filipino/Tagalog)</option>
+          <option value="hi">印地语 (हिन्दी)</option>
+          <option value="km">高棉语 (ភាសាខ្មែរ)</option>
+          <option value="my">缅甸语 (မြန်မာဘာသာ)</option>
+          <option value="bn">孟加拉语 (বাংলা)</option>
+          <option value="te">泰卢固语 (తెలుగు)</option>
+          <option value="mr">马拉地语 (मराठी)</option>
+          <option value="ta">泰米尔语 (தமிழ்)</option>
+          <option value="gu">古吉拉特语 (ગુજરાતી)</option>
+          <option value="ur">乌尔都语 (اردو)</option>
+        </optgroup>
+        <optgroup label="欧洲语系 (European)">
+          <option value="it">意大利语 (Italiano)</option>
+          <option value="pt">葡萄牙语 (Português)</option>
+          <option value="nl">荷兰语 (Nederlands)</option>
+          <option value="pl">波兰语 (Polski)</option>
+          <option value="sv">瑞典语 (Svenska)</option>
+          <option value="cs">捷克语 (Čeština)</option>
+          <option value="hu">匈牙利语 (Magyar)</option>
+          <option value="ro">罗马尼亚语 (Română)</option>
+          <option value="uk">乌克兰语 (Українська)</option>
+          <option value="el">希腊语 (Ελληνικά)</option>
+          <option value="hr">克罗地亚语 (Hrvatski)</option>
+          <option value="nb">挪威语 (Norsk)</option>
+          <option value="da">丹麦语 (Dansk)</option>
+          <option value="fi">芬兰语 (Suomi)</option>
+          <option value="sk">斯洛伐克语 (Slovenčina)</option>
+          <option value="bg">保加利亚语 (Български)</option>
+          <option value="et">爱沙尼亚语 (Eesti)</option>
+          <option value="sl">斯洛文尼亚语 (Slovenščina)</option>
+          <option value="lt">立陶宛语 (Lietuvių)</option>
+          <option value="lv">拉脱维亚语 (Latviešu)</option>
+          <option value="tr">土耳其语 (Türkçe)</option>
+        </optgroup>
+        <optgroup label="中东与南亚 (Middle East & South Asia)">
+          <option value="ar">阿拉伯语 (العربية)</option>
+          <option value="fa">波斯语 (فارسی)</option>
+          <option value="he">希伯来语 (עברית)</option>
+        </optgroup>
+        <optgroup label="民族与方言 (Ethnic & Regional)">
+          <option value="zh-tw">繁体中文 (Traditional Chinese)</option>
+          <option value="bo">藏语 (བོད་སྐད)</option>
+          <option value="ug">维吾尔语 (ئۇيغۇرچە)</option>
+          <option value="kk">哈萨克语 (Қазақша)</option>
+          <option value="mn">蒙古语 (Монгол хэл)</option>
+          <option value="ka">格鲁吉亚语 (ქართული)</option>
+          <option value="az">阿塞拜疆语 (Azərbaycan)</option>
+          <option value="uz">乌兹别克语 (Oʻzbekcha)</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <!-- Option: 目标翻译语种 -->
+    <div class="option-item" style="margin-top: 4px;">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c.96-1.66 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg>
+          </div>
+          <span>字幕目标语言</span>
+        </div>
+      </div>
+      <select id="targetLanguage" class="lang-select-box">
+        <optgroup label="常用语言 (Popular)">
+          <option value="zh" selected>简体中文 (默认)</option>
+          <option value="en">英语 (English)</option>
+          <option value="ja">日语 (日本語)</option>
+          <option value="ko">韩语 (한국어)</option>
+          <option value="zh-tw">繁体中文 (Traditional Chinese)</option>
+          <option value="yue">粤语 (Cantonese)</option>
+          <option value="fr">法语 (Français)</option>
+          <option value="de">德语 (Deutsch)</option>
+          <option value="es">西班牙语 (Español)</option>
+          <option value="ru">俄语 (Русский)</option>
+        </optgroup>
+        <optgroup label="亚洲与东南亚 (Asia & SE Asia)">
+          <option value="vi">越南语 (Tiếng Việt)</option>
+          <option value="th">泰语 (ไทย)</option>
+          <option value="id">印尼语 (Bahasa Indonesia)</option>
+          <option value="ms">马来语 (Bahasa Melayu)</option>
+          <option value="tl">菲律宾语 (Filipino/Tagalog)</option>
+          <option value="hi">印地语 (हिन्दी)</option>
+          <option value="km">高棉语 (ភាសាខ្មែរ)</option>
+          <option value="my">缅甸语 (မြန်မာဘာသာ)</option>
+          <option value="bn">孟加拉语 (বাংলা)</option>
+          <option value="te">泰卢固语 (తెలుగు)</option>
+          <option value="mr">马拉地语 (मराठी)</option>
+          <option value="ta">泰米尔语 (தமிழ்)</option>
+          <option value="gu">古吉拉特语 (ગુજરાતી)</option>
+          <option value="ur">乌尔都语 (اردو)</option>
+        </optgroup>
+        <optgroup label="欧洲语系 (European)">
+          <option value="it">意大利语 (Italiano)</option>
+          <option value="pt">葡萄牙语 (Português)</option>
+          <option value="nl">荷兰语 (Nederlands)</option>
+          <option value="pl">波兰语 (Polski)</option>
+          <option value="sv">瑞典语 (Svenska)</option>
+          <option value="cs">捷克语 (Čeština)</option>
+          <option value="hu">匈牙利语 (Magyar)</option>
+          <option value="ro">罗马尼亚语 (Română)</option>
+          <option value="uk">乌克兰语 (Українська)</option>
+          <option value="el">希腊语 (Ελληνικά)</option>
+          <option value="hr">克罗地亚语 (Hrvatski)</option>
+          <option value="nb">挪威语 (Norsk)</option>
+          <option value="da">丹麦语 (Dansk)</option>
+          <option value="fi">芬兰语 (Suomi)</option>
+          <option value="sk">斯洛伐克语 (Slovenčina)</option>
+          <option value="bg">保加利亚语 (Български)</option>
+          <option value="et">爱沙尼亚语 (Eesti)</option>
+          <option value="sl">斯洛文尼亚语 (Slovenščina)</option>
+          <option value="lt">立陶宛语 (Lietuvių)</option>
+          <option value="lv">拉脱维亚语 (Latviešu)</option>
+          <option value="tr">土耳其语 (Türkçe)</option>
+        </optgroup>
+        <optgroup label="中东与南亚 (Middle East & South Asia)">
+          <option value="ar">阿拉伯语 (العربية)</option>
+          <option value="fa">波斯语 (فارسی)</option>
+          <option value="he">希伯来语 (עברית)</option>
+        </optgroup>
+        <optgroup label="民族与方言 (Ethnic & Regional)">
+          <option value="bo">藏语 (བོད་སྐད)</option>
+          <option value="ug">维吾尔语 (ئۇيغۇرچە)</option>
+          <option value="kk">哈萨克语 (Қазақша)</option>
+          <option value="mn">蒙古语 (Монгол хэл)</option>
+          <option value="ka">格鲁吉亚语 (ქართული)</option>
+          <option value="az">阿塞拜疆语 (Azərbaycan)</option>
+          <option value="uz">乌兹别克语 (Oʻzbekcha)</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <!-- Option 2: 透明悬浮 (只有字) -->
+    <div class="option-item" style="margin-top: 4px;">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Caption Subtitle Icon -->
+            <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
+          </div>
+          <span>透明悬浮 (只有字)</span>
+        </div>
+        <label class="m3-switch" title="切换透明悬浮/黑底框模式">
+          <input id="textOnly" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="option-desc" id="captionStateHint">黑底框，「只有字」在最左边。</p>
+    </div>
+
+    <!-- Option 3: 静音自动隐去 -->
+    <div class="option-item" style="margin-top: 4px;">
+      <div class="option-header">
+        <div class="option-label-group">
+          <div class="option-icon">
+            <!-- Timer Icon -->
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/></svg>
+          </div>
+          <span>静音自动隐去</span>
+        </div>
+        <span class="option-value" id="dismissValue">5 秒</span>
+      </div>
+      <div class="range-grid" style="padding-left: 24px;">
+        <input id="dismissSlider" type="range" min="0" max="15" step="1" value="5" />
+        <output id="dismissReadout" for="dismissSlider">5s</output>
+      </div>
+      <p class="option-desc" id="dismissHint">静音 5 秒后自动隐去字幕，防止无声场景或切换视频时残留。</p>
+    </div>
+  </div>
+
+  <!-- Golden Accent Divider -->
+  <div class="golden-divider"></div>
+
+  <!-- Footer: Settings Collapsible Trigger -->
+  <div class="settings-footer-btn" id="settingsTrigger">
+    <div class="settings-footer-left">
+      <!-- Gear Settings Icon -->
+      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      <span>高级样式与设置</span>
+    </div>
+    <div class="settings-footer-right">
+      <!-- Chevron Down / Open Icon -->
+      <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+    </div>
+  </div>
+
+  <!-- Settings Expandable Drawer -->
+  <div class="settings-drawer" id="settingsDrawer">
+    <!-- Font Size -->
+    <div class="drawer-row">
+      <span class="drawer-label">字号大小</span>
+      <span class="drawer-value"><span id="fontSizeValue">20</span> px</span>
+    </div>
+    <input id="fontSize" type="range" min="16" max="40" step="1" value="20" />
+
+    <!-- Color -->
+    <div class="drawer-row" style="margin-top: 4px;">
+      <span class="drawer-label">文字颜色</span>
+      <div class="color-row">
+        <div class="color-presets">
+          <span class="color-dot" style="background:#ffffff;" data-color="#ffffff" title="纯白"></span>
+          <span class="color-dot" style="background:#fef08a;" data-color="#fef08a" title="淡黄"></span>
+          <span class="color-dot" style="background:#7dd3fc;" data-color="#7dd3fc" title="天蓝"></span>
+          <span class="color-dot" style="background:#86efac;" data-color="#86efac" title="浅绿"></span>
+          <span class="color-dot" style="background:#fca5a5;" data-color="#fca5a5" title="粉红"></span>
+        </div>
+        <input id="fontColor" type="color" value="#ffffff" title="自定义颜色" />
+      </div>
+    </div>
+
+    <!-- Cadence Gear Presets (NV 官方推荐档位制) -->
+    <div class="drawer-row" style="margin-top: 4px;">
+      <span class="drawer-label">刷新步长 (NV档位制)</span>
+      <span class="drawer-value"><span id="cadenceValue">160</span> ms</span>
+    </div>
+    <select id="cadenceSelect" class="lang-select-box" style="margin-top: 6px;">
+      <option value="80">80ms · 极限极速档 ([56, 0] 全双工对讲)</option>
+      <option value="160" selected>160ms · 实时同传黄金档 ([56, 1] 推荐默认)</option>
+      <option value="320">320ms · 平稳平衡档 ([56, 3] 兼顾低延迟与稳定性)</option>
+      <option value="560">560ms · 高抗噪档 ([56, 6] 嘈杂环境与快语速)</option>
+      <option value="1120">1120ms · 高精精翻档 ([56, 13] 离线/长句最佳准确率)</option>
+    </select>
+    <div class="range-grid" style="display: none;">
+      <input id="cadenceSlider" type="range" min="80" max="1120" step="80" value="160" />
+      <output id="cadenceReadout" for="cadenceSlider">160</output>
+    </div>
+    <p class="hint" id="cadenceHint">官方推荐 160ms 黄金档。字幕实时流式输出，兼顾超低延迟与精准度。</p>
+
+    <!-- External API -->
+    <div class="drawer-row" style="margin-top: 6px;">
+      <span class="drawer-label" style="font-size:12px; color:var(--text-muted);">使用外部大模型翻译</span>
+      <label class="m3-switch">
+        <input id="apiEnabled" type="checkbox" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div id="apiFields" hidden>
+      <input id="apiUrl" type="text" placeholder="接口地址: https://api.openai.com/v1" autocomplete="off" spellcheck="false" />
+      <input id="apiKey" type="password" placeholder="API Key: sk-..." autocomplete="off" />
+      <input id="apiModel" type="text" placeholder="模型名称: gpt-4o-mini / gemini-2.5" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <!-- Audio Only Diagnostic -->
+    <div class="drawer-row" style="margin-top: 4px;">
+      <span class="drawer-label" style="font-size:12px; color:var(--text-muted);">仅音频诊断模式</span>
+      <label class="m3-switch">
+        <input id="audioOnly" type="checkbox" />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Status Output -->
+    <div id="status">未开始</div>
+  </div>
+
+  <!-- Screen Reader & Compatibility Elements -->
+  <div class="sr-only">
+    <span id="mediaState">○</span>
+    <select id="chainSelect">
+      <option value="qwen3-in" selected>Qwen3-ASR 识别 + Index 影视翻译（推荐追剧；块输出·按标点分块）</option>
+      <option value="nv-in">Nemotron 3.5 ASR 识别 + Index 翻译（极速同传；块输出·按标点分块）</option>
+      <option value="gemma-e2e">音频直出 Gemma4 E2B（对白压在配乐下会崩；流式字幕）</option>
+    </select>
+    <span id="chainHint"></span>
+  </div>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>
