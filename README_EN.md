@@ -141,6 +141,14 @@ This project is built upon the incredible work of the global open-source communi
 * **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)**: For high-performance hardware-accelerated translucent GUI rendering.
 * **[PipeWire](https://pipewire.org/) & [SoundCard](https://github.com/bastibe/SoundCard)**: For modern low-latency Linux and cross-platform audio loopback support.
 
+### 🤖 AI Assistance & Tooling Credits
+
+Special gratitude to the following foundation models and agentic developer platforms for their profound collaboration throughout architecture design, low-level debugging, and automated quality assurance:
+
+* **[Google Gemini & Antigravity](https://deepmind.google/technologies/gemini/)** (Google DeepMind): For exceptional agentic pair-programming, driving dual-platform (Windows WASAPI / Linux PipeWire) audio alignment, self-healing fault-tolerance, and adversarial concurrency audits.
+* **[DeepSeek](https://www.deepseek.com/)**: For deep-reasoning support in dense dialogue cadence synchronization, algorithmic deduction, and prompt optimization.
+* **OpenCode & Modern Agent Tooling**: For providing an agile, highly automated local execution and verification environment.
+
 ---
 
 ## 📄 License
