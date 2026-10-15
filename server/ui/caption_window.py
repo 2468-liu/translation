@@ -676,9 +676,13 @@ class QtCaptionWindow(QWidget):
         self._broadcast_state()
 
     def _start_dismiss_timer(self) -> None:
-        """Start auto-hide timer with dynamic TTL based on character count: max(2.2s, min(4.5s, chars*180ms))."""
+        """Start auto-hide timer with dynamic TTL based on character count and human reading speed."""
         if self.line and self.dismiss_ms > 0:
-            effective_ttl = max(2200, min(4500, int(len(self.line) * 180)))
+            char_count = len(self.line.strip())
+            # Human reading baseline: 1200ms eye saccade + 180ms per character
+            human_read_ttl = 1200 + int(char_count * 180)
+            base_dismiss = int(self.dismiss_ms)
+            effective_ttl = max(base_dismiss, min(20000, human_read_ttl))
             self._dismiss_timer.start(effective_ttl)
 
     def _on_dismiss_timeout(self) -> None:

@@ -204,13 +204,13 @@ def whisper_tuning() -> Tuning:
 
 
 def cinema_tuning() -> Tuning:
-    """Limits tailored for cinema/movies: 500ms pre-roll, 100ms speech floor, 500ms merge window, 450ms natural pause endpointing, 250ms speech pad."""
-    min_silence = _env_int("TRANSLATION_CINEMA_MIN_SILENCE_MS", 450)
+    """Limits tailored for cinema/movies: 500ms pre-roll, 100ms speech floor, 500ms merge window, 360ms natural pause endpointing, 250ms speech pad."""
+    min_silence = _env_int("TRANSLATION_CINEMA_MIN_SILENCE_MS", 360)
     speech_pad = _env_int("TRANSLATION_CINEMA_SPEECH_PAD_MS", 250)
-    soft_silence = _env_int("TRANSLATION_CINEMA_SOFT_SILENCE_MS", 300)
+    soft_silence = _env_int("TRANSLATION_CINEMA_SOFT_SILENCE_MS", 260)
     soft_speech = _env_int("TRANSLATION_CINEMA_SOFT_SPEECH_MS", 3500)
     max_utterance = _env_int("TRANSLATION_CINEMA_MAX_UTTERANCE_MS", 8000)
-    early_end = _env_int("TRANSLATION_CINEMA_EARLY_END_MS", 200)
+    early_end = _env_int("TRANSLATION_CINEMA_EARLY_END_MS", 160)
     return Tuning(
         min_silence_ms=min_silence,
         max_utterance_ms=max_utterance,
@@ -504,7 +504,6 @@ class UtteranceSplitter:
                     and not self.early_partial
                     and t.early_end_ms <= self.silence_ms < t.min_silence_ms
                     and self.speech_ms >= t.min_speech_ms
-                    and self.since_partial_ms >= t.partial_interval_ms
                 ):
                     # The words stopped; only the closing silence is missing.
                     self.early_partial = True

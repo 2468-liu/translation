@@ -19,7 +19,7 @@ STATE_PORT = 8767
 
 # Subtitle hold and settle timing constants
 HOLD_ABS_MIN_MS = _env_int("TRANSLATION_HOLD_ABS_MIN_MS", 800)
-HOLD_ABS_MAX_MS = 4200
+HOLD_ABS_MAX_MS = _env_int("TRANSLATION_HOLD_ABS_MAX_MS", 12000)
 SETTLE_MS = _env_int("TRANSLATION_SETTLE_MS", 450)
 CLAUSE_MAX_MS = _env_int("TRANSLATION_CLAUSE_MAX_MS", 400)
 READABLE_RATIO = 0.65
@@ -115,7 +115,7 @@ def _reference_hold_ms(count: int) -> int:
         return 1000 + (count - 3) * 150
     if count <= 18:
         return 1750 + (count - 8) * 130
-    return 3050 + (count - 18) * 80
+    return 3050 + (count - 18) * 180
 
 
 def pace_scale(gaps: list[float]) -> float:
