@@ -531,7 +531,7 @@ class CaptionMenuBuilder:
 
         cfg = config.load_desktop_config()
         rolling = getattr(self.win, "rolling_two_lines", True)
-        punct = (backend == "qwen3")
+        punct = True
 
         cfg["asr_backend"] = backend
         cfg["partial_interval_ms"] = ms
@@ -762,18 +762,16 @@ class CaptionMenuBuilder:
         self.win.set_asr_backend_ui(backend)
         cfg = config.load_desktop_config()
         cfg["asr_backend"] = backend
+        cfg["block_by_punct"] = True
+        self.win.set_block_by_punct(True)
         if backend == "qwen3":
-            cfg["block_by_punct"] = True
             cfg["partial_interval_ms"] = 1000
-            self.win.set_block_by_punct(True)
             self.win.set_cadence_ui(1000)
         else:
-            cfg["block_by_punct"] = False
             cfg["partial_interval_ms"] = 160
-            self.win.set_block_by_punct(False)
             self.win.set_cadence_ui(160)
         config.save_desktop_config(cfg)
-        QTimer.singleShot(10, lambda: self.win.config_changed.emit({"asr_backend": backend}))
+        QTimer.singleShot(10, lambda: self.win.config_changed.emit({"asr_backend": backend, "block_by_punct": True}))
 
     def _on_bilingual_mode_changed(self, action: QAction) -> None:
         if not action:

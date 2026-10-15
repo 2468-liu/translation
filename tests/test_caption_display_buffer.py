@@ -65,6 +65,24 @@ class CaptionDisplayBufferTests(unittest.TestCase):
         self.assertEqual(buf.line1, "")
         self.assertEqual(buf.line2, "")
         self.assertEqual(buf.last_update_ts, 0.0)
+        self.assertEqual(buf.line1_update_ts, 0.0)
+
+    def test_line1_physiological_dwell_retention(self):
+        buf = CaptionDisplayBuffer(max_inline_chars=20, min_dwell_sec=0.1)
+        buf.push_new_sentence("第一句长句子测试留存。")
+        time.sleep(0.15)
+        buf.push_new_sentence("第二句开始。")
+
+        # Line 1 should be retained under physiological TTL (min 6.0s)
+        rendered = buf.render()
+        self.assertIn("第一句长句子测试留存。", rendered)
+        self.assertIn("第二句开始。", rendered)
+
+        # Force line1_update_ts past TTL
+        buf.line1_update_ts = time.monotonic() - 10.0
+        expired_render = buf.render()
+        self.assertEqual(expired_render, "第二句开始。")
+        self.assertEqual(buf.line1, "")
 
 
 if __name__ == "__main__":

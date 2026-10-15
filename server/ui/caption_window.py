@@ -161,6 +161,10 @@ class QtCaptionWindow(QWidget):
         self._dismiss_timer.setSingleShot(True)
         self._dismiss_timer.timeout.connect(self._on_dismiss_timeout)
 
+        self._segment_safety_timer = QTimer(self)
+        self._segment_safety_timer.setSingleShot(True)
+        self._segment_safety_timer.timeout.connect(self._on_dismiss_timeout)
+
         self._gaps: list[float] = []
         self._last_segment_at = 0.0
         self._next_utterance_at = 0.0
@@ -179,8 +183,7 @@ class QtCaptionWindow(QWidget):
             if "block_by_punct" in _cfg:
                 self._block_by_punct = bool(_cfg["block_by_punct"])
             else:
-                _backend = _cfg.get("asr_backend", "qwen3")
-                self._block_by_punct = True if _backend == "qwen3" else bool(BLOCK_OUTPUT)
+                self._block_by_punct = bool(BLOCK_OUTPUT)
         if rolling_two_lines is not None:
             self.rolling_two_lines = bool(rolling_two_lines)
         else:
@@ -679,21 +682,30 @@ class QtCaptionWindow(QWidget):
         """Start auto-hide timer with dynamic TTL based on character count and human reading speed."""
         if self.line and self.dismiss_ms > 0:
             char_count = len(self.line.strip())
-            # Human reading baseline: 1200ms eye saccade + 180ms per character
-            human_read_ttl = 1200 + int(char_count * 180)
+            # Human reading baseline: 1500ms eye saccade + 220ms per character
+            human_read_ttl = 1500 + int(char_count * 220)
             base_dismiss = int(self.dismiss_ms)
-            effective_ttl = max(base_dismiss, min(20000, human_read_ttl))
+            effective_ttl = max(base_dismiss, min(25000, human_read_ttl))
             self._dismiss_timer.start(effective_ttl)
 
     def _on_dismiss_timeout(self) -> None:
         self._dismiss_timer.stop()
-        if self._pending:
-            return
+        self._segment_safety_timer.stop()
+        self._pending = ""
+        self._clause_pending = ""
 
         def _finish_dismiss():
             if hasattr(self, "rolling_buffer") and self.rolling_buffer:
                 self.rolling_buffer.clear()
+            if hasattr(self, "display_buffer") and self.display_buffer:
+                self.display_buffer.reset()
+            if hasattr(self, "prefix_freezer") and self.prefix_freezer:
+                self.prefix_freezer.clear()
+            self._pending = ""
+            self._clause_pending = ""
             self.source_line = ""
+            self.stable_prefix = ""
+            self.hypothesis_suffix = ""
             now = time.monotonic()
             if self._line_since and self.line:
                 gap = now - self._line_since
@@ -870,6 +882,7 @@ class QtCaptionWindow(QWidget):
         self._pending = ""
         self._drawn_text = ""
         self._dismiss_timer.stop()
+        self._segment_safety_timer.stop()
         self._hold_timer.stop()
         self._clause_timer.stop()
         super().hide()
@@ -938,6 +951,7 @@ class QtCaptionWindow(QWidget):
         self._clause_pending = ""
         self._drawn_text = ""
         self._dismiss_timer.stop()
+        self._segment_safety_timer.stop()
         self._hold_timer.stop()
         self._clause_timer.stop()
         if self.text_only:
@@ -952,6 +966,10 @@ class QtCaptionWindow(QWidget):
         self.fade_animator.wake_immediate()
         now = time.monotonic()
         self._dismiss_timer.stop()
+        if self.line and self.dismiss_ms > 0:
+            char_count = len(self.line.strip())
+            safety_ttl = max(int(self.dismiss_ms), 1500 + int(char_count * 220), 8000)
+            self._segment_safety_timer.start(safety_ttl)
         if hasattr(self, "prefix_freezer") and self.prefix_freezer:
             self.prefix_freezer.clear()
         self.stable_prefix = ""
@@ -1171,6 +1189,8 @@ class QtCaptionWindow(QWidget):
         is_completed_line = bool(self.line and self.line[-1] in ("。", "！", "？", ".", "!", "?", "…"))
         is_settled = (time.monotonic() - getattr(self, "_line_since", 0.0)) > 0.8
         if self.line and not is_final and not is_completed_line and not is_settled and self.line.startswith(cleaned):
+            if self.line and self.dismiss_ms > 0 and not self._dismiss_timer.isActive():
+                self._start_dismiss_timer()
             return "drop"
 
         # Monotonic Prefix Freezing (Google Live Caption Architecture)
@@ -1184,9 +1204,14 @@ class QtCaptionWindow(QWidget):
             if action != "drop":
                 self.line = composite
                 self._apply_line(self.line, action)
+            else:
+                if self.line and self.dismiss_ms > 0 and not self._dismiss_timer.isActive():
+                    self._start_dismiss_timer()
             return action
 
         if display_text == self.line:
+            if self.line and self.dismiss_ms > 0 and not self._dismiss_timer.isActive():
+                self._start_dismiss_timer()
             return "drop"
 
         prev_line = self.line
@@ -1315,6 +1340,7 @@ class QtCaptionWindow(QWidget):
 
     def _apply_line(self, text: str, action: str = "") -> None:
         self._dismiss_timer.stop()
+        self._segment_safety_timer.stop()
         if action:
             self._trace_action = action
         self._prev_chars = len(self.line)
@@ -1345,6 +1371,7 @@ class QtCaptionWindow(QWidget):
         avoiding jarring redraws when final frame only adds punctuation or tail fixes.
         """
         self._dismiss_timer.stop()
+        self._segment_safety_timer.stop()
         if action:
             self._trace_action = action
         self._prev_chars = len(self.line)
