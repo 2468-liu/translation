@@ -70,8 +70,10 @@ class _NemoRecognitionOptions(ctypes.Structure):
 def _resolve_nemotron_model_path() -> Path:
     candidates = [
         config.MODELS_DIR / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        config.ROOT / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
         Path("D:/TranslationDesktop/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
         Path("D:/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
+        Path.home() / ".cache" / "translation" / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
     ]
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
@@ -86,22 +88,47 @@ def _resolve_nemotron_model_path() -> Path:
 
 
 def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
-    bin_candidates = [
+    is_win = (sys.platform == "win32")
+    lib_filename = "nemo_speech_asr_c.dll" if is_win else "libnemo_speech_asr_c.so"
+
+    bin_candidates: list[Path] = [
+        # Windows candidates
         config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin",
+        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin",
         config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-windows-x86_64-cpu" / "bin",
+        # Linux candidates (Vulkan, CUDA, CPU - check both lib and bin)
+        config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib",
+        config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "bin",
+        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "lib",
+        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "bin",
+        config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "lib",
+        config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "bin",
+        # Generic tools/nemo-speech paths
+        config.ROOT / "tools" / "nemo-speech" / "lib",
+        config.ROOT / "tools" / "nemo-speech" / "bin",
+        config.ROOT / "tools" / "nemo-speech",
+        # Installed directories
         Path("D:/TranslationDesktop/tools/nemo-speech-vulkan/nemo-speech-0.2.0-windows-x86_64-vulkan/bin"),
         Path("D:/TranslationDesktop/tools/nemo-speech-cpu/nemo-speech-0.2.0-windows-x86_64-cpu/bin"),
+        Path("/opt/translation/tools/nemo-speech/lib"),
+        Path("/usr/local/lib"),
+        Path("/usr/lib"),
     ]
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        bin_candidates.insert(0, Path(meipass) / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
-        bin_candidates.insert(1, Path(meipass) / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-windows-x86_64-cpu" / "bin")
+        mp = Path(meipass)
+        bin_candidates.insert(0, mp / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
+        bin_candidates.insert(1, mp / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib")
+        bin_candidates.insert(2, mp / "tools" / "nemo-speech" / "lib")
+        bin_candidates.insert(3, mp / "tools" / "nemo-speech" / "bin")
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
         bin_candidates.insert(0, app_dir / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
-        bin_candidates.insert(1, app_dir / "_internal" / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
+        bin_candidates.insert(1, app_dir / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib")
+        bin_candidates.insert(2, app_dir / "_internal" / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
+        bin_candidates.insert(3, app_dir / "tools" / "nemo-speech" / "lib")
     for bdir in bin_candidates:
-        dll = bdir / "nemo_speech_asr_c.dll"
+        dll = bdir / lib_filename
         if dll.exists():
             if hasattr(os, "add_dll_directory"):
                 try:
@@ -110,9 +137,39 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
                     pass
             lib = ctypes.CDLL(str(dll))
             return lib, str(bdir)
+
+    # Fallback to system dynamic library search on POSIX/Linux
+    if not is_win:
+        try:
+            lib = ctypes.CDLL(lib_filename)
+            return lib, ""
+        except Exception:
+            pass
+
     raise FileNotFoundError(
-        "nemo_speech_asr_c.dll not found in tools/nemo-speech-vulkan or tools/nemo-speech-cpu"
+        f"{lib_filename} not found in tools/nemo-speech-* or system library paths"
     )
+
+
+def check_nemotron_status() -> tuple[bool, str]:
+    """Check whether Nemotron model and dynamic library are available.
+
+    Returns:
+        tuple[bool, str]: (is_ready, message_or_reason)
+    """
+    missing = []
+    try:
+        _resolve_nemotron_model_path()
+    except Exception:
+        missing.append("模型权重 (nemotron-3.5-asr-streaming-0.6b.q8_0.gguf)")
+    try:
+        _resolve_nemo_speech_dll()
+    except Exception:
+        lib_name = "nemo_speech_asr_c.dll" if sys.platform == "win32" else "libnemo_speech_asr_c.so"
+        missing.append(f"推理引擎动态库 ({lib_name})")
+    if missing:
+        return False, "缺少组件: " + " 及 ".join(missing)
+    return True, "就绪"
 
 
 def _detect_best_vulkan_gpu() -> int:
@@ -129,7 +186,14 @@ def _detect_best_vulkan_gpu() -> int:
             pass
 
     try:
-        vk = ctypes.CDLL("vulkan-1.dll")
+        vk_name = "vulkan-1.dll" if sys.platform == "win32" else "libvulkan.so.1"
+        try:
+            vk = ctypes.CDLL(vk_name)
+        except OSError:
+            if sys.platform != "win32":
+                vk = ctypes.CDLL("libvulkan.so")
+            else:
+                raise
 
         class _VkAppInfo(ctypes.Structure):
             _fields_ = [

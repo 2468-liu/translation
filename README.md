@@ -56,9 +56,16 @@
 * **Windows**：推荐安装 [llama.cpp Official Releases](https://github.com/ggml-org/llama.cpp/releases) (build 11630+，如 `llama-bxxxx-bin-win-cuda-cu12.4-x64.zip`)，将其解压后将 `llama-server.exe` 放入系统 PATH 环境变量或 `tools/llama-server/` 目录。
 * **Linux (Ubuntu 24.04)**：终端运行 `llama-server --version`；若未安装，可直接通过 `llama.cpp` Releases 下载对应 Linux 预编译包或安装 LM Studio。
 
-### 3. 可选端侧极速引擎 (NVIDIA Nemotron 3.5 - 仅 Windows)
-* **Nemotron 权重**：`nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`，存放于 `models/NV3.5-ASR-0.6B/`。
-* **Vulkan C 库**：`nemo_speech_asr_c.dll`，存放于 `tools/nemo-speech-vulkan/.../bin`。
+### 3. 端侧极速流式引擎 (NVIDIA Nemotron 3.5 - Windows & Linux)
+* **跨平台原生支持**：支持 Windows (x64) 与 Linux (Ubuntu 24.04+ x86_64)。
+* **一键自动拉取向导**：
+  * **图形界面自适应**：在字幕右键菜单中直接切换为【端侧极速流式 NV (Nemotron)】。若本地尚未配置，系统将弹出交互式对话框提示；点击【是】即可后台自动拉取官方资源；若取消则安全保持 Qwen3-ASR 正常运行。
+  * **一键脚本命令行部署**：
+    * **首选（官方原生引擎直连）**：`python scripts/setup_nemotron.py`（Linux: `./scripts/setup_nemotron.sh`，Windows: `.\scripts\setup_nemotron.ps1`），自动通过 HuggingFace/hf-mirror 下载模型 GGUF 并从 NVIDIA GitHub Releases 拉取预编译库（`nemo_speech_asr_c.dll` / `libnemo_speech_asr_c.so`）。
+    * **次选（官方 Docker 容器）**：带 `--docker` 参数执行，自动拉取并配置 `nvcr.io/nvidia/nemo:latest` 容器化后端。
+* **组件路径规划**：
+  * **模型权重**：`nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`，存放于 `models/NV3.5-ASR-0.6B/`。
+  * **动态链接库**：Windows 存放于 `tools/nemo-speech-vulkan/.../bin/nemo_speech_asr_c.dll`；Linux 存放于 `tools/nemo-speech-vulkan/.../lib/libnemo_speech_asr_c.so` 或系统动态库路径。
 
 #### 官方推荐分块档位 (Streaming Chunk Size Matrix)
 

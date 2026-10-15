@@ -6,8 +6,11 @@ audio source process filtering, and settings callbacks from the main window.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
@@ -125,6 +128,16 @@ NV_CADENCES: list[tuple[str, int]] = [
 ]
 
 
+def _is_testing_env() -> bool:
+    if os.environ.get("TRANSLATION_FORCE_INTERACTIVE") == "1":
+        return False
+    return bool(
+        os.environ.get("TRANSLATION_TEST_MODE")
+        or os.environ.get("PYTEST_CURRENT_TEST")
+        or "unittest" in sys.modules
+    )
+
+
 class CaptionMenuBuilder:
     """Builds and wires context menus and callbacks for QtCaptionWindow."""
 
@@ -179,18 +192,12 @@ class CaptionMenuBuilder:
             self.win.engine_cadence_group.addAction(act)
             self.win._qwen_actions.append(act)
 
-        is_win = (sys.platform == "win32")
-        nv_title = "⚡ 端侧极速流式 NV (Nemotron)" if is_win else "⚡ 端侧极速流式 NV (Nemotron - 仅限 Windows)"
-        nv_menu = menu.addMenu(nv_title)
-        if not is_win:
-            nv_menu.setEnabled(False)
+        nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
         self.win._nv_actions = []
         for label, ms in NV_CADENCES:
             act = nv_menu.addAction(label)
             act.setCheckable(True)
             act.setData({"backend": "nemotron", "ms": ms})
-            if not is_win:
-                act.setEnabled(False)
             self.win.engine_cadence_group.addAction(act)
             self.win._nv_actions.append(act)
 
@@ -351,18 +358,12 @@ class CaptionMenuBuilder:
             self.win.tray_engine_cadence_group.addAction(act)
             self.win._tray_qwen_actions.append(act)
 
-        is_win = (sys.platform == "win32")
-        tray_nv_title = "⚡ 端侧极速流式 NV (Nemotron)" if is_win else "⚡ 端侧极速流式 NV (Nemotron - 仅限 Windows)"
-        tray_nv_menu = menu.addMenu(tray_nv_title)
-        if not is_win:
-            tray_nv_menu.setEnabled(False)
+        tray_nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
         self.win._tray_nv_actions = []
         for label, ms in NV_CADENCES:
             act = tray_nv_menu.addAction(label)
             act.setCheckable(True)
             act.setData({"backend": "nemotron", "ms": ms})
-            if not is_win:
-                act.setEnabled(False)
             self.win.tray_engine_cadence_group.addAction(act)
             self.win._tray_nv_actions.append(act)
 
@@ -476,15 +477,57 @@ class CaptionMenuBuilder:
             return "stream"
         return "movie"
 
-    def apply_engine_cadence(self, backend: str, ms: int) -> None:
-        if backend == "nemotron" and sys.platform != "win32":
-            QMessageBox.warning(
-                self.win,
-                "引擎不支持",
-                "英伟达 Nemotron 极速端侧引擎目前仅支持 Windows 平台（需 Vulkan C 动态库）。\n\n当前 Linux 系统已自动保持使用 Qwen3-ASR 通用模型。",
+    def _launch_nemotron_download(self) -> None:
+        """Launch background one-click provisioning script and toast."""
+        script_py = config.ROOT / "scripts" / "setup_nemotron.py"
+        try:
+            cmd = [sys.executable, str(script_py), "--auto"]
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            subprocess.Popen(
+                cmd,
+                cwd=str(config.ROOT),
+                creationflags=creation_flags,
             )
-            self._sync_engine_cadence_actions()
-            return
+            self.win.command_received.emit(
+                "toast", "🚀 已启动 Nemotron 极速引擎一键下载，正在后台拉取官方资源...", time.time(), time.time(), False
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self.win,
+                "启动下载失败",
+                f"启动自动下载脚本失败：{e}\n\n您也可以在终端手动运行：\npython scripts/setup_nemotron.py",
+            )
+
+    def apply_engine_cadence(self, backend: str, ms: int) -> None:
+        if backend == "nemotron":
+            try:
+                from server.asr.nemotron import check_nemotron_status
+                is_ready, reason = check_nemotron_status()
+            except Exception as e:
+                is_ready, reason = False, str(e)
+
+            if not is_ready:
+                if not _is_testing_env():
+                    reply = QMessageBox.question(
+                        self.win,
+                        "未检测到 Nemotron 引擎组件",
+                        f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
+                        "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
+                        "【是】：后台启动一键脚本拉取并配置官方引擎\n"
+                        "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes,
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        self._launch_nemotron_download()
+                    else:
+                        self.win.command_received.emit(
+                            "toast", "已取消切换，保持使用 Qwen3-ASR 通用模型", time.time(), time.time(), False
+                        )
+                self._sync_engine_cadence_actions()
+                return
 
         cfg = config.load_desktop_config()
         rolling = getattr(self.win, "rolling_two_lines", True)
