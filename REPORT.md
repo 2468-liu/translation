@@ -6008,4 +6008,35 @@ GPU 稳态功耗 (Steady GPU Power)          | 10.74 W                          
    - 默认选用 Silero：保障看MV、听歌、日常杂音环境下的零误触与极低 CPU 负载；
    - 用户可选 FireRed：适合弱音对白电影、低声音游戏直播等特定场景，一键拉满弱音捕捉召回率。
 
+---
+
+### 60.8 测试 H：llama.exe / llama-server 全局 SSOT 内存硬约束与僵尸槽位治理实测
+
+#### 1. 问题背景与内存膨胀机理
+- **8GB 默认 Prompt 缓存膨胀**：`llama.exe` 与 `llama-server` 默认将 `--cache-ram` 设为 `8192 MiB` (8 GB)。在连续流式请求中，llama 会持续在 Host RAM 中保留多轮上下文 KV Cache 与 prompt 命中缓存，导致进程占用持续飙升，直到显卡/内存触顶才被动触发整理；
+- **并发槽位检查点克隆 (`--ctx-checkpoints`)**：在多 slot（如 Qwen3-ASR 4 slots、Index-Translate 3 slots）并发调度下，默认的检查点克隆机制会成倍复制 KV context 缓存，造成内存乘数级膨胀；
+- **僵尸槽位残留 (`--cache-idle-slots`)**：长连断开或短请求结束后，llama 默认依然在槽位中保持空闲上下文缓存（便于下一次极速命中），若无主动清理机制，该部分缓存便成为永久常驻的“僵尸内存”。
+
+#### 2. SSOT 全局架构改造与执行层隔离
+- **中央唯一事实源 (`server/serve_config.py`)**：
+  ```python
+  # 内存硬约束 SSOT
+  CACHE_RAM_MB = 512       # 严控内存缓存上限为 512 MiB（杜绝默认 8GB 膨胀）
+  CTX_CHECKPOINTS = 1      # 严格限制并发检查点为 1，杜绝槽位克隆翻倍
+  NO_CACHE_IDLE_SLOTS = True # --no-cache-idle-slots: 断连即释放，杜绝僵尸槽位
+  ```
+- **二进制指令格式严格隔离**：
+  - 主力引擎 `llama.exe`：严格注入 `serve` 子命令与完整内存参数（`llama.exe serve -m ... --cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots`）；
+  - 备选引擎 `llama-server.exe`：不带 `serve` 子命令，直接接收参数；
+  - 覆盖全部启动链路：Python 桌面应用 (`desktop_app.py` 经由 `get_qwen_server_args` / `get_mt_server_args`)、Windows 启动脚本 (`scripts/start.ps1`, `scripts/start_llama_backends.ps1`)。
+
+#### 3. 验证与实测结果
+1. **真实二进制执行测试**：
+   - Windows 官方 `llama.exe` 配合 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 启动端口探测，进程正常进入 `RUNNING` 监听状态，无参数语法报错；
+   - 备选 `llama-server.exe` 支持 `-cram`, `-ctxcp`, `--no-cache-idle-slots` 别名/标准名，同样无缝兼容；
+2. **自动化测试防护**：
+   - 新增 `tests/test_serve_config_memory.py`，完整覆盖常量定义、参数生成、`llama.exe` (含 `serve`) 与 `llama-server.exe` (不含 `serve`) 的参数结构断言；
+   - 全量回归测试：`365 passed in 40.21s` (100% 绿色通过)。
+
+
 
