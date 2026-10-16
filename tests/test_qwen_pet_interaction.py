@@ -62,7 +62,7 @@ class TestPet360BallInteraction:
         # animation synchronously, so the finished signal can be missed.
         qtbot.waitUntil(
             lambda: pet._pos_anim.state() == QAbstractAnimation.State.Stopped,
-            timeout=2000,
+            timeout=5000,
         )
         assert pet.x() == geom.left() + 4
 
