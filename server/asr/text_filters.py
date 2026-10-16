@@ -254,6 +254,28 @@ _NEMO_BCP47_TO_ISO = {
 }
 
 
+def is_nemo_supported(lang: str | None) -> bool:
+    """Whether the given language code is supported by NVIDIA Nemotron 3.5 ASR.
+
+    Nemotron supports 32 locales across 28 standard languages. Dialects and regional
+    languages like Cantonese (yue), Traditional Chinese (zh-tw), Tibetan (bo),
+    Uyghur (ug), Thai (th), Indonesian (id), etc. are outside Nemotron's vocabulary
+    and must be handled by Qwen3-ASR.
+    """
+    if not lang or lang.strip().lower() in ("auto", "none", ""):
+        return True
+    c = lang.strip().lower()
+    # Explicit exclusions for dialects / regionals that must not fallback to Mandarin/zh-CN
+    if c in ("yue", "cantonese", "zh-tw", "zh-hk", "traditional"):
+        return False
+    if c in _NEMO_LANG_MAP:
+        return True
+    for bcp in _NEMO_LANG_MAP.values():
+        if bcp.lower() == c:
+            return True
+    return False
+
+
 def to_nemo_bcp47(lang: str | None) -> str | None:
     if not lang or lang.strip().lower() in ("auto", "none", ""):
         return None
@@ -263,7 +285,7 @@ def to_nemo_bcp47(lang: str | None) -> str | None:
     for bcp in _NEMO_LANG_MAP.values():
         if bcp.lower() == c:
             return bcp
-    # Fallback by primary language prefix (e.g. "zh-tw" -> "zh", "es-mx" -> "es")
+    # Fallback by primary language prefix (e.g. "es-mx" -> "es", "zh-tw" -> "zh")
     base = c.split("-")[0].split("_")[0]
     if base in _NEMO_LANG_MAP:
         return _NEMO_LANG_MAP[base]
