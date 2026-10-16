@@ -203,6 +203,21 @@ class CaptionMenuBuilder:
 
         self.win.engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
+        # 0.2 VAD Engine Selector (Silero vs FireRedVAD)
+        vad_menu = menu.addMenu("🎙️ 语音检测引擎 (VAD)")
+        self.win.vad_engine_group = QActionGroup(self.win)
+        self.win._vad_silero_act = vad_menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
+        self.win._vad_silero_act.setCheckable(True)
+        self.win._vad_silero_act.setData("silero")
+        self.win.vad_engine_group.addAction(self.win._vad_silero_act)
+
+        self.win._vad_firered_act = vad_menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
+        self.win._vad_firered_act.setCheckable(True)
+        self.win._vad_firered_act.setData("firered")
+        self.win.vad_engine_group.addAction(self.win._vad_firered_act)
+
+        self.win.vad_engine_group.triggered.connect(self._on_vad_engine_triggered)
+
         # Backward compatibility aliases for scene presets
         self.win._scene_movie_act = self.win._qwen_actions[0]   # 1000ms
         self.win._scene_speech_act = self.win._qwen_actions[2]  # 500ms
@@ -369,6 +384,21 @@ class CaptionMenuBuilder:
 
         self.win.tray_engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
+        # 1.1 VAD Engine in Tray
+        tray_vad_menu = menu.addMenu("🎙️ 语音检测引擎 (VAD)")
+        self.win.tray_vad_group = QActionGroup(self.win)
+        self.win._tray_vad_silero = tray_vad_menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
+        self.win._tray_vad_silero.setCheckable(True)
+        self.win._tray_vad_silero.setData("silero")
+        self.win.tray_vad_group.addAction(self.win._tray_vad_silero)
+
+        self.win._tray_vad_firered = tray_vad_menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
+        self.win._tray_vad_firered.setCheckable(True)
+        self.win._tray_vad_firered.setData("firered")
+        self.win.tray_vad_group.addAction(self.win._tray_vad_firered)
+
+        self.win.tray_vad_group.triggered.connect(self._on_vad_engine_triggered)
+
         # Backward compatibility aliases for tray scene presets
         self.win._tray_scene_movie = self.win._tray_qwen_actions[0]   # 1000ms
         self.win._tray_scene_speech = self.win._tray_qwen_actions[2]  # 500ms
@@ -415,6 +445,7 @@ class CaptionMenuBuilder:
 
         self._sync_preset_actions(self.get_current_preset())
         self._sync_lang_actions()
+        self._sync_vad_actions()
         if getattr(self.win, "_toggle_capture_act", None):
             is_cap = getattr(self.win, "_is_capturing", True)
             self.win._toggle_capture_act.setText("⏸ 暂停识别与翻译" if is_cap else "▶ 开启识别与翻译")
@@ -450,6 +481,7 @@ class CaptionMenuBuilder:
             return
         self._sync_preset_actions(self.get_current_preset())
         self._sync_lang_actions()
+        self._sync_vad_actions()
         if hasattr(self.win, "_tray_toggle_visibility_act") and self.win._tray_toggle_visibility_act:
             is_vis = self.win.isVisible() and self.win.visible
             self.win._tray_toggle_visibility_act.setText("隐藏字幕" if is_vis else "显示字幕")
@@ -625,6 +657,35 @@ class CaptionMenuBuilder:
                 for act in grp.actions():
                     act.setChecked(str(act.data()) == tgt)
                 grp.blockSignals(False)
+
+    def _sync_vad_actions(self) -> None:
+        choice = config.get_vad_backend()
+        for grp in (getattr(self.win, "vad_engine_group", None), getattr(self.win, "tray_vad_group", None)):
+            if not grp:
+                continue
+            grp.blockSignals(True)
+            for act in grp.actions():
+                act.setChecked(str(act.data()) == choice)
+            grp.blockSignals(False)
+
+    def _on_vad_engine_triggered(self, action: QAction) -> None:
+        if not action:
+            return
+        self.safe_close_menus()
+        choice = str(action.data())
+        config.set_vad_backend(choice)
+        from .. import vad
+        vad.reload_vad(choice)
+        self._sync_vad_actions()
+        label = "FireRedVAD" if choice == "firered" else "Silero VAD"
+        if hasattr(self.win, "command_received"):
+            self.win.command_received.emit(
+                "toast", f"已切换语音检测引擎为：{label}", time.time(), time.time(), False
+            )
+        if _is_testing_env():
+            self.win.config_changed.emit({"vad_backend": choice})
+        else:
+            QTimer.singleShot(10, lambda: self.win.config_changed.emit({"vad_backend": choice}))
 
     def _toggle_bilingual(self, checked: bool) -> None:
         self.safe_close_menus()
