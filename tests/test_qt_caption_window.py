@@ -480,8 +480,9 @@ class QtCaptionWindowTests(unittest.TestCase):
 
         # Verify core top-level actions
         self.assertTrue(any("识别与翻译" in t for t in top_action_texts), "Missing capture toggle")
-        self.assertTrue(any("ASR (Qwen3)" in t for t in top_action_texts), "Missing Qwen3 ASR engine menu")
-        self.assertTrue(any("NV (Nemotron)" in t for t in top_action_texts), "Missing Nemotron NV engine menu")
+        self.assertTrue(any("电影追剧" in t for t in top_action_texts), "Missing movie Qwen3 action")
+        self.assertTrue(any("演讲对话" in t for t in top_action_texts), "Missing speech Qwen3 action")
+        self.assertTrue(any("极速同传" in t for t in top_action_texts), "Missing stream Nemotron action")
         self.assertTrue(any("双行滚动字幕" in t for t in top_action_texts), "Missing rolling two lines direct toggle")
         self.assertTrue(any("双语同显模式" in t for t in top_action_texts), "Missing bilingual direct toggle")
         self.assertTrue(any("音频源" in t for t in top_action_texts), "Missing audio source menu")
@@ -495,22 +496,19 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertTrue(any("查看对话历史记录" in t for t in top_action_texts), "Missing peek history")
         self.assertTrue(any("退出程序" in t for t in top_action_texts), "Missing exit app")
 
-        # Verify Qwen3 & NV engine submenus have ms cadence choices
-        qwen_act = next(a for a in ctx_menu.actions() if "ASR (Qwen3)" in a.text())
-        self.assertIsNotNone(qwen_act.menu())
-        qwen_sub_texts = [a.text() for a in qwen_act.menu().actions() if a.text()]
-        self.assertTrue(any("1000ms" in t for t in qwen_sub_texts))
-        self.assertTrue(any("750ms" in t for t in qwen_sub_texts))
-        self.assertTrue(any("500ms" in t for t in qwen_sub_texts))
+        # Verify Qwen3 & NV engine choices exist across direct actions and advanced cadence submenu
+        qwen_ms = [a.data().get("ms") for a in self.window._qwen_actions]
+        self.assertIn(1000, qwen_ms)
+        self.assertIn(750, qwen_ms)
+        self.assertIn(500, qwen_ms)
+        self.assertIn(250, qwen_ms)
 
-        nv_act = next(a for a in ctx_menu.actions() if "NV (Nemotron)" in a.text())
-        self.assertIsNotNone(nv_act.menu())
-        nv_sub_texts = [a.text() for a in nv_act.menu().actions() if a.text()]
-        self.assertTrue(any("80ms" in t for t in nv_sub_texts))
-        self.assertTrue(any("160ms" in t for t in nv_sub_texts))
-        self.assertTrue(any("320ms" in t for t in nv_sub_texts))
-        self.assertTrue(any("560ms" in t for t in nv_sub_texts))
-        self.assertTrue(any("1120ms" in t for t in nv_sub_texts))
+        nv_ms = [a.data().get("ms") for a in self.window._nv_actions]
+        self.assertIn(80, nv_ms)
+        self.assertIn(160, nv_ms)
+        self.assertIn(320, nv_ms)
+        self.assertIn(560, nv_ms)
+        self.assertIn(1120, nv_ms)
 
         # Verify appearance sub-menu items (only visual geometry, font, color; no punct or nested bilingual remnants)
         style_act = next(a for a in ctx_menu.actions() if "字幕外观设置" in a.text())
@@ -689,6 +687,39 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertEqual(self.window.display_buffer.line2, "")
         self.assertEqual(self.window.rolling_buffer.anchor_line, "")
         self.assertEqual(self.window.rolling_buffer.active_line, "")
+
+    def test_clean_labels_no_verbose_brackets_or_hardcoded_languages(self):
+        """Verify rolling two lines and bilingual actions have clean labels without tack-on brackets."""
+        rolling_act = getattr(self.window, "_rolling_two_lines_act", None)
+        bilingual_act = getattr(self.window, "_bilingual_act", None)
+        self.assertIsNotNone(rolling_act)
+        self.assertIsNotNone(bilingual_act)
+
+        # No (Google同款) or (中英对照) or trailing explanatory brackets
+        self.assertEqual(rolling_act.text().strip(), "📜 双行滚动字幕")
+        self.assertEqual(bilingual_act.text().strip(), "🔤 双语同显模式")
+        self.assertNotIn("中英对照", bilingual_act.text())
+        self.assertNotIn("Google", rolling_act.text())
+
+    def test_bilingual_and_rolling_two_lines_mutual_exclusion(self):
+        """Toggling bilingual mode must disable rolling two lines and vice-versa."""
+        menu_builder = self.window.menu_manager
+
+        # 1. Turn on rolling two lines
+        self.window.set_rolling_two_lines(True)
+        self.assertTrue(self.window.rolling_two_lines)
+
+        # 2. Turn on bilingual mode -> rolling two lines MUST be forced False
+        menu_builder._toggle_bilingual(True)
+        self.assertEqual(self.window.bilingual_mode, "bilingual")
+        self.assertFalse(self.window.rolling_two_lines)
+        self.assertFalse(self.window._rolling_two_lines_act.isChecked())
+
+        # 3. Turning rolling two lines back on -> bilingual mode MUST be switched to trans_only
+        self.window.set_rolling_two_lines(True)
+        self.assertTrue(self.window.rolling_two_lines)
+        self.assertEqual(self.window.bilingual_mode, "trans_only")
+        self.assertFalse(self.window._bilingual_act.isChecked())
 
 
 if __name__ == "__main__":

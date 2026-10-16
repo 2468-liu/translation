@@ -172,6 +172,8 @@ class CaptionDisplayBuffer:
         self.last_update_ts = 0.0
         self.line1_update_ts = 0.0
 
+    clear = reset
+
     def push_new_sentence(self, text: str) -> str:
         text = (text or "").strip()
         if not text:

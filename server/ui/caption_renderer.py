@@ -238,12 +238,16 @@ def update_window_layout_and_geometry(window: Any, text: str) -> list[str]:
     metrics = QFontMetrics(font)
     wrap_w = max(240, window.width() - 48)
 
-    display_lines = wrap_caption_typography(body, wrap_w, metrics.horizontalAdvance, max_lines=2)
+    # In bilingual mode, translation text is strictly bounded to 1 line to prevent clipping
+    max_trans_lines = 1 if mode == "bilingual" else 2
+    display_lines = wrap_caption_typography(body, wrap_w, metrics.horizontalAdvance, max_lines=max_trans_lines)
     line_h = metrics.lineSpacing()
-    lines = len(display_lines)
 
-    if mode == "bilingual" and getattr(window, "source_line", "") and lines == 1:
+    has_source = (mode == "bilingual" and bool(getattr(window, "source_line", "")))
+    if has_source:
         lines = 2
+    else:
+        lines = len(display_lines) if display_lines else 1
 
     top_pad = 28 if (not window.text_only and getattr(window, "_is_hovered", False)) else 18
     bottom_pad = 16
@@ -304,11 +308,17 @@ def render_caption_overlay(window: Any, painter: QPainter) -> None:
     font = get_caption_font(window.font_px, QFont.Weight.Medium)
     metrics = QFontMetrics(font)
     wrap_w = max(240, rect.width() - 48)
-    lines = wrap_caption_typography(body, wrap_w, metrics.horizontalAdvance, max_lines=2)
+
+    # In bilingual mode, translation line is strictly bounded to 1 line
+    max_trans_lines = 1 if mode == "bilingual" else 2
+    lines = wrap_caption_typography(body, wrap_w, metrics.horizontalAdvance, max_lines=max_trans_lines)
 
     line_h = metrics.lineSpacing()
+    has_source = (mode == "bilingual" and bool(getattr(window, "source_line", "")))
+    total_lines = 2 if has_source else len(lines)
+
     baselines = compute_bottom_pinned_baselines(
-        line_count=len(lines),
+        line_count=total_lines,
         container_height=rect.height(),
         line_spacing=line_h,
         descent=metrics.descent(),
@@ -319,7 +329,7 @@ def render_caption_overlay(window: Any, painter: QPainter) -> None:
     active_text = window.rolling_buffer.active_line if getattr(window, "rolling_two_lines", False) else ""
 
     # Secondary bilingual line (above the primary translation)
-    if mode == "bilingual" and getattr(window, "source_line", "") and len(lines) == 1 and baselines:
+    if has_source and len(baselines) >= 2:
         src_font = get_caption_font(max(11, window.font_px - 4), QFont.Weight.Normal)
         src_metrics = QFontMetrics(src_font)
         src_lines = wrap_caption_typography(window.source_line, wrap_w, src_metrics.horizontalAdvance, max_lines=1)
@@ -327,7 +337,7 @@ def render_caption_overlay(window: Any, painter: QPainter) -> None:
             render_caption_text(
                 painter=painter,
                 lines=src_lines,
-                baselines=[baselines[0] - line_h],
+                baselines=[baselines[0]],
                 rect_width=rect.width(),
                 font=src_font,
                 metrics=src_metrics,
@@ -335,10 +345,12 @@ def render_caption_overlay(window: Any, painter: QPainter) -> None:
                 opacity=window.fade_animator.text_opacity,
             )
 
+    # Primary translation line
+    trans_baselines = [baselines[1]] if (has_source and len(baselines) >= 2) else baselines
     render_caption_text(
         painter=painter,
         lines=lines,
-        baselines=baselines,
+        baselines=trans_baselines,
         rect_width=rect.width(),
         font=font,
         metrics=metrics,

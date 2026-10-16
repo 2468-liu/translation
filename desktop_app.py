@@ -1227,6 +1227,13 @@ def main():
         qapp = QApplication.instance() or QApplication(sys.argv)
         qapp.setQuitOnLastWindowClosed(False)
 
+        # Background Log Retention: Prune logs older than 7 days without blocking startup
+        try:
+            from server.log_cleaner import run_startup_cleanup
+            threading.Thread(target=run_startup_cleanup, args=(ROOT, 7), daemon=True).start()
+        except Exception:
+            pass
+
         # Linux / Ubuntu High-DPI & Anti-aliased Font Family Fallback
         if sys.platform != "win32":
             from PyQt6.QtGui import QFont

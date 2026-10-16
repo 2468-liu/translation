@@ -141,6 +141,60 @@ class CaptionRendererTests(unittest.TestCase):
         )
         painter.end()
 
+    def test_bilingual_layout_caps_translation_to_single_line_and_preserves_width(self):
+        from unittest.mock import MagicMock
+        from PyQt6.QtCore import QRect
+        from server.ui.caption_renderer import update_window_layout_and_geometry
+
+        mock_window = MagicMock()
+        mock_window.bilingual_mode = "bilingual"
+        mock_window.source_line = "This is a long English sentence that would normally wrap across multiple rows."
+        mock_window.font_px = 18
+        mock_window.width.return_value = 500
+        mock_window.height.return_value = 80
+        mock_window.text_only = False
+        mock_window._is_hovered = False
+        mock_window.geometry.return_value = QRect(100, 100, 500, 80)
+
+        # Long translation text that would wrap to 3 lines if max_lines wasn't 1
+        long_chinese = "这是一个非常长非常长的中文翻译句子，通常情况下如果不加限制会直接折行成两行甚至三行排版"
+        display_lines = update_window_layout_and_geometry(mock_window, long_chinese)
+
+        # In bilingual mode, translation MUST strictly be capped to 1 line
+        self.assertEqual(len(display_lines), 1)
+
+        # Ensure setGeometry was called preserving width (500), never expanding to full screen!
+        self.assertTrue(mock_window.setGeometry.called)
+        called_geo_args = mock_window.setGeometry.call_args[0]
+        # setGeometry(x, new_y, cur_geo.width(), target_h)
+        self.assertEqual(called_geo_args[0], 100)
+        self.assertEqual(called_geo_args[2], 500)  # Width strictly preserved!
+
+    def test_bilingual_render_draws_source_above_translation(self):
+        from unittest.mock import MagicMock
+        from PyQt6.QtCore import QRect
+        from server.ui.caption_renderer import render_caption_overlay
+
+        mock_window = MagicMock()
+        mock_window.visible = True
+        mock_window.text_only = False
+        mock_window.bilingual_mode = "bilingual"
+        mock_window.source_line = "Hello world from source"
+        mock_window.line = "你好世界来自译文"
+        mock_window.font_px = 18
+        mock_window.font_color = "#FFFFFF"
+        mock_window.fade_animator.text_opacity = 1.0
+        mock_window.rect.return_value = QRect(0, 0, 500, 90)
+        mock_window._is_hovered = False
+        mock_window.header_widget = None
+        mock_window.rolling_two_lines = False
+
+        pix = QPixmap(500, 90)
+        painter = QPainter(pix)
+        # Should render both source line and translation line without throwing
+        render_caption_overlay(mock_window, painter)
+        painter.end()
+
 
 if __name__ == "__main__":
     unittest.main()
