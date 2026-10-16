@@ -808,6 +808,13 @@ class DesktopApp:
                 print(f"[DesktopApp] Target language updated -> {tgt_lang}")
                 if hasattr(self, "session") and self.session:
                     self.session.set_target_language(tgt_lang)
+            if "vad_backend" in cfg:
+                vad_choice = str(cfg["vad_backend"])
+                print(f"[DesktopApp] VAD backend updated -> {vad_choice}")
+                from server import vad
+                new_engine = vad.reload_vad(vad_choice)
+                if hasattr(self, "session") and hasattr(self.session, "vad") and self.session.vad:
+                    self.session.vad.engine = new_engine
         except Exception as e:
             print(f"[DesktopApp] Error processing config change: {e}")
             import traceback

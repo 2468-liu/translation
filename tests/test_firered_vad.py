@@ -61,6 +61,34 @@ class TestFireRedVad(unittest.TestCase):
             os.environ.pop("TRANSLATION_VAD_BACKEND", None)
             vad._VAD = None
 
+    def test_ui_vad_selection_and_persistence(self):
+        from PyQt6.QtWidgets import QApplication
+        from server.ui.caption_window import QtCaptionWindow
+        from server import config
+
+        app = QApplication.instance() or QApplication([])
+        win = QtCaptionWindow()
+        emitted = []
+        win.config_changed.connect(lambda d: emitted.append(d))
+
+        try:
+            # 1. Trigger firered via UI action
+            win._vad_firered_act.trigger()
+            self.assertEqual(config.get_vad_backend(), "firered")
+            self.assertTrue(any(e.get("vad_backend") == "firered" for e in emitted))
+            self.assertTrue(win._vad_firered_act.isChecked())
+            self.assertFalse(win._vad_silero_act.isChecked())
+
+            # 2. Trigger silero via UI action
+            emitted.clear()
+            win._vad_silero_act.trigger()
+            self.assertEqual(config.get_vad_backend(), "silero")
+            self.assertTrue(any(e.get("vad_backend") == "silero" for e in emitted))
+            self.assertTrue(win._vad_silero_act.isChecked())
+            self.assertFalse(win._vad_firered_act.isChecked())
+        finally:
+            win.close()
+
 
 if __name__ == "__main__":
     unittest.main()

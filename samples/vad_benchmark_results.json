@@ -1,0 +1,155 @@
+[
+  {
+    "file": "ds2_action_40.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.132,
+    "firered_latency_ms": 0.846,
+    "silero_speech_pct": 0.0,
+    "firered_speech_pct": 5.1,
+    "agreement_pct": 94.9
+  },
+  {
+    "file": "ds2_silent_80.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.14,
+    "firered_latency_ms": 0.84,
+    "silero_speech_pct": 0.0,
+    "firered_speech_pct": 13.2,
+    "agreement_pct": 86.8
+  },
+  {
+    "file": "ds2_action_115.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.14,
+    "firered_latency_ms": 0.817,
+    "silero_speech_pct": 0.5,
+    "firered_speech_pct": 10.9,
+    "agreement_pct": 89.1
+  },
+  {
+    "file": "ds2_silent_185.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.158,
+    "firered_latency_ms": 0.876,
+    "silero_speech_pct": 0.0,
+    "firered_speech_pct": 3.7,
+    "agreement_pct": 96.3
+  },
+  {
+    "file": "ds2_action_245.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.143,
+    "firered_latency_ms": 0.862,
+    "silero_speech_pct": 0.0,
+    "firered_speech_pct": 9.1,
+    "agreement_pct": 90.9
+  },
+  {
+    "file": "ds2_quiet_304.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.15,
+    "firered_latency_ms": 0.869,
+    "silero_speech_pct": 23.6,
+    "firered_speech_pct": 35.7,
+    "agreement_pct": 72.0
+  },
+  {
+    "file": "ds2_silent_375.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.14,
+    "firered_latency_ms": 0.857,
+    "silero_speech_pct": 0.0,
+    "firered_speech_pct": 0.4,
+    "agreement_pct": 99.6
+  },
+  {
+    "file": "ds2_quiet_441.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.139,
+    "firered_latency_ms": 0.851,
+    "silero_speech_pct": 42.4,
+    "firered_speech_pct": 48.4,
+    "agreement_pct": 84.3
+  },
+  {
+    "file": "ds2_dense_855.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.145,
+    "firered_latency_ms": 0.855,
+    "silero_speech_pct": 74.6,
+    "firered_speech_pct": 75.2,
+    "agreement_pct": 83.1
+  },
+  {
+    "file": "ds2_quiet_998.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.13,
+    "firered_latency_ms": 0.849,
+    "silero_speech_pct": 13.6,
+    "firered_speech_pct": 18.3,
+    "agreement_pct": 92.2
+  },
+  {
+    "file": "tbbt_dense_1.wav",
+    "duration_s": 25.0,
+    "silero_latency_ms": 0.147,
+    "firered_latency_ms": 0.838,
+    "silero_speech_pct": 85.0,
+    "firered_speech_pct": 85.5,
+    "agreement_pct": 96.7
+  },
+  {
+    "file": "tbbt_probe_60s.wav",
+    "duration_s": 60.0,
+    "silero_latency_ms": 0.137,
+    "firered_latency_ms": 0.867,
+    "silero_speech_pct": 81.5,
+    "firered_speech_pct": 81.0,
+    "agreement_pct": 94.5
+  },
+  {
+    "file": "tbbt_3min.wav",
+    "duration_s": 180.0,
+    "silero_latency_ms": 0.131,
+    "firered_latency_ms": 0.795,
+    "silero_speech_pct": 75.1,
+    "firered_speech_pct": 75.9,
+    "agreement_pct": 93.8
+  },
+  {
+    "file": "sparse_music_speech.wav",
+    "duration_s": 90.0,
+    "silero_latency_ms": 0.141,
+    "firered_latency_ms": 0.781,
+    "silero_speech_pct": 11.0,
+    "firered_speech_pct": 16.3,
+    "agreement_pct": 94.5
+  },
+  {
+    "file": "sparse_music.wav",
+    "duration_s": 90.0,
+    "silero_latency_ms": 0.125,
+    "firered_latency_ms": 0.798,
+    "silero_speech_pct": 21.5,
+    "firered_speech_pct": 62.7,
+    "agreement_pct": 54.3
+  },
+  {
+    "file": "bgm_movie_trailer.wav",
+    "duration_s": 55.0,
+    "silero_latency_ms": 0.136,
+    "firered_latency_ms": 0.787,
+    "silero_speech_pct": 28.3,
+    "firered_speech_pct": 31.8,
+    "agreement_pct": 86.6
+  },
+  {
+    "file": "bgm_vlog_speech.wav",
+    "duration_s": 60.0,
+    "silero_latency_ms": 0.131,
+    "firered_latency_ms": 0.804,
+    "silero_speech_pct": 86.5,
+    "firered_speech_pct": 88.9,
+    "agreement_pct": 96.3
+  }
+]

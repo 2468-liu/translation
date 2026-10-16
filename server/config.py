@@ -77,6 +77,25 @@ def save_desktop_config(cfg: dict) -> None:
         print(f"[Config] Failed to save desktop_config.json: {e}")
 
 
+def get_vad_backend() -> str:
+    """Get currently configured VAD backend ('silero' or 'firered')."""
+    cfg = load_desktop_config()
+    choice = cfg.get("vad_backend")
+    if not choice:
+        choice = os.environ.get("TRANSLATION_VAD_BACKEND", "silero")
+    return str(choice).strip().lower()
+
+
+def set_vad_backend(choice: str) -> None:
+    """Persist VAD backend selection to desktop_config.json."""
+    c = str(choice).strip().lower()
+    if c not in ("silero", "firered"):
+        c = "silero"
+    cfg = load_desktop_config()
+    cfg["vad_backend"] = c
+    save_desktop_config(cfg)
+
+
 def resolve_models_dir() -> Path:
     """Resolve models directory. Checks TRANSLATION_MODELS_DIR, desktop_config.json,
     case-insensitive Linux mount points (/mnt/DATA, /mnt/d, /DATA, /media/*), and local directories.
@@ -254,7 +273,15 @@ if hasattr(sys, "_MEIPASS") and (Path(sys._MEIPASS) / "models" / "silero_vad.onn
     SILERO_ONNX = Path(sys._MEIPASS) / "models" / "silero_vad.onnx"
 else:
     SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
-FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
+
+if hasattr(sys, "_MEIPASS") and (Path(sys._MEIPASS) / "models" / "firered_vad" / "firered_vad.onnx").exists():
+    FIRERED_ONNX = Path(sys._MEIPASS) / "models" / "firered_vad" / "firered_vad.onnx"
+elif (MODELS_DIR / "firered_vad" / "firered_vad.onnx").exists():
+    FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
+elif (ROOT / "models" / "firered_vad" / "firered_vad.onnx").exists():
+    FIRERED_ONNX = ROOT / "models" / "firered_vad" / "firered_vad.onnx"
+else:
+    FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
 
 # Audio
 SAMPLE_RATE = 16000

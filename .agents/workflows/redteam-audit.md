@@ -25,9 +25,9 @@ description: 发布前与提交前的红队对抗自检工作流 (Red Team Pre-C
 ```bash
 python -m pytest tests/ -q
 ```
-* **硬性通过指标**：测试用例通过率必须为 **100%**（当前基线 349+ 用例全绿，0 失败，0 错误）；
+* **硬性通过指标**：测试用例通过率必须为 **100%**（当前基线 359+ 用例全绿，0 失败，0 错误）；
 * **重点回归覆盖**：
-  - `tests/test_vad.py`：连续静音调控单调性、短对话保留、前音节保护；
+  - `tests/test_vad.py` & `tests/test_firered_vad.py`：连续静音调控单调性、短对话保留、前音节保护、FireRedVAD 纯 NumPy Fbank 特征提取、DFSMN 缓存管理与 UI 切换持久化；
   - `tests/test_nemotron_gpu.py`：Vulkan 独显优先级与状态重置；
   - `tests/test_ui_language.py`：语言切换信号贯通、菜单状态同步与持久化；
   - `tests/test_audio_pipeline.py` / `tests/test_caption_renderer.py`：渲染稳定性与防抖。
@@ -41,20 +41,27 @@ powershell -ExecutionPolicy Bypass -File scripts/run_redteam_matrix.ps1 -Layer 1
 ```
 * **L1.1 密集对白暴击 (ds2_dense_855)**：验证密集轰炸下无死锁、无 OOM、无吞字；
 * **L1.2 长停顿与断点唤醒 (tbbt_3min)**：验证 30 秒静音后缓存正常释放、重新来声无爆破音与漏字；
-* **L1.3 高动态电影对白与 BGM 干扰 (ds2_action_115)**：验证背景音乐干扰下无持续性幻觉复读。
+* **L1.3 高动态电影对白与 BGM 干扰 (ds2_action_115 / bgm_movie_trailer)**：验证强背景音乐干扰下无持续性幻觉复读；
+* **L1.4 双 VAD 引擎 A/B 矩阵评测**：`python scripts/compare_vad_engines.py`，验证 Silero（<0.2ms，低误报）与 FireRedVAD（<1.0ms，微弱气音高召回）运行正常。
 
 ---
 
 ### 第四级：独立构建与压缩包封包验证 (Packaging & ZIP Artifact Audit)
-运行自动化打包与发布同步脚本：
+运行自动化打包与桌面发布同步：
+1. **Windows 独立 EXE 与 Release ZIP**：
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build_desktop_exe.ps1
 ```
 * **产物必须完整存在且非空**：
   - `dist/TranslationDesktop/TranslationDesktop.exe`（单体独立可执行文件）；
   - `dist/TranslationDesktop-Release.zip`（桌面绿色发布压缩包）；
-  - 自动部署镜像目录 `D:\TranslationDesktop`（包含同步后的 exe 与 `desktop_config.json`）。
-* **进程安全验证**：构建脚本具备 180s 心跳监控与 8GB RAM 内存泄漏熔断保护。
+  - 自动部署镜像目录 `D:\TranslationDesktop`（包含同步后的 exe、`desktop_config.json` 与 `TranslationDesktop-Release.zip`）。
+
+2. **跨平台轻量源码与桌面分发 ZIP 同步**：
+```bash
+python scripts/build_distribution_zip.py
+```
+* 自动同步至当前用户桌面：`~/Desktop/translation-ubuntu-24.04.zip`（保证体积在 5MB 以内）。
 
 ---
 

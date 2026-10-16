@@ -214,15 +214,67 @@ def run_ab_comparison(wav_path: Path):
 if __name__ == "__main__":
     results = []
     test_samples = [
-        Path("samples/ds2_action_115.wav"),  # Extreme Action & BGM disturbance
-        Path("samples/ds2_quiet_998.wav"),   # Extreme Quiet / Whisper
-        Path("samples/ds2_dense_855.wav"),   # High Density Rapid Dialogue
-        Path("samples/tbbt_3min.wav"),       # 3-Minute Natural Continuous TV Dialogue
+        # --- 1. All 10 Doctor Strange 2 (DS2) Samples ---
+        Path("samples/ds2_action_40.wav"),
+        Path("samples/ds2_silent_80.wav"),
+        Path("samples/ds2_action_115.wav"),
+        Path("samples/ds2_silent_185.wav"),
+        Path("samples/ds2_action_245.wav"),
+        Path("samples/ds2_quiet_304.wav"),
+        Path("samples/ds2_silent_375.wav"),
+        Path("samples/ds2_quiet_441.wav"),
+        Path("samples/ds2_dense_855.wav"),
+        Path("samples/ds2_quiet_998.wav"),
+
+        # --- 2. The Big Bang Theory (TBBT) Samples ---
+        Path("samples/tbbt_dense_1.wav"),
+        Path("samples/tbbt_probe_60s.wav"),
+        Path("samples/tbbt_3min.wav"),
+
+        # --- 3. Speech with Heavy BGM & Pure Music Samples ---
+        Path("samples/sparse_music_speech.wav"),
+        Path("samples/sparse_music.wav"),
+        Path("samples/bgm_movie_trailer.wav"),
+        Path("samples/bgm_vlog_speech.wav"),
     ]
     for sample in test_samples:
         if sample.exists():
             res = run_ab_comparison(sample)
             results.append(res)
+        else:
+            print(f"[Warn] Sample not found: {sample}")
 
-    print("\n================== A/B SUMMARY TABLE ==================")
-    print(json.dumps(results, indent=2, ensure_ascii=False))
+    print("\n================== FULL A/B VAD BENCHMARK MATRIX ==================\n")
+    print("| 场景 / 音频样本 | 时长(s) | Silero 耗时 | FireRed 耗时 | Silero 检出率 | FireRed 检出率 | 帧一致率 | 特征分析 |")
+    print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |")
+    for r in results:
+        fname = r["file"]
+        # Analysis tag
+        if "silent" in fname:
+            tag = "纯静音/底噪抑制"
+        elif "action" in fname:
+            tag = "动作打斗/短促发音"
+        elif "quiet" in fname:
+            tag = "轻声耳语/微弱气音"
+        elif "dense" in fname:
+            tag = "密集连珠炮对白"
+        elif "tbbt" in fname:
+            tag = "情景喜剧/环境笑声"
+        elif fname == "sparse_music.wav":
+            tag = "纯BGM伴奏 (误报压力测试)"
+        elif "bgm" in fname or "music_speech" in fname:
+            tag = "强BGM垫乐下的对白识别"
+        else:
+            tag = "常规对白"
+        print(f"| `{fname}` | {r['duration_s']}s | {r['silero_latency_ms']:.2f}ms | {r['firered_latency_ms']:.2f}ms | {r['silero_speech_pct']}% | {r['firered_speech_pct']}% | {r['agreement_pct']}% | {tag} |")
+
+    # Overall Summary
+    avg_sil_lat = np.mean([r["silero_latency_ms"] for r in results])
+    avg_fir_lat = np.mean([r["firered_latency_ms"] for r in results])
+    avg_agree = np.mean([r["agreement_pct"] for r in results])
+    print(f"\n整体平均: Silero 帧耗时 {avg_sil_lat:.3f}ms | FireRed 帧耗时 {avg_fir_lat:.3f}ms | 平均一致率 {avg_agree:.1f}%\n")
+
+    out_json = REPO_ROOT / "samples" / "vad_benchmark_results.json"
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"[Done] Benchmark results saved to {out_json}")
