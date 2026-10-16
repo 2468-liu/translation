@@ -414,6 +414,7 @@ class CaptionMenuBuilder:
             return
 
         self._sync_preset_actions(self.get_current_preset())
+        self._sync_lang_actions()
         if getattr(self.win, "_toggle_capture_act", None):
             is_cap = getattr(self.win, "_is_capturing", True)
             self.win._toggle_capture_act.setText("⏸ 暂停识别与翻译" if is_cap else "▶ 开启识别与翻译")
@@ -448,6 +449,7 @@ class CaptionMenuBuilder:
             self.safe_close_menus()
             return
         self._sync_preset_actions(self.get_current_preset())
+        self._sync_lang_actions()
         if hasattr(self.win, "_tray_toggle_visibility_act") and self.win._tray_toggle_visibility_act:
             is_vis = self.win.isVisible() and self.win.visible
             self.win._tray_toggle_visibility_act.setText("隐藏字幕" if is_vis else "显示字幕")
@@ -598,6 +600,22 @@ class CaptionMenuBuilder:
 
     def _sync_preset_actions(self, preset_key: str) -> None:
         self._sync_engine_cadence_actions()
+
+    def _sync_lang_actions(self) -> None:
+        src = getattr(self.win, "source_lang", "auto")
+        tgt = getattr(self.win, "target_lang", "zh")
+        for grp in (getattr(self.win, "src_group", None), getattr(self.win, "tray_src_group", None)):
+            if grp:
+                grp.blockSignals(True)
+                for act in grp.actions():
+                    act.setChecked(str(act.data()) == src)
+                grp.blockSignals(False)
+        for grp in (getattr(self.win, "tgt_group", None), getattr(self.win, "tray_tgt_group", None)):
+            if grp:
+                grp.blockSignals(True)
+                for act in grp.actions():
+                    act.setChecked(str(act.data()) == tgt)
+                grp.blockSignals(False)
 
     def _toggle_bilingual(self, checked: bool) -> None:
         self.safe_close_menus()

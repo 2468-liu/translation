@@ -106,6 +106,8 @@ class Session:
         self.target_language = "zh"
         self.api: dict | None = None
         self.api_error = ""
+        self._silence_start_mono: float | None = None
+        self._silence_gc_done: bool = False
 
     def set_api(self, data: dict) -> None:
         enabled = bool(data.get("apiEnabled"))
@@ -249,7 +251,31 @@ class Session:
             return []
         samples = np.frombuffer(payload, dtype=np.int16).astype(np.float32) / 32768.0
         self._meter(samples)
-        return self._collect(self.vad.push(samples))
+        events = self.vad.push(samples)
+        if not getattr(self.vad, "in_speech", False):
+            now = perf.mono()
+            if self._silence_start_mono is None:
+                self._silence_start_mono = now
+            elif (now - self._silence_start_mono >= 30.0) and not self._silence_gc_done:
+                self._silence_gc_done = True
+                self._cleanup_on_sustained_silence()
+        else:
+            self._silence_start_mono = None
+            self._silence_gc_done = False
+        return self._collect(events)
+
+    def _cleanup_on_sustained_silence(self) -> None:
+        """Safely reclaim memory during >=30s sustained pause without interfering with active playback."""
+        import gc
+        self._partial_result = None
+        self._last_audio_final = ""
+        self.context.clear()
+        if hasattr(self.asr, "reset_state"):
+            try:
+                self.asr.reset_state()
+            except Exception:
+                pass
+        gc.collect()
 
     def _meter(self, samples: np.ndarray) -> None:
         self.meter_samples += samples.size
@@ -267,6 +293,8 @@ class Session:
         messages = []
         for kind, audio, flag in events:
             if kind == "start":
+                self._silence_start_mono = None
+                self._silence_gc_done = False
                 self.last_text = ""
                 self.stable = 0
                 self.last_translated = ""

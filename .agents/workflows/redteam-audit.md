@@ -1,0 +1,64 @@
+---
+name: redteam-audit
+description: 发布前与提交前的红队对抗自检工作流 (Red Team Pre-Commit & Release Audit Workflow)
+---
+
+# 红队自检标准工作流 (Red Team Self-Audit Workflow)
+
+在任何向 `git` 提交变更、向 `GitHub` 推送代码、打包发行版 `TranslationDesktop.exe` 或产出 `TranslationDesktop-Release.zip` 之前，**必须严格按序执行以下五级红队自检防线**：
+
+---
+
+### 第一级：契约与配置中枢审计 (SSOT & Silent Degradation Audit)
+1. **SSOT 唯一真相核验**：
+   - 核查 `server/serve_config.py`，确认 ASR (`-c 2048 -np 4`) 与 MT (`-c 2048 -np 3`) 的显存预算未被各子模块硬编码颠覆；
+   - 检查启动脚本（`scripts/start.ps1`, `scripts/start_llama_backends.ps1`, `scripts/daemon_llama.ps1`），确保无任何参数漂移与静默降级（严禁把 Qwen 降级为 whisper，严禁把独显降级为核显）。
+2. **物理铁笼与连续密度曲线审计**：
+   - 核验 VAD `_take()` 处是否严格执行 `limit(ratio)`；
+   - 核验 UI `_start_dismiss_timer()` 是否根据字符数自适应伸缩 ($1.5\text{s} \sim 6.0\text{s}$)；
+   - 检查是否残留任何脱离物理生理极限的"拍脑袋"硬阈值（如死硬的 8000ms/25000ms）。
+
+---
+
+### 第二级：全量自动化回归测试 (100% Green Regressions)
+运行全局回归套件：
+```bash
+python -m pytest tests/ -q
+```
+* **硬性通过指标**：测试用例通过率必须为 **100%**（当前基线 349+ 用例全绿，0 失败，0 错误）；
+* **重点回归覆盖**：
+  - `tests/test_vad.py`：连续静音调控单调性、短对话保留、前音节保护；
+  - `tests/test_nemotron_gpu.py`：Vulkan 独显优先级与状态重置；
+  - `tests/test_ui_language.py`：语言切换信号贯通、菜单状态同步与持久化；
+  - `tests/test_audio_pipeline.py` / `tests/test_caption_renderer.py`：渲染稳定性与防抖。
+
+---
+
+### 第三级：真实音频链路穿透自检 (Real Pipeline Interception)
+运行红队快速拦截矩阵（Layer 1）：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_redteam_matrix.ps1 -Layer 1
+```
+* **L1.1 密集对白暴击 (ds2_dense_855)**：验证密集轰炸下无死锁、无 OOM、无吞字；
+* **L1.2 长停顿与断点唤醒 (tbbt_3min)**：验证 30 秒静音后缓存正常释放、重新来声无爆破音与漏字；
+* **L1.3 高动态电影对白与 BGM 干扰 (ds2_action_115)**：验证背景音乐干扰下无持续性幻觉复读。
+
+---
+
+### 第四级：独立构建与压缩包封包验证 (Packaging & ZIP Artifact Audit)
+运行自动化打包与发布同步脚本：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_desktop_exe.ps1
+```
+* **产物必须完整存在且非空**：
+  - `dist/TranslationDesktop/TranslationDesktop.exe`（单体独立可执行文件）；
+  - `dist/TranslationDesktop-Release.zip`（桌面绿色发布压缩包）；
+  - 自动部署镜像目录 `D:\TranslationDesktop`（包含同步后的 exe 与 `desktop_config.json`）。
+* **进程安全验证**：构建脚本具备 180s 心跳监控与 8GB RAM 内存泄漏熔断保护。
+
+---
+
+### 第五级：文档台账与版本控制发布 (VCS Sync & Ledger Trail)
+1. 更新 `STATE.md` 与 `PLAN.md`，记录本次交付的客观证据与最新测试数据；
+2. 严禁提交本地临时垃圾文件（如 `.log`、临时音频切片、未压缩测试中间件）；
+3. 提交 git commit 并推送至远程分支。

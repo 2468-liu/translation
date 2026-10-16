@@ -105,8 +105,8 @@ class Qwen3AsrEngine:
             return "", detected, confidence
         return text, detected, confidence
 
-    def close(self):
-        with self._lock:
+    def reset_state(self):
+        with self._client_lock:
             if getattr(self, "_client", None) is not None:
                 if hasattr(self._client, "close"):
                     try:
@@ -114,6 +114,9 @@ class Qwen3AsrEngine:
                     except Exception:
                         pass
                 self._client = None
+
+    def close(self):
+        self.reset_state()
 
     def __del__(self):
         try:

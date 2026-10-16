@@ -68,13 +68,11 @@ try:
     from server.audio_enhancer import AudioEnhancer
     from server.loopback import run_loopback
     from server.pipeline import Session
-    if sys.platform == "win32":
-        try:
-            from server.process_loopback import ProcessLoopbackManager
-        except Exception as e:
-            print(f"[DesktopApp] Windows process loopback error: {e}")
-            ProcessLoopbackManager = None
-    else:
+    from server.serve_config import get_qwen_server_args, get_mt_server_args
+    try:
+        from server.process_loopback import ProcessLoopbackManager
+    except Exception as e:
+        print(f"[DesktopApp] Process loopback import notice: {e}")
         ProcessLoopbackManager = None
     from server.qt_caption_window import QtCaptionWindow
     from server.ui import SplashScreen
@@ -433,21 +431,13 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
     if splash:
         splash.set_progress(0.25, f"正在启动 Index 影视翻译引擎 ({exe.name})...")
 
-    cmd = [str(exe)]
-    if exe.stem.lower() in ("llama", "llama-cli"):
-        cmd.append("serve")
-    cmd.extend([
-        "-m", str(model_path),
-        "--host", config.LLAMA_HOST,
-        "--port", str(config.LLAMA_PORT),
-        "-ngl", "60",
-        "-c", "2048",
-        "-t", "4",
-        "-np", "3",
-        "--no-webui",
-    ])
-    if is_index:
-        cmd.extend(["--reasoning", "off"])
+    cmd = get_mt_server_args(
+        exe=exe,
+        model_path=model_path,
+        host=config.LLAMA_HOST,
+        port=config.LLAMA_PORT,
+        is_index=is_index,
+    )
 
     print(f"[DesktopApp] Starting llama-server ({model_name}): {exe.name}...")
     creationflags = 0
@@ -552,21 +542,14 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
     if splash:
         splash.set_progress(0.55, "正在启动 Qwen3 语音大模型引擎...")
 
-    cmd = [str(exe)]
-    if exe.stem.lower() in ("llama", "llama-cli"):
-        cmd.append("serve")
-    cmd.extend([
-        "-m", str(model_path),
-        "--mmproj", str(mmproj_path),
-        "--host", config.LLAMA_HOST,
-        "--port", str(port),
-        "-ngl", "99",
-        "-c", "4096",
-        "-t", "4",
-        "-np", "2",
-        "--no-webui",
-    ])
-    print(f"[DesktopApp] Starting Qwen3-ASR llama-server on port {port} (-c 4096, -np 2, -ngl 99)...")
+    cmd = get_qwen_server_args(
+        exe=exe,
+        model_path=model_path,
+        mmproj_path=mmproj_path,
+        host=config.LLAMA_HOST,
+        port=port,
+    )
+    print(f"[DesktopApp] Starting Qwen3-ASR llama-server on port {port} (-c 2048, -np 4, -ngl 99)...")
     creationflags = 0
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NO_WINDOW
@@ -679,9 +662,12 @@ class DesktopApp:
             os.environ["TRANSLATION_ASR_BACKEND"] = "qwen3"
             os.environ["TRANSLATION_CHAIN_RUNNING"] = "qwen3-in"
             self.asr = build_asr()
+            saved_lang = str(cfg.get("language", "auto"))
+            saved_tgt = str(cfg.get("target_language", "zh"))
             self.session = Session(self.asr, tuning=cinema_tuning())
-            self.session.set_language("auto")
-            self.session.set_target_language("zh")
+            self.session.set_language(saved_lang)
+            self.session.set_target_language(saved_tgt)
+            self.window.set_status(saved_lang, saved_tgt)
             cadence = int(cfg.get("partial_interval_ms", 1000))
             apply_partial_interval(self.session.vad, cadence)
             self.window.set_cadence_ui(cadence)
@@ -711,25 +697,26 @@ class DesktopApp:
                 self.asr = build_asr()
                 initial_backend = "qwen3"
                 self._current_asr_backend = "qwen3"
+            saved_lang = str(cfg.get("language", "auto"))
+            saved_tgt = str(cfg.get("target_language", "zh"))
             self.session = Session(self.asr, tuning=cinema_tuning())
-            self.session.set_language("auto")
-            self.session.set_target_language("zh")
+            self.session.set_language(saved_lang)
+            self.session.set_target_language(saved_tgt)
+            self.window.set_status(saved_lang, saved_tgt)
             cadence = int(cfg.get("partial_interval_ms", 160 if initial_backend == "nemotron" else 1000))
             apply_partial_interval(self.session.vad, cadence)
             self.window.set_cadence_ui(cadence)
             self.window.set_asr_backend_ui(initial_backend)
 
-        # Initialize Native Process Loopback Manager (Windows only)
-        if sys.platform == "win32" and ProcessLoopbackManager is not None:
+        # Initialize Native Process Loopback Manager
+        if ProcessLoopbackManager is not None:
             if self.splash:
-                self.splash.set_progress(0.95, "正在初始化 WASAPI 音频捕获引擎...")
+                self.splash.set_progress(0.95, "正在初始化音频捕获引擎...")
             self.loopback_mgr = ProcessLoopbackManager()
             self._on_pcm_received = None
             if self.loopback_mgr and self.loopback_mgr.is_available:
-                print("[DesktopApp] Native Process-Tree Loopback DLL loaded successfully.")
+                print(f"[DesktopApp] Native Audio Loopback Manager ({'Windows WASAPI' if sys.platform == 'win32' else 'Linux PipeWire'}) loaded successfully.")
         else:
-            if self.splash:
-                self.splash.set_progress(0.95, "正在初始化 PipeWire/PulseAudio 回环捕获引擎...")
             self.loopback_mgr = None
             self._on_pcm_received = None
 
@@ -811,6 +798,16 @@ class DesktopApp:
                 enabled = bool(cfg["block_by_punct"])
                 print(f"[DesktopApp] Block by punctuation updated -> {enabled}")
                 self.window._block_by_punct = enabled
+            if "language" in cfg:
+                src_lang = str(cfg["language"])
+                print(f"[DesktopApp] Source language updated -> {src_lang}")
+                if hasattr(self, "session") and self.session:
+                    self.session.set_language(src_lang)
+            if "target_language" in cfg:
+                tgt_lang = str(cfg["target_language"])
+                print(f"[DesktopApp] Target language updated -> {tgt_lang}")
+                if hasattr(self, "session") and self.session:
+                    self.session.set_target_language(tgt_lang)
         except Exception as e:
             print(f"[DesktopApp] Error processing config change: {e}")
             import traceback
