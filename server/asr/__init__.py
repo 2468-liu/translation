@@ -28,6 +28,7 @@ from .text_filters import (
     _NEMO_LANG_MAP,
     format_qwen3_prompt,
     is_hallucination,
+    is_nemo_supported,
     parse_nemotron_transcript,
     parse_qwen3_asr,
     to_nemo_bcp47,

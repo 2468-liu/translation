@@ -718,8 +718,23 @@ class CaptionMenuBuilder:
             return
         self.safe_close_menus()
         code = str(action.data())
+
+        current_backend = getattr(self.win, "asr_backend", "qwen3")
+        from server.asr.text_filters import is_nemo_supported
+        if current_backend in ("nemotron", "nv") and not is_nemo_supported(code):
+            self.apply_engine_cadence("qwen3", 1000)
+            lang_name = action.text().split("(")[0].strip()
+            self.win.command_received.emit(
+                "toast",
+                f"「{lang_name}」超出 NV 极速引擎范围，已自动为您启用 Qwen3 通用大模型引擎",
+                time.time(),
+                time.time(),
+                False,
+            )
+
         self.win.source_lang = code
         self.win.set_status(code)
+        self._sync_lang_actions()
         cfg = config.load_desktop_config()
         cfg["language"] = code
         config.save_desktop_config(cfg)

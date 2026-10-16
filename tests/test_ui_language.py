@@ -64,6 +64,73 @@ class UiLanguageTests(unittest.TestCase):
         self.assertTrue(len(en_tgt) > 0)
         self.assertTrue(en_tgt[0].isChecked())
 
+    def test_is_nemo_supported_whitelist(self):
+        from server.asr.text_filters import is_nemo_supported
+        # Supported by Nemotron
+        self.assertTrue(is_nemo_supported("auto"))
+        self.assertTrue(is_nemo_supported("en"))
+        self.assertTrue(is_nemo_supported("zh"))
+        self.assertTrue(is_nemo_supported("zh-CN"))
+        self.assertTrue(is_nemo_supported("ja"))
+        self.assertTrue(is_nemo_supported("ko"))
+        self.assertTrue(is_nemo_supported("es"))
+        self.assertTrue(is_nemo_supported("fr"))
+        self.assertTrue(is_nemo_supported("de"))
+        self.assertTrue(is_nemo_supported("ru"))
+        self.assertTrue(is_nemo_supported("ar"))
+
+        # Outside Nemotron whitelist (dialects & regionals supported by Qwen3)
+        self.assertFalse(is_nemo_supported("yue"))  # Cantonese
+        self.assertFalse(is_nemo_supported("zh-tw"))  # Traditional Chinese
+        self.assertFalse(is_nemo_supported("th"))  # Thai
+        self.assertFalse(is_nemo_supported("id"))  # Indonesian
+        self.assertFalse(is_nemo_supported("ms"))  # Malay
+        self.assertFalse(is_nemo_supported("bo"))  # Tibetan
+        self.assertFalse(is_nemo_supported("ug"))  # Uyghur
+
+    def test_unsupported_language_auto_switches_from_nemotron_to_qwen(self):
+        builder = CaptionMenuBuilder(self.win)
+        builder.build_context_menu()
+        self.win.set_asr_backend_ui("nemotron")
+        self.assertEqual(self.win.asr_backend, "nemotron")
+
+        # Mock action for Cantonese ("yue")
+        received_commands = []
+        self.win.command_received.connect(lambda *args: received_commands.append(args))
+
+        mock_act = MagicMock()
+        mock_act.data.return_value = "yue"
+        mock_act.text.return_value = "粤语 (Cantonese)"
+
+        builder._on_source_lang_changed(mock_act)
+
+        # Engine should automatically switch to qwen3 with 1000ms cadence
+        self.assertEqual(self.win.asr_backend, "qwen3")
+        self.assertEqual(self.win.partial_interval_ms, 1000)
+        self.assertEqual(self.win.source_lang, "yue")
+
+        # Toast notification should be emitted
+        toasts = [c for c in received_commands if c[0] == "toast"]
+        self.assertTrue(len(toasts) > 0)
+        self.assertIn("粤语", toasts[0][1])
+        self.assertIn("Qwen3", toasts[0][1])
+
+    def test_supported_language_keeps_nemotron_engine(self):
+        builder = CaptionMenuBuilder(self.win)
+        builder.build_context_menu()
+        self.win.set_asr_backend_ui("nemotron")
+        self.assertEqual(self.win.asr_backend, "nemotron")
+
+        mock_act = MagicMock()
+        mock_act.data.return_value = "en"
+        mock_act.text.return_value = "英语 (English)"
+
+        builder._on_source_lang_changed(mock_act)
+
+        # Engine should stay on nemotron
+        self.assertEqual(self.win.asr_backend, "nemotron")
+        self.assertEqual(self.win.source_lang, "en")
+
 
 if __name__ == "__main__":
     unittest.main()
