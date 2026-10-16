@@ -10,6 +10,7 @@ from . import perf
 from .config import (
     SAMPLE_RATE,
     SILERO_ONNX,
+    FIRERED_ONNX,
     VAD_MERGE_WINDOW_MS,
     VAD_MIN_SILENCE_MS,
     VAD_MIN_SPEECH_MS,
@@ -111,6 +112,118 @@ class _Energy:
         return None
 
 
+class _FbankExtractor:
+    """Zero-dependency Kaldi-compatible 80-dim log-mel filterbank extractor."""
+
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        n_mels: int = 80,
+        frame_len_ms: float = 25.0,
+        frame_shift_ms: float = 10.0,
+        n_fft: int = 512,
+        low_freq: float = 20.0,
+        high_freq: float = 0.0,
+    ):
+        self.sample_rate = sample_rate
+        self.frame_len = int(sample_rate * frame_len_ms / 1000.0)  # 400
+        self.frame_shift = int(sample_rate * frame_shift_ms / 1000.0)  # 160
+        self.n_fft = n_fft
+        self.window = np.hamming(self.frame_len).astype(np.float32)
+
+        if high_freq <= 0.0:
+            high_freq = sample_rate / 2.0
+        low_mel = 1127.0 * np.log(1.0 + low_freq / 700.0)
+        high_mel = 1127.0 * np.log(1.0 + high_freq / 700.0)
+        mel_points = np.linspace(low_mel, high_mel, n_mels + 2)
+        hz_points = 700.0 * (np.exp(mel_points / 1127.0) - 1.0)
+        bin_points = np.floor((n_fft + 1) * hz_points / sample_rate).astype(int)
+
+        num_fft_bins = n_fft // 2 + 1
+        self.banks = np.zeros((n_mels, num_fft_bins), dtype=np.float32)
+        for i in range(n_mels):
+            left, center, right = bin_points[i], bin_points[i + 1], bin_points[i + 2]
+            for j in range(left, center):
+                if center > left:
+                    self.banks[i, j] = (j - left) / (center - left)
+            for j in range(center, right):
+                if right > center:
+                    self.banks[i, j] = (right - j) / (right - center)
+
+    def extract(self, pcm_chunk: np.ndarray) -> np.ndarray:
+        if len(pcm_chunk) < self.frame_len:
+            return np.zeros((0, 80), dtype=np.float32)
+        num_frames = 1 + (len(pcm_chunk) - self.frame_len) // self.frame_shift
+        frames = np.lib.stride_tricks.as_strided(
+            pcm_chunk,
+            shape=(num_frames, self.frame_len),
+            strides=(pcm_chunk.strides[0] * self.frame_shift, pcm_chunk.strides[0]),
+        ).copy()
+        frames[:, 1:] = frames[:, 1:] - 0.97 * frames[:, :-1]
+        frames[:, 0] = frames[:, 0] * (1.0 - 0.97)
+        frames = frames * self.window
+        rfft = np.fft.rfft(frames, n=self.n_fft)
+        power_spec = (np.abs(rfft) ** 2).astype(np.float32)
+        mel_energies = np.dot(power_spec, self.banks.T)
+        return np.log(np.maximum(mel_energies, 1e-10))
+
+
+class _FireRedVad:
+    """FireRedVAD DFSMN Streaming Voice Activity Detector via ONNX Runtime."""
+
+    def __init__(self, model_dir: Path):
+        import json
+        import onnxruntime as ort
+
+        onnx_path = model_dir / "firered_vad.onnx"
+        cmvn_path = model_dir / "cmvn.json"
+        with open(cmvn_path, "r", encoding="utf-8") as f:
+            cmvn = json.load(f)
+        self.mean = np.array(cmvn["means"], dtype=np.float32)
+        self.inv_std = np.array(cmvn["inv_stddevs"], dtype=np.float32)
+
+        options = ort.SessionOptions()
+        options.inter_op_num_threads = 1
+        options.intra_op_num_threads = 1
+        self.session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
+        self.fbank = _FbankExtractor()
+        self.reset()
+
+    def reset(self) -> None:
+        self.caches = {f"cache_{i}": np.zeros((1, 128, 10), dtype=np.float32) for i in range(8)}
+        self.leftover = np.zeros(0, dtype=np.float32)
+
+    def prob(self, frame: np.ndarray) -> float:
+        if len(frame) > 0 and np.max(np.abs(frame)) <= 1.01:
+            scaled = frame * 32768.0
+        else:
+            scaled = frame
+
+        data = np.concatenate([self.leftover, scaled]) if len(self.leftover) else scaled
+        feats = self.fbank.extract(data)
+        if len(feats) == 0:
+            self.leftover = data
+            return 0.0
+
+        consumed = len(feats) * self.fbank.frame_shift
+        self.leftover = data[consumed:]
+
+        norm_feat = (feats - self.mean) * self.inv_std
+        norm_feat = np.expand_dims(norm_feat, axis=0)
+
+        inputs = {"feat": norm_feat, **self.caches}
+        outputs = self.session.run(None, inputs)
+        probs = outputs[0]
+        for i in range(8):
+            self.caches[f"cache_{i}"] = outputs[i + 1]
+
+        return float(np.mean(probs)) if probs.size > 0 else 0.0
+
+
 _VAD = None
 
 
@@ -118,6 +231,17 @@ def load_vad():
     global _VAD
     if _VAD is not None:
         return _VAD
+    import os
+    vad_choice = os.environ.get("TRANSLATION_VAD_BACKEND", "").lower().strip()
+    if vad_choice in ("firered", "fireredvad"):
+        firered_dir = FIRERED_ONNX.parent
+        if FIRERED_ONNX.exists() and FIRERED_ONNX.stat().st_size > 100_000:
+            try:
+                _VAD = _FireRedVad(firered_dir)
+                print(f"VAD: firered {FIRERED_ONNX}")
+                return _VAD
+            except Exception as exc:
+                print(f"VAD: firered failed ({exc}), falling back to silero")
     if SILERO_ONNX.exists() and SILERO_ONNX.stat().st_size > 100_000:
         try:
             _VAD = _Silero(SILERO_ONNX)

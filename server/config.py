@@ -173,10 +173,11 @@ MODELS_DIR = resolve_models_dir()
 
 def set_models_dir(path: str | Path) -> None:
     """Set custom models directory and update all model paths."""
-    global MODELS_DIR, SILERO_ONNX, QWEN3_ASR_MODEL, QWEN3_ASR_MMPROJ
+    global MODELS_DIR, SILERO_ONNX, FIRERED_ONNX, QWEN3_ASR_MODEL, QWEN3_ASR_MMPROJ
     p = Path(path).resolve()
     MODELS_DIR = p
     SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+    FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
     QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
     QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
     cfg = load_desktop_config()
@@ -253,6 +254,7 @@ if hasattr(sys, "_MEIPASS") and (Path(sys._MEIPASS) / "models" / "silero_vad.onn
     SILERO_ONNX = Path(sys._MEIPASS) / "models" / "silero_vad.onnx"
 else:
     SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
 
 # Audio
 SAMPLE_RATE = 16000
