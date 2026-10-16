@@ -58,8 +58,8 @@ class TestPet360BallInteraction:
         # guess instead of widening the tolerance, which keeps the exact endpoint
         # check -- the contract is "docks to left edge + 4", not "gets near it".
         #
-        # waitUntil rather than waitSignal because _snap_to_screen_edge starts the
-        # animation synchronously, so the finished signal can be missed.
+        # Stop dock timer so the 2000ms collapse does not race and restart pos_anim under suite load
+        pet._dock_timer.stop()
         qtbot.waitUntil(
             lambda: pet._pos_anim.state() == QAbstractAnimation.State.Stopped,
             timeout=5000,
@@ -75,13 +75,14 @@ class TestPet360BallInteraction:
         # Dock to right edge
         pet.move(geom.right() - pet.width() - 10, geom.top() + 100)
         pet._snap_to_screen_edge()
-        qtbot.wait(260)
+        pet._dock_timer.stop()
+        qtbot.waitUntil(lambda: pet._pos_anim.state() == QAbstractAnimation.State.Stopped, timeout=5000)
         assert pet._dock_side == "right"
         assert pet._is_docked is False
 
         # Trigger dock collapse
         pet._collapse_to_dock()
-        qtbot.wait(300)
+        qtbot.waitUntil(lambda: pet._pos_anim.state() == QAbstractAnimation.State.Stopped, timeout=5000)
         assert pet._is_docked is True
         # Part of it should be off-screen
         assert pet.x() > geom.right() - pet.width()
@@ -90,7 +91,7 @@ class TestPet360BallInteraction:
         class DummyEnterEvent:
             pass
         pet.enterEvent(DummyEnterEvent())
-        qtbot.wait(220)
+        qtbot.waitUntil(lambda: pet._pos_anim.state() == QAbstractAnimation.State.Stopped, timeout=5000)
         assert pet._is_docked is False
         assert pet.x() == geom.right() - pet.width() - 4
 
