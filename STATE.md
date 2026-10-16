@@ -1,7 +1,7 @@
 # STATE
 
-一页速查表。**每次会话必读全文（<80 行）。**
-细节、证据与历史排障全部归档于 `REPORT.md`，通过 `python scripts/rag.py query "..."` 检索。
+一页速查表。**每次会话必读全文（<80 行）。**  
+细节、证据与历史排障全部归档于 `REPORT.md`，通过 `python scripts/rag.py query "..."` 检索。  
 规则宪章见 `AGENT.md`，推进路线见 `PLAN.md`，系统技术规格见 `ARCHIVE.md`。
 
 ## 1. 核心体感目标
@@ -16,33 +16,31 @@
 - **物理路径隔离**：模型权重统一锁定为 `D:\TranslationDesktop\models\`，不依赖仓库内临时相对路径。
 - **Fail-Fast 原则**：模型权重缺失或服务端口不可达必须抛出致命错误并退出，**绝对禁止静默降级**为旧模型。
 - **上屏闭环原则**：任何评测以 `caption.paint > 0` 为前置门禁；未被消费渲染的数据一律判为 VOID。
+- **活体内核验证**：参数生效必须以操作系统内核命令行（`Win32_Process` / `/proc/<pid>/cmdline`）与引擎遥测为准。
 - **语种与回放策略**：产品默认 `auto`。评测回放默认通过 socket PCM 注入，需语种对照时显式设 `TRANSLATION_REPLAY_LANGUAGE=en`。
 
 ## 3. 当前默认生效值（2026-10-16 状态 SSOT）
 
 | 模块 | 生效配置 / 规格 | 说明 |
 |---|---|---|
-| **ASR 引擎** | Qwen3-ASR (0.6B Q8_0, 8099 端口, **-c 2048 -np 4 四槽位并发**) | SSOT 显存预算（512 tok/slot，最恶劣15s音频358 tok < 512，零OOM）；全局注入 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 严控内存；ASR P50 174ms |
-| **VAD 调度** | 连续静音密度调控曲线 `limit(ratio)` (4s~16s 动态伸缩) + 双引擎热切换 | 默认 Silero VAD (0.139ms/帧, 高抗BGM误报)；UI 无感切换 FireRedVAD (0.835ms/帧, 纯NumPy+DFSMN, 弱音耳语提升4~12%召回)；配置持久化 |
+| **ASR 引擎** | Qwen3-ASR (0.6B Q8_0, 8099 端口, **-c 2048 -np 4 四槽位并发**) | SSOT 显存预算；全局注入 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 严控内存；ASR P50 174ms |
+| **VAD 调度** | 连续静音密度调控曲线 `limit(ratio)` (4s~16s 动态伸缩) + 双引擎热切换 | 默认 Silero VAD (0.139ms/帧, 高抗BGM误报)；UI 无感切换 FireRedVAD (0.835ms/帧, 弱音耳语提升4~12%召回)；配置持久化 |
 | **翻译引擎** | Index-Translate-2B.Q4_K_M.gguf (8080 端口, **-c 2048 -np 3 三槽位并发**) | 关闭 reasoning 杜绝空转；全局注入 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 严控内存；MT TTFT P50 80ms |
 | **流水线调度** | Block 块状直出 + 30s 持续静音自动缓存清理/GC | 杜绝长时间运行内存暗漏；端到端综合延迟 ~255ms |
 | **UI 呈现** | 原生置顶字幕窗 + 连续动态下潜消散 `DismissDelay(N)` (1.5s~6.0s) | 基于生理阅读速率自适应消散，短词不霸屏，长句不焦虑；双行滚动常驻 |
 | **音频采集** | WASAPI 系统回环 + Linux PipeWire/PulseAudio 支持 | 跨平台进程级精准音频抓取与增强 |
-| **自动化门禁** | pytest 365+ passed (100% 绿) + 红队自检工作流 (`redteam-audit`) | 编译部署直达 `D:\TranslationDesktop` 并产出 `TranslationDesktop-Release.zip` 及桌面源码包 |
+| **自动化门禁** | pytest 365+ passed (100% 绿) + 活体命令行内核校验 + 红队自检工作流 | 编译部署直达 `D:\TranslationDesktop` 并产出 `TranslationDesktop-Release.zip` 及桌面源码包 |
 
 ## 4. 当前推进队列
 
-1. **[测试 A 已完成] 离线翻译模型横评**：Index-Translate 2B (Q4_K_M) 确认口语第一；Hy-MT2 1.8B 确认为极速备选。
-2. **[测试 C 已完成] Qwen3 切片档位与 Nemotron 对照**：1000ms 确立为最优解；纯端点 E1 与 160ms 流式 Nemotron 证伪。
-3. **[测试 B 已完成] `ds2_*` 10 片段全量矩阵**：弱音 100% 满血召回；静音 100% CLEAN 零误触发；动作低信噪比宁漏勿误。
-4. **[测试 D/E/F 已完成] 真实长片体感回看**：《生活大爆炸》3分钟全场景集与《奇异博士2》20分钟（光照会篇章）长时回放完成，召回 96.2%~100%，双行消除短句抹杀，GPU 稳态 56°C / 10.7W（风扇停转）。
-5. **[测试 G 已完成] 双 VAD 引擎 A/B 矩阵横评与 UI 无感热重载**：完成全部 10 份 DS2、3 份 TBBT 及 4 份真实 BGM 伴奏全场景 17 项评测。密集对话一致率达 96.7%；轻声弱音 FireRed 召回提升 4.7%~12.1%；纯音乐伴奏 Silero 误触发率低 41.2% 更稳健；UI 菜单切换无需环境变量，配置落盘并在活会话中热更新生效。
-6. **[测试 H 已完成] llama.exe / llama-server 全局 SSOT 内存硬约束与防膨胀**：全局接入 `--cache-ram 512`（将 Prompt 缓存上限严控为 512MB）、`--ctx-checkpoints 1`（杜绝多 slot 检查点克隆膨胀）、`--no-cache-idle-slots`（连接断开即释放槽位，杜绝僵尸槽位残留）。通过 `server/serve_config.py` 统一下发，严格区分 `llama.exe serve` 与 `llama-server.exe` 语法，经 Windows 实测与 365 项自动化测试验证无回归。
+1. **[测试 G 已完成] 双 VAD 引擎 A/B 矩阵横评与 UI 无感热重载**：17 项全场景评测完成，UI 菜单无感切换落盘。
+2. **[测试 H 已完成] llama.exe / llama-server 全局 SSOT 内存硬约束**：`--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 全局注入，实测生效。
+3. **[文档生态重构已完成] 治愈上下文漂移与行数门禁**：`AGENT.md` 精简至 <60 行纯指令；案例全部下沉至 `REPORT.md`（§60.9/§60.10）；红队工作流固化活体内核命令行检验门禁。
 
 ## 5. 核心证伪与警示（Top 5 铁律）
 
-1. **拒绝假证据**：名字写着不等于生效；断言必须落在活进程读数上，严禁拿参数名当实测结论。
+1. **拒绝假证据**：名字写着不等于生效；断言必须落在操作系统内核进程物理命令行（`Win32_Process`）与底层引擎日志上。
 2. **消费端未通即为零**：没有 `caption.paint` 记录的 ASR/MT 产出都是自嗨，不可计入体感指标。
 3. **分母过大稀释 Dice**：长音频块与短台词对比会导致召回率假性清零，匹配器必须结合前缀冻结分句对齐。
 4. **拒绝静默降级**：缺少依赖直接报错，绝不能在评测中用备选模型偷换主测模型。
-5. **历史查询走 RAG**：查阅实验记录运行 `python scripts/rag.py query "关键词"`，严禁往本文件堆砌历史日记。
+5. **历史查询走 RAG**：查阅实验记录运行 `python scripts/rag.py query "关键词"`，严禁往工作契约堆砌历史日记。

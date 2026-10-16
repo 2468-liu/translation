@@ -5,7 +5,7 @@ description: 发布前与提交前的红队对抗自检工作流 (Red Team Pre-C
 
 # 红队自检标准工作流 (Red Team Self-Audit Workflow)
 
-在任何向 `git` 提交变更、向 `GitHub` 推送代码、打包发行版 `TranslationDesktop.exe` 或产出 `TranslationDesktop-Release.zip` 之前，**必须严格按序执行以下五级红队自检防线**：
+在任何向 `git` 提交变更、向 `GitHub` 推送代码、打包发行版 `TranslationDesktop.exe` 或产出 `TranslationDesktop-Release.zip` 之前，**必须严格按序执行以下六级红队自检防线**：
 
 ---
 
@@ -23,13 +23,24 @@ description: 发布前与提交前的红队对抗自检工作流 (Red Team Pre-C
 
 ---
 
-### 第二级：全量自动化回归测试 (100% Green Regressions)
+### 第二级：活体进程与内核命令行审计 (Live Kernel Process & Telemetry Audit)
+1. **孤儿与看门狗进程查杀**：
+   - 查杀后台残留的旧版 `TranslationDesktop.exe`、`llama.exe` 或 `llama-server.exe` 僵尸进程，杜绝端口复用导致的参数失效；
+2. **内核物理命令行真实验证**：
+   - 运行 `python scripts/verify_live_llama_args.py`，通过操作系统内核（`Win32_Process` / `/proc/<pid>/cmdline`）检验活体进程的真实命令行；
+   - 确认 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 物理注入；
+   - 捕获 C++ 底层启动日志，确认打印 `prompt cache is enabled, size limit: 512 MiB` 与 `context checkpoints enabled, max = 1`。
+
+---
+
+### 第三级：全量自动化回归测试 (100% Green Regressions)
 运行全局回归套件：
 ```bash
 python -m pytest tests/ -q
 ```
-* **硬性通过指标**：测试用例通过率必须为 **100%**（当前基线 359+ 用例全绿，0 失败，0 错误）；
+* **硬性通过指标**：测试用例通过率必须为 **100%**（当前基线 365+ 用例全绿，0 失败，0 错误）；
 * **重点回归覆盖**：
+  - `tests/test_serve_config_memory.py`：SSOT 内存硬约束与参数结构断言；
   - `tests/test_vad.py` & `tests/test_firered_vad.py`：连续静音调控单调性、短对话保留、前音节保护、FireRedVAD 纯 NumPy Fbank 特征提取、DFSMN 缓存管理与 UI 切换持久化；
   - `tests/test_nemotron_gpu.py`：Vulkan 独显优先级与状态重置；
   - `tests/test_ui_language.py`：语言切换信号贯通、菜单状态同步与持久化；
@@ -37,7 +48,7 @@ python -m pytest tests/ -q
 
 ---
 
-### 第三级：真实音频链路穿透自检 (Real Pipeline Interception)
+### 第四级：真实音频链路穿透自检 (Real Pipeline Interception)
 运行红队快速拦截矩阵（Layer 1）：
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/run_redteam_matrix.ps1 -Layer 1
@@ -49,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_redteam_matrix.ps1 -Layer 1
 
 ---
 
-### 第四级：独立构建与压缩包封包验证 (Packaging & ZIP Artifact Audit)
+### 第五级：独立构建与压缩包封包验证 (Packaging & ZIP Artifact Audit)
 运行自动化打包与桌面发布同步：
 1. **Windows 独立 EXE 与 Release ZIP**：
 ```powershell
@@ -68,7 +79,7 @@ python scripts/build_distribution_zip.py
 
 ---
 
-### 第五级：清剿“只加不删”的垃圾补丁与冗余债务 (Dead Cruft & Debt Audit)
+### 第六级：清剿“只加不删”的垃圾补丁与冗余债务 (Dead Cruft & Debt Audit)
 * **严禁“只加不删”的反模式 (Accumulator Anti-Pattern)**：
   1. **排查临时探针与孤儿脚本**：审查 `scripts/` 与根目录，清理已完成历史使命、一次性试错遗留的临时测试脚本；
   2. **排查幽灵与失效测试用例**：审查 `tests/`，若某个旧机制已被高层统一架构取代，坚决重构或彻底删除失效的死测试断言，严禁用 `skip` 或在死用例上无休止贴胶水层；
@@ -77,7 +88,12 @@ python scripts/build_distribution_zip.py
 
 ---
 
-### 第六级：文档台账与版本控制发布 (VCS Sync & Ledger Trail)
-1. 更新 `STATE.md` 与 `PLAN.md`，记录本次交付的客观证据与最新测试数据；
-2. 严禁提交本地临时垃圾文件（如 `.log`、临时音频切片、未压缩测试中间件）；
-3. 提交 git commit 并推送至远程分支。
+### 第七级：文档台账与版本控制发布 (VCS Sync & Ledger Trail)
+1. **文档行数门禁自检**：
+   - `AGENT.md` 必须 < 120 行（纯指令）；
+   - `STATE.md` 必须 < 80 行；
+   - `PLAN.md` 必须 < 60 行；
+   - 事故故事与测试大表必须归档于 `REPORT.md`，并执行 `python scripts/rag.py index`。
+2. **干净提交与推送**：
+   - 严禁提交本地临时垃圾文件（如 `.log`、临时音频切片、未压缩测试中间件）；
+   - 提交 git commit 并推送至远程分支。
