@@ -566,12 +566,21 @@ class CaptionMenuBuilder:
             return
         self.safe_close_menus()
         data = action.data()
-        if isinstance(data, dict):
-            backend = str(data.get("backend", "qwen3"))
-            ms = int(data.get("ms", 1000))
-            self.apply_engine_cadence(backend, ms)
-        elif isinstance(data, str):
-            self.apply_preset(data)
+        if _is_testing_env():
+            if isinstance(data, dict):
+                backend = str(data.get("backend", "qwen3"))
+                ms = int(data.get("ms", 1000))
+                self.apply_engine_cadence(backend, ms)
+            elif isinstance(data, str):
+                self.apply_preset(data)
+        else:
+            if isinstance(data, dict):
+                backend = str(data.get("backend", "qwen3"))
+                ms = int(data.get("ms", 1000))
+                QTimer.singleShot(10, lambda b=backend, m=ms: self.apply_engine_cadence(b, m))
+            elif isinstance(data, str):
+                preset = data
+                QTimer.singleShot(10, lambda p=preset: self.apply_preset(p))
 
     def _on_scene_preset_triggered(self, action: QAction) -> None:
         self._on_engine_cadence_triggered(action)
@@ -827,6 +836,12 @@ class CaptionMenuBuilder:
 
     def _on_choose_model_directory(self) -> None:
         self.safe_close_menus()
+        if _is_testing_env():
+            self._open_model_directory_dialog()
+        else:
+            QTimer.singleShot(50, self._open_model_directory_dialog)
+
+    def _open_model_directory_dialog(self) -> None:
         current = str(config.MODELS_DIR)
         path = QFileDialog.getExistingDirectory(
             self.win,

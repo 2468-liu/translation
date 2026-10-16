@@ -20,28 +20,30 @@ if command -v apt &> /dev/null; then
     if ! apt-cache show libasound2t64 &> /dev/null; then
         ASOUND_PKG="libasound2"
     fi
-    sudo apt install -y \
-        python3 \
-        python3-venv \
-        python3-pip \
-        libpulse0 \
-        "$ASOUND_PKG" \
-        libgl1 \
-        libegl1 \
-        libxcb-cursor0 \
-        libxcb-xinerama0 \
-        libxcb-icccm4 \
-        libxcb-image0 \
-        libxcb-keysyms1 \
-        libxcb-randr0 \
-        libxcb-render-util0 \
-        libxcb-shape0 \
-        libxkbcommon-x11-0 \
-        fonts-noto-cjk \
-        fonts-wqy-microhei \
-        psmisc \
-        lsof \
+    APT_DEPS=(
+        python3
+        python3-venv
+        python3-pip
+        libpulse0
+        "$ASOUND_PKG"
+        libgl1
+        libegl1
+        libxcb-cursor0
+        libxcb-xinerama0
+        libxcb-icccm4
+        libxcb-image0
+        libxcb-keysyms1
+        libxcb-randr0
+        libxcb-render-util0
+        libxcb-shape0
+        libxkbcommon-x11-0
+        fonts-noto-cjk
+        fonts-wqy-microhei
+        psmisc
+        lsof
         curl
+    )
+    sudo apt install -y "${APT_DEPS[@]}"
 fi
 
 # 2. 创建 Python 独立虚拟环境 (绕过 PEP 668 EXTERNALLY-MANAGED 限制)

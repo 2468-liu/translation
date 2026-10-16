@@ -410,7 +410,10 @@ class QtCaptionWindow(QWidget):
 
     def show_history_drawer(self):
         self.menu_manager.safe_close_menus()
-        self.history_drawer.show_drawer()
+        if "pytest" in sys.modules or "unittest" in sys.modules:
+            self.history_drawer.show_drawer()
+        else:
+            QTimer.singleShot(50, self.history_drawer.show_drawer)
 
     def _on_toggle_capture_triggered(self):
         self.menu_manager.safe_close_menus()
