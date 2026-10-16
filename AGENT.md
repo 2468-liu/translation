@@ -78,8 +78,12 @@ python scripts/rag.py query "<你要查的东西>" --top 5
 2. 更新 `PLAN.md`：**队列变了才改**
 3. 若产生了执行结果 → 追加到 `REPORT.md`（细节、表格、原始数字放这里）
 4. 若产生了新的方法论教训 → 追加到 `REPORT.md` 末尾的教训段
-5. **运行 `python scripts/rag.py index`**（重建索引，否则新内容检索不到）
-6. 若本轮做了**停止/否决**某个方向 → 在 `STATE.md` 的「停止」或「待验证」区写一行，
+5. **运行红队自检工作流 (`.agents/workflows/redteam-audit.md`)**：
+   - 验证 349+ 项回归测试 100% 全绿；
+   - 运行打包与发行脚本，产出 `TranslationDesktop-Release.zip` 并同步至部署目录；
+   - 确保无任何静默降级、隐性硬阈值破坏或内存泄漏。
+6. **运行 `python scripts/rag.py index`**（重建索引，否则新内容检索不到）
+7. 若本轮做了**停止/否决**某个方向 → 在 `STATE.md` 的「停止」或「待验证」区写一行，
    **含触发条件**（什么情况下该重新考虑），不要只写"不做"
 
 ---

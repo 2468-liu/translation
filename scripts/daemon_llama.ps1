@@ -45,7 +45,7 @@ Write-Host "daemon_llama: Starting 8099 Qwen3-ASR ($(Split-Path $LlamaExe -Leaf)
 $args99 = if ($isCli) { @("serve") } else { @() }
 $args99 += @(
     "-m", $qwenModel, "--mmproj", $qwenMmproj, "--host", "127.0.0.1", "--port", "8099",
-    "-ngl", "99", "-c", "4096", "-t", "4", "-np", "2"
+    "-ngl", "99", "-c", "2048", "-t", "4", "-np", "4"
 )
 $p99 = Start-Process -FilePath $LlamaExe -WorkingDirectory $Root -ArgumentList $args99 `
     -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden -PassThru

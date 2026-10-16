@@ -23,6 +23,14 @@ class AsrEngine:
     def transcribe(self, audio: np.ndarray, language: str | None = None) -> tuple[str, str | None, float]:
         raise NotImplementedError
 
+    def reset_state(self) -> None:
+        """Reset internal buffers, connection pools, or transient state on sustained silence."""
+        pass
+
+    def close(self) -> None:
+        """Release underlying engine resources."""
+        pass
+
 
 def _pcm_bytes(audio: np.ndarray) -> bytes:
     """The 16-bit PCM on its own, without a container.

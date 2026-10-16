@@ -52,7 +52,7 @@ if (-not (Test-TcpPort 8099)) {
     $args99 = if ($isCli) { @("serve") } else { @() }
     $args99 += @(
         "-m", $qwenModel, "--mmproj", $qwenMmproj, "--host", "127.0.0.1", "--port", "8099",
-        "-ngl", "99", "-c", "4096", "-t", "4", "-np", "2"
+        "-ngl", "99", "-c", "2048", "-t", "4", "-np", "4"
     )
     Start-Process -FilePath $LlamaExe -WorkingDirectory $Root -ArgumentList $args99 `
         -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden

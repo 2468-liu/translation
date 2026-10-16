@@ -471,6 +471,83 @@ class VadDualThresholdHysteresisTests(unittest.TestCase):
         self.assertGreaterEqual(delivered_audio.size, 20 * FRAME)
 
 
+class ContinuousSilenceDensityRegulationTests(unittest.TestCase):
+    """Tests for continuous silence density regulation curve and UtteranceSplitter integration."""
+
+    def test_density_curve_monotonic_and_bounds(self):
+        from server.serve_config import (
+            compute_density_limit_ms,
+            DENSITY_FLOOR,
+            DENSITY_CEIL,
+            DENSITY_BASE,
+            DENSITY_R0,
+        )
+        # Floor clamping on pure speech (ratio = 0.0)
+        self.assertEqual(compute_density_limit_ms(0.0), DENSITY_FLOOR)
+        # Base anchor at R0
+        self.assertAlmostEqual(compute_density_limit_ms(DENSITY_R0), DENSITY_BASE, places=2)
+        # Monotonically increasing
+        limits = [compute_density_limit_ms(r) for r in [0.0, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0]]
+        self.assertTrue(all(x <= y for x, y in zip(limits, limits[1:])))
+        # Ceil clamping on high silence ratio
+        self.assertEqual(compute_density_limit_ms(1.0), DENSITY_CEIL)
+        # Ratio around 0.222 should give ~7768ms (smooth transition for previous ~8s cap)
+        self.assertAlmostEqual(compute_density_limit_ms(0.222), 7768.0, delta=100.0)
+
+    def test_splitter_density_tracking_and_telemetry(self):
+        from server.vad import UtteranceSplitter, cinema_tuning, FRAME
+        # 10 speech frames, 5 silence frames (within utterance), then 10 speech frames, then 15 silence frames (closes utterance)
+        pattern = [True] * 10 + [False] * 5 + [True] * 10 + [False] * 15
+        splitter = UtteranceSplitter(FakeVad(pattern), tuning=cinema_tuning())
+        payload = _payload(len(pattern), 0)
+        events = splitter.push(payload)
+
+        # Segment closed with 'end'
+        ends = [audio for kind, audio, _f in events if kind == "end"]
+        self.assertEqual(len(ends), 1)
+
+        # Telemetry should be recorded on splitter
+        self.assertGreater(splitter.last_segment_ratio, 0.0)
+        self.assertGreater(splitter.last_segment_limit_ms, 4000)
+        self.assertLessEqual(splitter.last_segment_limit_ms, 16000)
+
+        # After take, internal counters reset
+        self.assertEqual(splitter.speech_ms, 0)
+        self.assertEqual(splitter.silence_ms, 0)
+        self.assertEqual(splitter.total_silence_ms, 0)
+
+    def test_dynamic_merge_window_bounds(self):
+        from server.serve_config import (
+            compute_dynamic_merge_window_ms,
+            MERGE_WINDOW_FLOOR,
+            MERGE_WINDOW_CEIL,
+        )
+        # Short phonation (<100ms) clamps to floor (250ms)
+        self.assertEqual(compute_dynamic_merge_window_ms(50.0), MERGE_WINDOW_FLOOR)
+        self.assertEqual(compute_dynamic_merge_window_ms(100.0), MERGE_WINDOW_FLOOR)
+        # Mid-length phonation scales smoothly
+        w128 = compute_dynamic_merge_window_ms(128.0)
+        self.assertGreater(w128, MERGE_WINDOW_FLOOR)
+        self.assertLess(w128, MERGE_WINDOW_CEIL)
+        # Long phonation clamps to ceiling (600ms)
+        self.assertEqual(compute_dynamic_merge_window_ms(500.0), MERGE_WINDOW_CEIL)
+
+    def test_dynamic_dismiss_delay_reading_speed(self):
+        from server.serve_config import (
+            compute_dismiss_delay_ms,
+            DISMISS_FLOOR,
+            DISMISS_CEIL,
+        )
+        # Short words clamp to floor (1500ms)
+        self.assertEqual(compute_dismiss_delay_ms(0), DISMISS_FLOOR)
+        self.assertEqual(compute_dismiss_delay_ms(1), 1650)
+        # 10 chars -> 1500 + 1500 = 3000ms
+        self.assertEqual(compute_dismiss_delay_ms(10), 3000)
+        # Long sentence (35+ chars) clamps to ceiling (6000ms)
+        self.assertEqual(compute_dismiss_delay_ms(40), DISMISS_CEIL)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

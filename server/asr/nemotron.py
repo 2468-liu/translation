@@ -175,8 +175,8 @@ def check_nemotron_status() -> tuple[bool, str]:
 def _detect_best_vulkan_gpu() -> int:
     """Detect discrete NVIDIA/AMD GPU device index for Vulkan.
 
-    Falls back to 0 if detection fails or only integrated GPU is found.
-    Respects TRANSLATION_NEMO_GPU env var if explicitly set.
+    Prioritizes discrete GPUs (NVIDIA/AMD) over integrated GPUs (Intel/AMD APU).
+    Respects TRANSLATION_NEMO_GPU env var or desktop_config.json if explicitly set.
     """
     env_override = os.environ.get("TRANSLATION_NEMO_GPU")
     if env_override is not None and env_override.strip() != "":
@@ -184,6 +184,13 @@ def _detect_best_vulkan_gpu() -> int:
             return int(env_override.strip())
         except ValueError:
             pass
+
+    try:
+        cfg = config.load_desktop_config()
+        if "nemo_gpu" in cfg:
+            return int(cfg["nemo_gpu"])
+    except Exception:
+        pass
 
     try:
         vk_name = "vulkan-1.dll" if sys.platform == "win32" else "libvulkan.so.1"
@@ -230,12 +237,18 @@ def _detect_best_vulkan_gpu() -> int:
                 ("limits", ctypes.c_uint8 * 1024),
             ]
 
+        vk.vkCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        vk.vkCreateInstance.restype = ctypes.c_int
+        vk.vkDestroyInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        vk.vkDestroyInstance.restype = None
         vk.vkEnumeratePhysicalDevices.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_uint32),
             ctypes.POINTER(ctypes.c_void_p),
         ]
+        vk.vkEnumeratePhysicalDevices.restype = ctypes.c_int
         vk.vkGetPhysicalDeviceProperties.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        vk.vkGetPhysicalDeviceProperties.restype = None
 
         app = _VkAppInfo(1, None, b"probe", 1, b"probe", 1, (1 << 22) | (0 << 12))
         info = _VkInstInfo(1, None, 0, ctypes.pointer(app), 0, None, 0, None)
@@ -247,24 +260,30 @@ def _detect_best_vulkan_gpu() -> int:
             vk.vkEnumeratePhysicalDevices(inst, ctypes.byref(count), devs)
 
             best_idx = 0
-            best_score = -1
+            best_score = -100
             for idx, dev in enumerate(devs):
                 props = _VkProps()
                 vk.vkGetPhysicalDeviceProperties(dev, ctypes.byref(props))
+                dev_name = bytes(props.deviceName).split(b"\x00")[0].decode("utf-8", "ignore").lower()
                 score = 0
-                if props.vendorID == 0x10DE:
-                    score += 10
-                elif props.vendorID == 0x1002:
-                    score += 5
-                if props.deviceType == 2:
-                    score += 10
+                # Discrete GPU (type 2) gets highest priority
+                if props.deviceType == 2 or any(k in dev_name for k in ("geforce", "rtx", "gtx", "discrete")):
+                    score += 100
+                elif props.deviceType == 1 or any(k in dev_name for k in ("iris", "uhd", "integrated")):
+                    score -= 50  # Strongly penalize integrated GPU
+                # Vendor scoring
+                if props.vendorID == 0x10DE or "nvidia" in dev_name:
+                    score += 50
+                elif props.vendorID == 0x1002 or "amd" in dev_name:
+                    score += 25
                 if score > best_score:
                     best_score = score
                     best_idx = idx
             vk.vkDestroyInstance(inst, None)
+            print(f"[ASR Nemotron] Auto-detected best Vulkan GPU device index {best_idx} (score={best_score})")
             return best_idx
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ASR Nemotron] Vulkan GPU device probe notice: {e}")
     return 0
 
 
@@ -388,6 +407,10 @@ class NemotronAsrEngine:
         if is_hallucination(text):
             return "", detected_lang, conf
         return text, detected_lang, conf
+
+    def reset_state(self):
+        """Stateless recognizer; explicit cache/sync boundary hook."""
+        pass
 
     def close(self):
         with self._lock:

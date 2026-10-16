@@ -220,9 +220,9 @@ class QtCaptionWindow(QWidget):
         self._resize_start_geo: Optional[QRect] = None
 
         # Standalone settings state
-        self.source_lang = "auto"
-        self.target_lang = "zh"
         cfg_init = config.load_desktop_config()
+        self.source_lang = str(cfg_init.get("language", "auto"))
+        self.target_lang = str(cfg_init.get("target_language", "zh"))
         self.asr_backend: str = str(cfg_init.get("asr_backend", "qwen3"))
         self.partial_interval_ms: int = int(cfg_init.get("partial_interval_ms", 1000 if self.asr_backend == "qwen3" else 160))
         self.current_audio_pid = 0
@@ -681,11 +681,9 @@ class QtCaptionWindow(QWidget):
     def _start_dismiss_timer(self) -> None:
         """Start auto-hide timer with dynamic TTL based on character count and human reading speed."""
         if self.line and self.dismiss_ms > 0:
+            from ..serve_config import compute_dismiss_delay_ms
             char_count = len(self.line.strip())
-            # Human reading baseline: 1500ms eye saccade + 220ms per character
-            human_read_ttl = 1500 + int(char_count * 220)
-            base_dismiss = int(self.dismiss_ms)
-            effective_ttl = max(base_dismiss, min(25000, human_read_ttl))
+            effective_ttl = compute_dismiss_delay_ms(char_count)
             self._dismiss_timer.start(effective_ttl)
 
     def _on_dismiss_timeout(self) -> None:
@@ -901,6 +899,18 @@ class QtCaptionWindow(QWidget):
             self.update()
             return
         if lang is not None:
+            # If lang is a status/info message rather than a language code, display it directly
+            src_clean = lang.strip().lower()
+            is_code = (
+                src_clean in _LANG
+                or src_clean in ("auto", "cantonese")
+                or (len(src_clean) <= 6 and src_clean.replace("-", "").replace("_", "").isalpha())
+            )
+            if not is_code:
+                self.status = lang
+                self.status_label.setText(lang)
+                self.update()
+                return
             self.source_lang = lang
         if target_lang is not None:
             self.target_lang = target_lang
@@ -1425,6 +1435,16 @@ class QtCaptionWindow(QWidget):
             self.show_source(str(value or ""))
         elif kind == "status":
             self.set_status(str(value or ""))
+        elif kind in ("language", "source_language"):
+            code = str(value or "auto")
+            self.source_lang = code
+            self.set_status(self.source_lang, self.target_lang)
+            self.config_changed.emit({"language": code})
+        elif kind in ("target_language", "tgt_lang"):
+            code = str(value or "zh")
+            self.target_lang = code
+            self.set_status(self.source_lang, self.target_lang)
+            self.config_changed.emit({"target_language": code})
         elif kind == "clear":
             self.clear()
         elif kind == "hide":

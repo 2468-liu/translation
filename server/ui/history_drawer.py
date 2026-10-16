@@ -171,6 +171,14 @@ class HistoryDrawerWidget(QWidget):
         count = self.list_layout.count()
         self.list_layout.insertWidget(max(0, count - 1), item_card)
 
+        # Prune old Qt widget cards from layout to prevent UI memory leaks
+        while self.list_layout.count() > self._max_items + 1:
+            old_item = self.list_layout.takeAt(0)
+            if old_item:
+                old_w = old_item.widget()
+                if old_w:
+                    old_w.deleteLater()
+
         # Auto scroll to bottom
         QTimer.singleShot(20, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()

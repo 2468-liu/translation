@@ -27,6 +27,12 @@ from .config import (
     GEMMA_VAD_SPEECH_PAD_MS,
     _env_int,
 )
+from .serve_config import (
+    compute_density_limit_ms,
+    compute_dynamic_merge_window_ms,
+    MIN_PHONATION_MS,
+    DENSITY_BASE,
+)
 
 FRAME = 512  # 32ms at 16kHz
 # Set by the caller. The whisper pipeline and the audio-native model have
@@ -219,7 +225,7 @@ def cinema_tuning() -> Tuning:
         soft_cut_speech_ms=soft_speech,
         soft_cut_silence_ms=soft_silence,
         partial_interval_ms=_effective_partial_interval(),
-        min_speech_ms=100,
+        min_speech_ms=_env_int("TRANSLATION_CINEMA_MIN_SPEECH_MS", 100),
         merge_window_ms=500,
         preroll_max_ms=500,
         threshold=0.40,
@@ -297,6 +303,9 @@ class UtteranceSplitter:
         self.in_speech = False
         self.speech_ms = 0
         self.silence_ms = 0
+        self.total_silence_ms = 0.0
+        self.last_segment_ratio = 0.0
+        self.last_segment_limit_ms = float(DENSITY_BASE)
         # Rolling raw frames for the leading pre-roll, and the run of consecutive
         # non-speech frames -- the gap the pre-roll is clamped to. The run is
         # counted on every non-speech frame and reset when speech starts, so it
@@ -359,11 +368,20 @@ class UtteranceSplitter:
         self.in_speech = False
         self.speech_ms = 0
         self.silence_ms = 0
+        self.total_silence_ms = 0.0
+        self.last_segment_ratio = 0.0
+        self.last_segment_limit_ms = float(DENSITY_BASE)
         self.since_partial_ms = 0
         self.early_partial = False
         self._held_silence_ms = 0.0
         self._holding = False
         self.engine.reset()
+
+    def current_density_limit_ms(self) -> tuple[float, float]:
+        """Calculates current within-segment silence ratio and dynamic max utterance limit in ms."""
+        total_ms = self.speech_ms + self.total_silence_ms
+        ratio = (self.total_silence_ms / total_ms) if total_ms > 0 else 0.0
+        return ratio, compute_density_limit_ms(ratio)
 
     def push(self, samples: np.ndarray) -> list[tuple[str, np.ndarray | None, bool]]:
         if samples.size == 0:
@@ -425,6 +443,7 @@ class UtteranceSplitter:
                     self._unreported_silence = 0.0
                     self._held_silence_ms = 0.0
                     self._holding = False
+                    self.total_silence_ms = 0.0
                     self._close_outside_silence()
                     events.append(("start", None, False))
                 resumed = self.silence_ms > 0
@@ -453,17 +472,21 @@ class UtteranceSplitter:
                     self.early_partial = False
                 self.since_partial_ms += self.frame_ms
                 t = self.tuning
-                if self.speech_ms >= t.max_utterance_ms:
+                ratio, dynamic_cap_ms = self.current_density_limit_ms()
+                if self.speech_ms >= dynamic_cap_ms:
                     perf.emit(
                         "vad",
                         "end",
                         why="max_length",
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
+                        ratio=round(ratio, 3),
+                        limit_ms=round(dynamic_cap_ms, 1),
                         early_partial=1 if self.early_partial else 0,
                         delivered=1,
                     )
-                    events.append(("end", self._take(), self.early_partial))
+                    early = self.early_partial
+                    events.append(("end", self._take(), early))
                 elif (
                     t.partial_interval_ms
                     and self.speech_ms >= t.min_speech_ms
@@ -474,6 +497,7 @@ class UtteranceSplitter:
             elif self.in_speech:
                 self.utterance.append(frame * NON_SPEECH_GAIN)
                 self.silence_ms += self.frame_ms
+                self.total_silence_ms += self.frame_ms
                 # Only counts while an utterance is being held open, so it cannot
                 # be confused with the ordinary closing silence above.
                 if self._holding:
@@ -488,16 +512,20 @@ class UtteranceSplitter:
                     # The neighbour never came. Close it as its own fragment,
                     # which is the outcome that used to happen immediately; the
                     # merge window only buys the chance of a better one.
+                    ratio, dynamic_cap_ms = self.current_density_limit_ms()
                     perf.emit(
                         "vad",
                         "end",
                         why="held_timeout",
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
+                        ratio=round(ratio, 3),
+                        limit_ms=round(dynamic_cap_ms, 1),
                         early_partial=1,
                         delivered=1,
                     )
-                    events.append(("end", self._take(), self.early_partial))
+                    early = self.early_partial
+                    events.append(("end", self._take(), early))
                     continue
                 if (
                     t.partial_interval_ms
@@ -515,48 +543,26 @@ class UtteranceSplitter:
                         and self.silence_ms >= t.soft_cut_silence_ms
                     )
                 ):
-                    # Why it closed, and the run that closed it, recorded here
-                    # while both are still true.
-                    #
-                    # Reconstructing this afterwards is what produced a wrong
-                    # answer already: a real recording was reported as having 8.2s
-                    # segments when the median was 1.37s, because the 8.2 came
-                    # from dividing wall-clock by an event count that excluded
-                    # everything the reuse path handled. The two were different
-                    # populations and the division spanned both.
                     if self.silence_ms >= t.min_silence_ms:
                         why = "silence"
                     else:
                         why = "soft_cut"
-                    # delivered= says whether an end event follows this line.
-                    #
-                    # It is not redundant with the min_speech_ms test, because this
-                    # emit sits ABOVE it -- that placement is deliberate, so the
-                    # closing reason is recorded while it is still true. The cost is
-                    # that a line reading `vad.end` does not mean a segment: a
-                    # fragment below the gate is logged and then dropped, and with a
-                    # merge window it is logged and then HELD, which is not a closing
-                    # at all. On e_3min's #6 arm that was 13 of 37 lines.
-                    #
-                    # Without this flag the count has to be recovered as
-                    # `vad.end - vad.held`, and that arithmetic is only valid on an
-                    # arm with a merge window -- vad.held is not emitted at all
-                    # otherwise, so subtracting it on the default arm would use a
-                    # field that does not exist. A number in the log beats a formula
-                    # someone has to remember the precondition of.
+                    ratio, dynamic_cap_ms = self.current_density_limit_ms()
                     perf.emit(
                         "vad",
                         "end",
                         why=why,
                         speech_ms=round(self.speech_ms, 1),
                         silence_ms=round(self.silence_ms, 1),
+                        ratio=round(ratio, 3),
+                        limit_ms=round(dynamic_cap_ms, 1),
                         early_partial=1 if self.early_partial else 0,
                         delivered=1 if self.speech_ms >= t.min_speech_ms else 0,
                     )
                     self._note_silence_run(self.silence_ms, inside=1)
                     if self.speech_ms >= t.min_speech_ms:
-                        events.append(("end", self._trim(self._copy()), self.early_partial))
-                        self._drop()
+                        early = self.early_partial
+                        events.append(("end", self._take(), early))
                     elif t.merge_window_ms > 0:
                         # Too short to stand alone: hold it for a neighbour
                         # instead of discarding it.
@@ -661,6 +667,9 @@ class UtteranceSplitter:
         return np.concatenate(self.utterance)
 
     def _take(self) -> np.ndarray:
+        total_ms = self.speech_ms + self.total_silence_ms
+        self.last_segment_ratio = (self.total_silence_ms / total_ms) if total_ms > 0 else 0.0
+        self.last_segment_limit_ms = compute_density_limit_ms(self.last_segment_ratio)
         audio = self._trim(self._copy())
         self._drop()
         return audio
@@ -681,6 +690,7 @@ class UtteranceSplitter:
         self.in_speech = False
         self.speech_ms = 0
         self.silence_ms = 0
+        self.total_silence_ms = 0.0
         self.since_partial_ms = 0
         self.early_partial = False
         self._held_silence_ms = 0.0

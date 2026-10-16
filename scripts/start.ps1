@@ -596,7 +596,7 @@ if (Test-Port $MtPort) {
                     } catch {}
                     Start-Sleep -Milliseconds 500
                     # Proceed to launch
-                    Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 2, -c 4096)"
+                    Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 4, -c 2048)"
                     $qwenIsCli = ((Split-Path $qwenExe -Leaf) -match "^llama(\.exe)?$")
                     $qwenLaunchArgs = if ($qwenIsCli) { @("serve") } else { @() }
                     $qwenLaunchArgs += @(
@@ -605,9 +605,9 @@ if (Test-Port $MtPort) {
                         "--host", "127.0.0.1",
                         "--port", "$Qwen3Port",
                         "-ngl", "99",
-                        "-c", "4096",
+                        "-c", "2048",
                         "-t", "4",
-                        "-np", "2"
+                        "-np", "4"
                     )
                     Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
                        -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
@@ -632,10 +632,7 @@ if (Test-Port $MtPort) {
                     }
                 }
             } else {
-                # -np 1. Measured: with four slots the 30-second repetition events were
-                # still bounded to the same 128-token cap, so slots were not the trigger,
-                # but one slot removes the concurrency the pipeline does not need anyway.
-                Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 2, -c 4096)"
+                Write-Note "llama-server start: Qwen3-ASR on $Qwen3Port ($(Split-Path $qwenExe -Leaf), -np 4, -c 2048)"
                 $qwenIsCli = ((Split-Path $qwenExe -Leaf) -match "^llama(\.exe)?$")
                 $qwenLaunchArgs = if ($qwenIsCli) { @("serve") } else { @() }
                 $qwenLaunchArgs += @(
@@ -644,9 +641,9 @@ if (Test-Port $MtPort) {
                     "--host", "127.0.0.1",
                     "--port", "$Qwen3Port",
                     "-ngl", "99",
-                    "-c", "4096",
+                    "-c", "2048",
                     "-t", "4",
-                    "-np", "2"
+                    "-np", "4"
                 )
                 Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
                    -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
