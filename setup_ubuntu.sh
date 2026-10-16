@@ -97,6 +97,7 @@ fi
 
 chmod +x start_ubuntu.sh 2>/dev/null || true
 chmod +x create_desktop_shortcut.sh 2>/dev/null || true
+chmod +x scripts/*.sh 2>/dev/null || true
 
 # 6. 生成桌面一键启动快捷方式
 if [ -f "./create_desktop_shortcut.sh" ]; then
