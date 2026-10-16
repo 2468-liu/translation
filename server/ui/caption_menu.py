@@ -179,57 +179,89 @@ class CaptionMenuBuilder:
 
         menu.addSeparator()
 
-        # 0.1 Direct Engine & Cadence Switch (一行ASR，一行NV，下级目录是ms)
+        # 1. 识别场景与引擎 (主菜单一级单选直达，带选中勾选)
         self.win.engine_cadence_group = QActionGroup(self.win)
         self.win.scene_group = self.win.engine_cadence_group  # Compatibility alias
 
-        qwen_menu = menu.addMenu("🧠 通用大模型 ASR (Qwen3)")
-        self.win._qwen_actions = []
-        for label, ms in QWEN_CADENCES:
-            act = qwen_menu.addAction(label)
-            act.setCheckable(True)
-            act.setData({"backend": "qwen3", "ms": ms})
-            self.win.engine_cadence_group.addAction(act)
-            self.win._qwen_actions.append(act)
+        self.win._scene_movie_act = menu.addAction("🎬 电影追剧 (Qwen3 1000ms·推荐)")
+        self.win._scene_movie_act.setCheckable(True)
+        self.win._scene_movie_act.setData({"backend": "qwen3", "ms": 1000})
+        self.win.engine_cadence_group.addAction(self.win._scene_movie_act)
 
-        nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
-        self.win._nv_actions = []
-        for label, ms in NV_CADENCES:
-            act = nv_menu.addAction(label)
-            act.setCheckable(True)
-            act.setData({"backend": "nemotron", "ms": ms})
-            self.win.engine_cadence_group.addAction(act)
-            self.win._nv_actions.append(act)
+        self.win._scene_speech_act = menu.addAction("⚡ 演讲对话 (Qwen3 500ms·快速)")
+        self.win._scene_speech_act.setCheckable(True)
+        self.win._scene_speech_act.setData({"backend": "qwen3", "ms": 500})
+        self.win.engine_cadence_group.addAction(self.win._scene_speech_act)
+
+        self.win._scene_stream_act = menu.addAction("🎙️ 极速同传 (Nemotron 160ms·流式)")
+        self.win._scene_stream_act.setCheckable(True)
+        self.win._scene_stream_act.setData({"backend": "nemotron", "ms": 160})
+        self.win.engine_cadence_group.addAction(self.win._scene_stream_act)
+
+        # 1.1 高级切片微调 (紧凑二级菜单，文案精简，绝不翻折)
+        adv_cadence_menu = menu.addMenu("⚙️ 高级切片微调")
+
+        act_qwen_750 = adv_cadence_menu.addAction("Qwen3 750ms (连贯平衡)")
+        act_qwen_750.setCheckable(True)
+        act_qwen_750.setData({"backend": "qwen3", "ms": 750})
+        self.win.engine_cadence_group.addAction(act_qwen_750)
+
+        act_qwen_250 = adv_cadence_menu.addAction("Qwen3 250ms (高频试探)")
+        act_qwen_250.setCheckable(True)
+        act_qwen_250.setData({"backend": "qwen3", "ms": 250})
+        self.win.engine_cadence_group.addAction(act_qwen_250)
+
+        adv_cadence_menu.addSeparator()
+
+        act_nv_80 = adv_cadence_menu.addAction("NV 80ms (极限超低延迟)")
+        act_nv_80.setCheckable(True)
+        act_nv_80.setData({"backend": "nemotron", "ms": 80})
+        self.win.engine_cadence_group.addAction(act_nv_80)
+
+        act_nv_320 = adv_cadence_menu.addAction("NV 320ms (通用均衡流式)")
+        act_nv_320.setCheckable(True)
+        act_nv_320.setData({"backend": "nemotron", "ms": 320})
+        self.win.engine_cadence_group.addAction(act_nv_320)
+
+        act_nv_560 = adv_cadence_menu.addAction("NV 560ms (高保真准确率)")
+        act_nv_560.setCheckable(True)
+        act_nv_560.setData({"backend": "nemotron", "ms": 560})
+        self.win.engine_cadence_group.addAction(act_nv_560)
+
+        act_nv_1120 = adv_cadence_menu.addAction("NV 1120ms (1.12s高精转录)")
+        act_nv_1120.setCheckable(True)
+        act_nv_1120.setData({"backend": "nemotron", "ms": 1120})
+        self.win.engine_cadence_group.addAction(act_nv_1120)
+
+        # Full arrays for test compatibility
+        self.win._qwen_actions = [self.win._scene_movie_act, act_qwen_750, self.win._scene_speech_act, act_qwen_250]
+        self.win._nv_actions = [act_nv_80, self.win._scene_stream_act, act_nv_320, act_nv_560, act_nv_1120]
 
         self.win.engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
-        # 0.2 VAD Engine Selector (Silero vs FireRedVAD)
-        vad_menu = menu.addMenu("🎙️ 语音检测引擎 (VAD)")
+        menu.addSeparator()
+
+        # 2. 语音检测引擎 VAD (主菜单一级单选直达，带选中勾选)
         self.win.vad_engine_group = QActionGroup(self.win)
-        self.win._vad_silero_act = vad_menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
+        self.win._vad_silero_act = menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
         self.win._vad_silero_act.setCheckable(True)
         self.win._vad_silero_act.setData("silero")
         self.win.vad_engine_group.addAction(self.win._vad_silero_act)
 
-        self.win._vad_firered_act = vad_menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
+        self.win._vad_firered_act = menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
         self.win._vad_firered_act.setCheckable(True)
         self.win._vad_firered_act.setData("firered")
         self.win.vad_engine_group.addAction(self.win._vad_firered_act)
 
         self.win.vad_engine_group.triggered.connect(self._on_vad_engine_triggered)
 
-        # Backward compatibility aliases for scene presets
-        self.win._scene_movie_act = self.win._qwen_actions[0]   # 1000ms
-        self.win._scene_speech_act = self.win._qwen_actions[2]  # 500ms
-        self.win._scene_stream_act = next((a for a in self.win._nv_actions if a.data().get("ms") == 160), self.win._nv_actions[0])    # 160ms
-
         # 2. Direct Core Toggles
-        self.win._rolling_two_lines_act = menu.addAction("📜 双行滚动字幕 (Google同款·抗高密度对白)")
+        self.win._rolling_two_lines_act = menu.addAction("📜 双行滚动字幕")
         self.win._rolling_two_lines_act.setCheckable(True)
         self.win._rolling_two_lines_act.setChecked(getattr(self.win, "rolling_two_lines", True))
         self.win._rolling_two_lines_act.toggled.connect(self.win._on_rolling_two_lines_toggled)
 
-        self.win._bilingual_act = menu.addAction("🔤 双语同显模式 (中英对照)")
+        self.win._bilingual_act = menu.addAction("🔤 双语同显模式")
         self.win._bilingual_act.setCheckable(True)
         self.win._bilingual_act.setChecked(getattr(self.win, "bilingual_mode", "trans_only") == "bilingual")
         self.win._bilingual_act.toggled.connect(self._on_context_bilingual_toggled)
@@ -360,59 +392,90 @@ class CaptionMenuBuilder:
 
         menu.addSeparator()
 
-        # 1. Direct Engine & Cadence Switch in Tray (一行ASR，一行NV，下级目录是ms)
+        # 1. 识别场景与引擎 in Tray (托盘一级单选直达)
         self.win.tray_engine_cadence_group = QActionGroup(self.win)
         self.win.tray_scene_group = self.win.tray_engine_cadence_group  # Compatibility alias
 
-        tray_qwen_menu = menu.addMenu("🧠 通用大模型 ASR (Qwen3)")
-        self.win._tray_qwen_actions = []
-        for label, ms in QWEN_CADENCES:
-            act = tray_qwen_menu.addAction(label)
-            act.setCheckable(True)
-            act.setData({"backend": "qwen3", "ms": ms})
-            self.win.tray_engine_cadence_group.addAction(act)
-            self.win._tray_qwen_actions.append(act)
+        self.win._tray_scene_movie = menu.addAction("🎬 电影追剧 (Qwen3 1000ms·推荐)")
+        self.win._tray_scene_movie.setCheckable(True)
+        self.win._tray_scene_movie.setData({"backend": "qwen3", "ms": 1000})
+        self.win.tray_engine_cadence_group.addAction(self.win._tray_scene_movie)
 
-        tray_nv_menu = menu.addMenu("⚡ 端侧极速流式 NV (Nemotron)")
-        self.win._tray_nv_actions = []
-        for label, ms in NV_CADENCES:
-            act = tray_nv_menu.addAction(label)
-            act.setCheckable(True)
-            act.setData({"backend": "nemotron", "ms": ms})
-            self.win.tray_engine_cadence_group.addAction(act)
-            self.win._tray_nv_actions.append(act)
+        self.win._tray_scene_speech = menu.addAction("⚡ 演讲对话 (Qwen3 500ms·快速)")
+        self.win._tray_scene_speech.setCheckable(True)
+        self.win._tray_scene_speech.setData({"backend": "qwen3", "ms": 500})
+        self.win.tray_engine_cadence_group.addAction(self.win._tray_scene_speech)
+
+        self.win._tray_scene_stream = menu.addAction("🎙️ 极速同传 (Nemotron 160ms·流式)")
+        self.win._tray_scene_stream.setCheckable(True)
+        self.win._tray_scene_stream.setData({"backend": "nemotron", "ms": 160})
+        self.win.tray_engine_cadence_group.addAction(self.win._tray_scene_stream)
+
+        # 1.1 高级切片微调 in tray
+        tray_adv_menu = menu.addMenu("⚙️ 高级切片微调")
+
+        tray_act_qwen_750 = tray_adv_menu.addAction("Qwen3 750ms (连贯平衡)")
+        tray_act_qwen_750.setCheckable(True)
+        tray_act_qwen_750.setData({"backend": "qwen3", "ms": 750})
+        self.win.tray_engine_cadence_group.addAction(tray_act_qwen_750)
+
+        tray_act_qwen_250 = tray_adv_menu.addAction("Qwen3 250ms (高频试探)")
+        tray_act_qwen_250.setCheckable(True)
+        tray_act_qwen_250.setData({"backend": "qwen3", "ms": 250})
+        self.win.tray_engine_cadence_group.addAction(tray_act_qwen_250)
+
+        tray_adv_menu.addSeparator()
+
+        tray_act_nv_80 = tray_adv_menu.addAction("NV 80ms (极限超低延迟)")
+        tray_act_nv_80.setCheckable(True)
+        tray_act_nv_80.setData({"backend": "nemotron", "ms": 80})
+        self.win.tray_engine_cadence_group.addAction(tray_act_nv_80)
+
+        tray_act_nv_320 = tray_adv_menu.addAction("NV 320ms (通用均衡流式)")
+        tray_act_nv_320.setCheckable(True)
+        tray_act_nv_320.setData({"backend": "nemotron", "ms": 320})
+        self.win.tray_engine_cadence_group.addAction(tray_act_nv_320)
+
+        tray_act_nv_560 = tray_adv_menu.addAction("NV 560ms (高保真准确率)")
+        tray_act_nv_560.setCheckable(True)
+        tray_act_nv_560.setData({"backend": "nemotron", "ms": 560})
+        self.win.tray_engine_cadence_group.addAction(tray_act_nv_560)
+
+        tray_act_nv_1120 = tray_adv_menu.addAction("NV 1120ms (1.12s高精转录)")
+        tray_act_nv_1120.setCheckable(True)
+        tray_act_nv_1120.setData({"backend": "nemotron", "ms": 1120})
+        self.win.tray_engine_cadence_group.addAction(tray_act_nv_1120)
+
+        self.win._tray_qwen_actions = [self.win._tray_scene_movie, tray_act_qwen_750, self.win._tray_scene_speech, tray_act_qwen_250]
+        self.win._tray_nv_actions = [tray_act_nv_80, self.win._tray_scene_stream, tray_act_nv_320, tray_act_nv_560, tray_act_nv_1120]
 
         self.win.tray_engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
-        # 1.1 VAD Engine in Tray
-        tray_vad_menu = menu.addMenu("🎙️ 语音检测引擎 (VAD)")
+        menu.addSeparator()
+
+        # 2. 语音检测引擎 in tray (托盘一级单选直达)
         self.win.tray_vad_group = QActionGroup(self.win)
-        self.win._tray_vad_silero = tray_vad_menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
+        self.win._tray_vad_silero = menu.addAction("🔹 Silero VAD (轻量稳定·默认)")
         self.win._tray_vad_silero.setCheckable(True)
         self.win._tray_vad_silero.setData("silero")
         self.win.tray_vad_group.addAction(self.win._tray_vad_silero)
 
-        self.win._tray_vad_firered = tray_vad_menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
+        self.win._tray_vad_firered = menu.addAction("🔥 FireRedVAD (强抗BGM·轻声增强)")
         self.win._tray_vad_firered.setCheckable(True)
         self.win._tray_vad_firered.setData("firered")
         self.win.tray_vad_group.addAction(self.win._tray_vad_firered)
 
         self.win.tray_vad_group.triggered.connect(self._on_vad_engine_triggered)
 
-        # Backward compatibility aliases for tray scene presets
-        self.win._tray_scene_movie = self.win._tray_qwen_actions[0]   # 1000ms
-        self.win._tray_scene_speech = self.win._tray_qwen_actions[2]  # 500ms
-        self.win._tray_scene_stream = next((a for a in self.win._tray_nv_actions if a.data().get("ms") == 160), self.win._tray_nv_actions[0])    # 160ms
-
         menu.addSeparator()
 
         # 2. 字幕排版与双语 (快捷直达)
-        self.win._tray_rolling_two_lines_act = menu.addAction("📜 双行滚动字幕 (Google同款·抗高密度对白)")
+        self.win._tray_rolling_two_lines_act = menu.addAction("📜 双行滚动字幕")
         self.win._tray_rolling_two_lines_act.setCheckable(True)
         self.win._tray_rolling_two_lines_act.setChecked(getattr(self.win, "rolling_two_lines", False))
         self.win._tray_rolling_two_lines_act.toggled.connect(self.win._on_rolling_two_lines_toggled)
 
-        self.win._tray_bilingual_act = menu.addAction("🔤 双语同显模式 (中英对照)")
+        self.win._tray_bilingual_act = menu.addAction("🔤 双语同显模式")
         self.win._tray_bilingual_act.setCheckable(True)
         self.win._tray_bilingual_act.setChecked(getattr(self.win, "bilingual_mode", "trans_only") == "bilingual")
         self.win._tray_bilingual_act.toggled.connect(self._on_tray_bilingual_toggled)
@@ -693,6 +756,22 @@ class CaptionMenuBuilder:
         self.win.bilingual_mode = mode
         cfg = config.load_desktop_config()
         cfg["bilingual_mode"] = mode
+        if checked:
+            # Mutual exclusion: bilingual mode strictly forces rolling_two_lines OFF
+            self.win.rolling_two_lines = False
+            cfg["rolling_two_lines"] = False
+            if hasattr(self.win, "rolling_buffer") and self.win.rolling_buffer:
+                self.win.rolling_buffer.clear()
+            if hasattr(self.win, "display_buffer") and self.win.display_buffer:
+                self.win.display_buffer.clear()
+            if getattr(self.win, "line", "") and "\n" in self.win.line:
+                self.win.line = self.win.line.split("\n")[-1]
+            for act in (getattr(self.win, "_rolling_two_lines_act", None), getattr(self.win, "_tray_rolling_two_lines_act", None)):
+                if act:
+                    act.blockSignals(True)
+                    act.setChecked(False)
+                    act.blockSignals(False)
+            self.win.config_changed.emit({"rolling_two_lines": False})
         config.save_desktop_config(cfg)
         for act in (getattr(self.win, "_bilingual_act", None), getattr(self.win, "_tray_bilingual_act", None)):
             if act:

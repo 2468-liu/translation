@@ -229,6 +229,8 @@ class QtCaptionWindow(QWidget):
         self._is_capturing: bool = True
         self.source_line: str = ""
         self.bilingual_mode: str = str(cfg_init.get("bilingual_mode", "trans_only"))
+        if self.bilingual_mode == "bilingual":
+            self.rolling_two_lines = False
         self._tray_icon: Optional[QSystemTrayIcon] = None
         self._tray_menu: Optional[QMenu] = None
         self._text_only_act: Optional[QAction] = None
@@ -478,6 +480,15 @@ class QtCaptionWindow(QWidget):
         self.rolling_two_lines = bool(enabled)
         cfg = config.load_desktop_config()
         cfg["rolling_two_lines"] = self.rolling_two_lines
+        if self.rolling_two_lines and getattr(self, "bilingual_mode", "trans_only") == "bilingual":
+            self.bilingual_mode = "trans_only"
+            cfg["bilingual_mode"] = "trans_only"
+            for act in (getattr(self, "_bilingual_act", None), getattr(self, "_tray_bilingual_act", None)):
+                if act:
+                    act.blockSignals(True)
+                    act.setChecked(False)
+                    act.blockSignals(False)
+            self.config_changed.emit({"bilingual_mode": "trans_only"})
         config.save_desktop_config(cfg)
         if hasattr(self, "_rolling_two_lines_act") and self._rolling_two_lines_act:
             self._rolling_two_lines_act.blockSignals(True)
@@ -1464,7 +1475,10 @@ class QtCaptionWindow(QWidget):
             self.apply_dismiss_timeout(int(value))
         elif kind == "source":
             self.source_line = str(value or "")
-            self.show_source(str(value))
+            if getattr(self, "bilingual_mode", "trans_only") == "bilingual" and self.line:
+                self._paint()
+            else:
+                self.show_source(str(value))
         elif kind == "segment":
             self.begin_segment()
         elif kind in ("state?", "ask_state"):
