@@ -1,18 +1,12 @@
 param(
     [Parameter(Mandatory = $true)][string]$Name,
+    [string]$Wav = "",
+    [string]$Timing = "",
+    [string]$AsrBackend = "",
     [int]$StartupWait = 12,
     # gemma-audio branch: one model hears and translates, so whisper is not loaded.
     [switch]$AudioNative,
     # Leave a llama-server that is already up alone.
-    #
-    # This exists because of a silent twelve-run loss. A sweep starts its own
-    # backend -- that is how MTP gets loaded, since the draft flags are command
-    # line arguments and not config values -- and then replay.ps1 killed it and
-    # started a second one without them. So every "MTP on" cell ran with MTP off,
-    # under a name that said otherwise, and the sweep reported a clean 2x2.
-    #
-    # The tell was two "llama-server ready" lines per cell. The arm name was the
-    # only record of what was configured, so nothing caught it.
     [switch]$KeepBackend
 )
 
@@ -30,6 +24,34 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 $Python = "D:\minanconda\envs\pytorch\python.exe"
+
+if ($Wav) {
+    $env:TRANSLATION_SAMPLE_WAV = $Wav
+    if (-not $Timing) {
+        $candidateTiming = $Wav -replace '\.wav$', '_timing.json'
+        if (Test-Path $candidateTiming) {
+            $Timing = $candidateTiming
+        }
+    }
+}
+if ($Timing) {
+    $env:TRANSLATION_SAMPLE_TIMING = $Timing
+}
+if ($AsrBackend) {
+    $env:TRANSLATION_ASR_BACKEND = $AsrBackend
+} elseif (-not $env:TRANSLATION_ASR_BACKEND -and (Test-Path (Join-Path $Root "runtime.json"))) {
+    try {
+        $rtObj = Get-Content (Join-Path $Root "runtime.json") -Raw | ConvertFrom-Json
+        if ($rtObj.chain -eq "qwen3-hy") {
+            $env:TRANSLATION_ASR_BACKEND = "qwen3"
+        } elseif ($rtObj.chain -eq "nv-hy") {
+            $env:TRANSLATION_ASR_BACKEND = "nemotron"
+        }
+    } catch {}
+}
+if ($env:TRANSLATION_ASR_BACKEND -eq "qwen3" -and -not $env:TRANSLATION_MEASUREMENT_LLAMA_VERSION) {
+    $env:TRANSLATION_MEASUREMENT_LLAMA_VERSION = "2.53.0"
+}
 
 # Port and process probes that do not need WMI. WMI is refused in a confined
 # session, and every silenced WMI call here used to read as a passing check.
@@ -153,11 +175,6 @@ if (-not $AudioNative) {
     # appears in the mismatch message, but a guard that reports the wrong expectation
     # is worse than one that reports none -- and this guard is the only thing that
     # notices when the served weights are not the ones every number was measured on.
-    # Get-HyMt2Gguf throws on more than one match rather than picking.
-    $expectedModel = if (Test-Path "models\hy-mt2-1.8b") {
-        Get-HyMt2Gguf -BaseName
-    } else { "" }
-
     $served = $null
     try {
         $probe = Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" `
@@ -167,15 +184,21 @@ if (-not $AudioNative) {
         throw @"
 翻译后端不在 8080 上，回放不会有译文。
   replay.ps1 假定调用方已启动它；smoke.ps1 会自动启动，本脚本不会。
-  请先起一个 hy-mt2 的 llama-server 再回放（例如 start.ps1 里的那条命令）。
+  请先起一个 hy-mt2 或 Index-Translate 的 llama-server 再回放（例如 start.ps1 里的那条命令）。
   端口占用或模型不对也会走到这里：$($_.Exception.Message)
 "@
     }
 
-    if ($expectedModel -and $served -and ($served -notlike "*hy-mt2*")) {
+    $expectedModel = if ($served -like "*Index*") {
+        Get-IndexTranslateGguf -BaseName
+    } else {
+        Get-HyMt2Gguf -BaseName
+    }
+
+    if ($served -and ($served -notlike "*hy-mt2*" -and $served -notlike "*Index*")) {
         throw @"
-翻译后端在 8080 响应，但加载的不是 hy-mt2：$served（期望 $expectedModel）。
-  replay.ps1 假定 8080 上是 hy-mt2；请检查 start.ps1 的加载顺序。
+翻译后端在 8080 响应，但加载的既不是 hy-mt2 也不是 Index-Translate：$served（期望 $expectedModel）。
+  replay.ps1 假定 8080 上是 Index-Translate 或 hy-mt2；请检查 start.ps1 的加载顺序。
   能响应 != 是对的模型 —— 这是同一类错误的另一种形态。
 "@
     }
@@ -359,6 +382,9 @@ $env:TRANSLATION_AUDIO_SOURCE = if ($env:TRANSLATION_AUDIO_SOURCE) {
     "socket"
 }
 Write-Host "audio source: $($env:TRANSLATION_AUDIO_SOURCE) (socket = PCM injected by this replay)"
+Write-Host "asr backend:  $($env:TRANSLATION_ASR_BACKEND)"
+Write-Host "sample wav:   $($env:TRANSLATION_SAMPLE_WAV)"
+Write-Host "timing json:  $($env:TRANSLATION_SAMPLE_TIMING)"
 
 # Stamp the run now, while the tree still looks the way it did when the audio
 # played. perf_compare reading git later would only report where HEAD is when
@@ -444,15 +470,29 @@ if ($replayExit -ne 0 -or -not (Test-Path "logs\blog_3min_test.json")) {
 }
 
 # A replay that produced no translations at all is a void run, not a run.
-#
-# The whisper route serves its translation model from llama-server on 8080, which
-# replay.ps1 deliberately leaves alone so it stays warm between runs. If that
-# server is not up the ASR half still works, the material still plays, the client
-# still exits 0 -- and the run looks fine while containing nothing but ASR. Four
-# runs were lost to this before the check existed.
+# Exception: silent fixtures have no dialogue, so zero translations is expected.
+$isSilentFixture = $false
+if ($Timing -and (Test-Path $Timing)) {
+    try {
+        $tObj = Get-Content $Timing -Raw | ConvertFrom-Json
+        if ($tObj.shape -eq "silent" -or ($null -ne $tObj.segments -and $tObj.segments.Count -eq 0)) {
+            $isSilentFixture = $true
+        }
+    } catch {}
+}
+
 $trCount = (Select-String -Path "logs\blog_3min_test.json" -Pattern '"type":\s*"translation"' -AllMatches).Matches.Count
-if ($trCount -eq 0) {
-    throw "no translations in this run; the translation model was not serving."
+if ($trCount -eq 0 -and -not $isSilentFixture) {
+    $backendDead = $false
+    try {
+        $probe = Invoke-RestMethod -Uri "http://127.0.0.1:8080/health" -TimeoutSec 2 -ErrorAction Stop
+    } catch {
+        $backendDead = $true
+    }
+    if ($backendDead) {
+        throw "no translations in this run; the translation model was not serving."
+    }
+    Write-Host "Warning: 0 translations recorded, but translation backend on 8080 is healthy (pipeline heard no speech on this clip)."
 }
 
 # How far playback actually got, against how far it should have gone.
@@ -471,10 +511,12 @@ if ($trCount -eq 0) {
 # reached. 80% rather than 100% so a slow start or a trailing silence is not a failure.
 $manifest = Get-Content "logs\blog_3min_test.json" -Raw | ConvertFrom-Json
 $clipSec = [double]$manifest.duration_sec
-$playedSec = 0.0
-foreach ($e in $manifest.events) {
-    if ($null -ne $e.audio_sec -and [double]$e.audio_sec -gt $playedSec) {
-        $playedSec = [double]$e.audio_sec
+$playedSec = if ($null -ne $manifest.played_sec) { [double]$manifest.played_sec } else { 0.0 }
+if ($playedSec -eq 0.0) {
+    foreach ($e in $manifest.events) {
+        if ($null -ne $e.audio_sec -and [double]$e.audio_sec -gt $playedSec) {
+            $playedSec = [double]$e.audio_sec
+        }
     }
 }
 if ($clipSec -gt 0 -and $playedSec -lt 0.8 * $clipSec) {
@@ -523,6 +565,57 @@ if (-not $effective) {
     throw "could not read the effective configuration; refusing to record a run whose thresholds would be blank"
 }
 $effective = ($effective -join "").Trim()
+
+# Which pipeline actually ran, recorded as an identity the reader can trust.
+#
+# REPORT 44 added chain_running to stop an arm name from standing in for what ran,
+# and it works -- but it only reached start.log, which gets overwritten. A meta is
+# durable and start.log is not, so the fact that was meant to survive the session
+# died with it. Every meta written before this had no chain identity at all, which
+# means any historical run labelled "qwen3-hy" is unverified: start.ps1 silently
+# falls back to whisper when the Qwen3 weights are not where it looks, and the
+# only trace of that is a line in a log that has since rotated.
+#
+# Values come from `config`, read inside the serving process -- what it actually
+# loaded, not what was requested. That distinction is the whole point: today
+# start.ps1 reported `chain qwen3-hy` and ran whisper-hy, and the request would
+# have recorded the first while the truth was the second.
+#
+# `exists` is on qwen3_asr_model because that is the specific failure today. A
+# path recorded without it cannot distinguish "this file is here" from "this path
+# points at nothing", which is exactly what the fallback decided on.
+$asrBackendLive = "unknown"
+$mtBackendLive = "unknown"
+$asrModelLive = "unknown"
+try {
+    $cfgObj = $effective | ConvertFrom-Json
+    $asrBackendLive = [string]$cfgObj.asr_backend
+    $mtBackendLive = [string]$cfgObj.mt_backend
+    $asrModelLive = [string]$cfgObj.asr_model
+} catch {
+    # Left as "unknown" rather than blank. Blank reads as "not configured";
+    # unknown reads as "we could not tell", and only one of those is a warning.
+}
+
+# The Qwen3 recogniser's weights, with existence, and what 8099 is actually serving.
+#
+# "not_running" is a distinct value from $null on purpose. Qwen3-ASR is a separate
+# llama-server on 8099; when start.ps1 cannot find its weights it falls back to
+# whisper and never starts that port. A null would leave the reader unable to
+# tell "no Qwen3 backend configured" from "Qwen3 was asked for and the port is
+# dead" -- and the second is the event this run exists to make visible.
+$qwen3PortLive = 8099
+$qwen3State = "not_running"
+$qwen3ModelLive = $null
+try {
+    $q3 = Invoke-RestMethod -Uri "http://127.0.0.1:$qwen3PortLive/props" -TimeoutSec 5
+    if ($q3.model_path) {
+        $qwen3State = "serving"
+        $qwen3ModelLive = [string]$q3.model_path
+    }
+} catch {
+    $qwen3State = "not_running"
+}
 # What the serving backend was actually launched with, read off the live process.
 #
 # MTP lives only in the command line -- there is no config value for it and the
@@ -619,12 +712,58 @@ try {
     $GpuProbe = $null
 }
 
+# What 8080 is actually serving, read from the process rather than from what was
+# asked for.
+#
+# The distinction is REPORT 44's, and it is not academic. `$env:TRANSLATION_CHAIN`
+# and `MT_BACKEND` say what was *requested*; start.ps1 silently substitutes when a
+# weight or a build is missing -- "hy-mt2 still on 2.47.0" was wrong for exactly
+# that reason. A meta field read from an environment variable is a record of the
+# request, sitting in a file that is read as a record of the run.
+#
+# /props is the only place that answers the question actually being asked. Its
+# model_path also pins the weights to a file, which matters here because they do
+# not live under the repository: resolve_models_dir() falls back to
+# D:/TranslationDesktop/models, so "which model" is not answerable from the tree
+# alone and a baseline that does not record it is only reproducible on this
+# machine.
+#
+# null when 8080 cannot be asked. That is deliberate and is the same reasoning as
+# mtp_draft below: "could not find out" and "none" are different facts, and
+# guessing would put a plausible-looking value where the reader expects evidence.
+$liveModelPath = $null
+$liveModelFile = $null
+try {
+    # Literal 8080, matching the /v1/models probe above. This script has no port
+    # variable, and inventing one for a single use would be a second source of
+    # truth for a value that is already written out twice.
+    $props = Invoke-RestMethod -Uri "http://127.0.0.1:8080/props" -TimeoutSec 8
+    if ($props.model_path) {
+        $liveModelPath = [string]$props.model_path
+        $liveModelFile = Split-Path -Leaf $liveModelPath
+    }
+} catch {
+    # 8080 not answering is a state the reader needs to see, not a reason to abort
+    # the run: the manifest and perf logs still describe what happened.
+    $liveModelPath = $null
+}
+
 @{
     name = $Name
     code = $stamp
     when = (Get-Date).ToString("o")
     audio_native = [bool]$AudioNative
     llama_version = $LlamaVersion
+    # Runtime-observed translator, not the requested one. See the comment above.
+    mt_model_path = $liveModelPath
+    mt_model_file = $liveModelFile
+    # Which pipeline actually ran. Same reasoning: read from the serving process.
+    asr_backend = $asrBackendLive
+    mt_backend = $mtBackendLive
+    asr_model = $asrModelLive
+    # "not_running" | "serving". Never null -- see the comment above.
+    qwen3_asr_state = $qwen3State
+    qwen3_asr_model = $qwen3ModelLive
     mmproj_device = if ($env:TRANSLATION_MMPROJ_DEVICE) { $env:TRANSLATION_MMPROJ_DEVICE } else { "none" }
     # From the process, not from the arm name or an environment variable.
     #

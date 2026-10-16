@@ -1,6 +1,7 @@
 const toggle = document.getElementById("toggle");
 const status = document.getElementById("status");
 const language = document.getElementById("language");
+const targetLanguage = document.getElementById("targetLanguage");
 const textOnly = document.getElementById("textOnly");
 const audioOnly = document.getElementById("audioOnly");
 const fontSize = document.getElementById("fontSize");
@@ -14,6 +15,7 @@ const apiModel = document.getElementById("apiModel");
 const mediaState = document.getElementById("mediaState");
 const chainSelect = document.getElementById("chainSelect");
 const chainHint = document.getElementById("chainHint");
+const cadenceSelect = document.getElementById("cadenceSelect");
 const cadenceSlider = document.getElementById("cadenceSlider");
 const cadenceValue = document.getElementById("cadenceValue");
 const cadenceReadout = document.getElementById("cadenceReadout");
@@ -31,13 +33,11 @@ const mediaTitle = document.getElementById("mediaTitle");
 const liveDot = document.getElementById("liveDot");
 const sessionStatusText = document.getElementById("sessionStatusText");
 
-// Must equal server/config.py PARTIAL_INTERVAL_MS. A lower default here would mean
-// pressing start silently changes behaviour, and that mismatch has been the cause
-// of a control that appeared to do nothing.
-const DEFAULT_CADENCE_MS = 750;
-const CADENCE_MIN_MS = 250;
-const CADENCE_MAX_MS = 1000;
-const CADENCE_STEP_MS = 50;
+// Must equal server/config.py PARTIAL_INTERVAL_MS.
+// Nemotron 3.5 ASR uses 80ms chunk multiples. The official recommended default
+// for streaming subtitles is 160ms ([56, 1], 1 right-context frame).
+const DEFAULT_CADENCE_MS = 160;
+const NV_CADENCE_PRESETS = [80, 160, 320, 560, 1120];
 
 let cadenceCommit = null;
 let dismissCommit = null;
@@ -82,8 +82,10 @@ function onDismissChange() {
 // not one recogniser. runtime.json holds the choice and native_host does the restart, so
 // this widget only asks and reports.
 const CHAIN_LABELS = {
-  "whisper-hy": "whisper + 混元（流式）",
-  "qwen3-hy": "Qwen3-ASR + 混元（块输出）",
+  "qwen3-in": "Qwen3-ASR + Index 影视翻译（块输出）",
+  "nv-in": "Nemotron + Index 翻译（流式）",
+  "qwen3-hy": "Qwen3-ASR + Index 影视翻译（兼容）",
+  "nv-hy": "Nemotron + Index 翻译（兼容）",
   "gemma-e2e": "音频直出 Gemma4（流式）",
 };
 
@@ -144,20 +146,39 @@ async function switchChain(chain) {
 function clampCadence(ms) {
   const v = Number(ms);
   if (!Number.isFinite(v)) return DEFAULT_CADENCE_MS;
-  return Math.min(CADENCE_MAX_MS, Math.max(CADENCE_MIN_MS,
-    Math.round(v / CADENCE_STEP_MS) * CADENCE_STEP_MS));
+  let closest = NV_CADENCE_PRESETS[0];
+  let minDiff = Math.abs(v - closest);
+  for (const preset of NV_CADENCE_PRESETS) {
+    const diff = Math.abs(v - preset);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = preset;
+    }
+  }
+  return closest;
 }
 
 function paintCadence(ms) {
   const v = clampCadence(ms);
-  cadenceSlider.value = String(v);
-  cadenceValue.textContent = String(v);
-  cadenceReadout.textContent = String(v);
-  cadenceHint.textContent = v <= CADENCE_MIN_MS + 50
-    ? "跟得最紧，改口也最频繁；字幕改来改去的时间最多。"
-    : v >= 900
-      ? "改口最少，但第一句和换句都会更晚出现。"
-      : "改口与首句延迟之间的折中。";
+  if (cadenceSelect) cadenceSelect.value = String(v);
+  if (cadenceSlider) cadenceSlider.value = String(v);
+  if (cadenceValue) cadenceValue.textContent = String(v);
+  if (cadenceReadout) cadenceReadout.textContent = String(v);
+  if (cadenceHint) {
+    if (v === 80) {
+      cadenceHint.textContent = "80ms [56, 0]：极限极速档，适合全双工对讲，延迟极低但依赖声学稳定性。";
+    } else if (v === 160) {
+      cadenceHint.textContent = "160ms [56, 1]：官方推荐直播/视频同传黄金档，字幕线性流畅流出，低延迟高准确率。";
+    } else if (v === 320) {
+      cadenceHint.textContent = "320ms [56, 3]：平稳平衡档，字幕更新更稳健，兼顾低延迟与低抖动。";
+    } else if (v === 560) {
+      cadenceHint.textContent = "560ms [56, 6]：高抗噪档，背景音乐嘈杂或语速极快时抗干扰更强。";
+    } else if (v === 1120) {
+      cadenceHint.textContent = "1120ms [56, 13]：高精精翻档，字词识别率最佳，适合离线或长句听写。";
+    } else {
+      cadenceHint.textContent = `当前步长 ${v}ms。`;
+    }
+  }
   return v;
 }
 
@@ -165,17 +186,24 @@ async function sendCadence(ms) {
   const v = paintCadence(ms);
   await chrome.storage.local.set({ partialIntervalMs: v });
   chrome.runtime.sendMessage({ type: "cadence", partialIntervalMs: v }).catch(() => {});
+  if (status) status.textContent = `步长已设为 ${v}ms，下一语音切片自动生效（无需重启）。`;
+}
+
+function onCadenceSelectChange() {
+  if (cadenceSelect) {
+    sendCadence(cadenceSelect.value);
+  }
 }
 
 function onCadenceInput() {
-  paintCadence(cadenceSlider.value);
+  if (cadenceSlider) paintCadence(cadenceSlider.value);
   if (cadenceCommit !== null) clearTimeout(cadenceCommit);
-  cadenceCommit = setTimeout(() => { cadenceCommit = null; sendCadence(cadenceSlider.value); }, 400);
+  cadenceCommit = setTimeout(() => { cadenceCommit = null; if (cadenceSlider) sendCadence(cadenceSlider.value); }, 400);
 }
 
 function onCadenceChange() {
   if (cadenceCommit !== null) { clearTimeout(cadenceCommit); cadenceCommit = null; }
-  sendCadence(cadenceSlider.value);
+  if (cadenceSlider) sendCadence(cadenceSlider.value);
 }
 
 function apiPayload() {
@@ -291,7 +319,7 @@ function askCaptionWindowState() {
 }
 
 async function refresh(keepMessage, failedStep) {
-  const stored = await chrome.storage.session.get(["running", "language"]);
+  const stored = await chrome.storage.session.get(["running", "language", "targetLanguage"]);
   const theme = await chrome.storage.local.get({
     captionTextOnly: false,
     audioOnly: false,
@@ -333,6 +361,7 @@ async function refresh(keepMessage, failedStep) {
     running = false;
   }
   if (stored.language) language.value = stored.language;
+  if (stored.targetLanguage && targetLanguage) targetLanguage.value = stored.targetLanguage;
 
   // Read active tab title and domain for the session card header
   chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
@@ -418,8 +447,28 @@ if (settingsTrigger && settingsDrawer) {
 }
 
 language.addEventListener("change", () => {
-  chrome.storage.session.set({ language: language.value });
+  const val = language.value;
+  chrome.storage.session.set({ language: val });
+  chrome.runtime.sendMessage({
+    type: "language",
+    language: val,
+  }).catch(() => {});
+  const langName = language.options[language.selectedIndex]?.text?.split(" ")[0] || val;
+  status.textContent = `语种已设为「${langName}」，下一语音切片自动生效（无需重启）。`;
 });
+
+if (targetLanguage) {
+  targetLanguage.addEventListener("change", () => {
+    const val = targetLanguage.value;
+    chrome.storage.session.set({ targetLanguage: val });
+    chrome.runtime.sendMessage({
+      type: "target-language",
+      targetLanguage: val,
+    }).catch(() => {});
+    const langName = targetLanguage.options[targetLanguage.selectedIndex]?.text?.split(" ")[0] || val;
+    status.textContent = `目标语种已设为「${langName}」，下一语音切片自动生效（无需重启）。`;
+  });
+}
 
 fontSize.addEventListener("input", () => {
   const px = Math.max(16, Math.min(40, Number(fontSize.value) || 20));
@@ -459,8 +508,13 @@ apiEnabled.addEventListener("change", saveApi);
 for (const field of [apiUrl, apiKey, apiModel]) {
   field.addEventListener("change", saveApi);
 }
-cadenceSlider.addEventListener("input", onCadenceInput);
-cadenceSlider.addEventListener("change", onCadenceChange);
+if (cadenceSelect) {
+  cadenceSelect.addEventListener("change", onCadenceSelectChange);
+}
+if (cadenceSlider) {
+  cadenceSlider.addEventListener("input", onCadenceInput);
+  cadenceSlider.addEventListener("change", onCadenceChange);
+}
 if (dismissSlider) {
   dismissSlider.addEventListener("input", onDismissInput);
   dismissSlider.addEventListener("change", onDismissChange);
@@ -480,12 +534,15 @@ toggle.addEventListener("click", async () => {
     const running = toggle.classList.contains("stop");
     if (running) {
       step = "终止";
+      toggle.textContent = "终止中…";
       status.textContent = "正在终止后端并释放模型…";
       const reply = await chrome.runtime.sendMessage({ type: "stop" });
       if (!reply || !reply.ok) {
         throw new Error((reply && reply.error) || "终止失败");
       }
     } else {
+      step = "启动后端";
+      toggle.textContent = "启动中…";
       status.textContent = "正在启动本地服务和模型，并显示原生置顶字幕…";
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) throw new Error("没有可用标签页");
@@ -502,8 +559,9 @@ toggle.addEventListener("click", async () => {
         type: "start",
         tabId: tab.id,
         language: language.value,
+        targetLanguage: targetLanguage ? targetLanguage.value : "zh",
         audioOnly: audioOnly.checked,
-        partialIntervalMs: clampCadence(cadenceSlider.value),
+        partialIntervalMs: clampCadence(cadenceSelect ? cadenceSelect.value : (cadenceSlider ? cadenceSlider.value : DEFAULT_CADENCE_MS)),
         dismissMs: clampDismiss(dismissSlider ? dismissSlider.value : 5) * 1000,
         ...api,
       });

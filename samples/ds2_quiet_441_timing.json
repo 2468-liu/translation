@@ -7,44 +7,46 @@
  "sha256": "68982cff42010d1fc4d0129316fa987d0c58834fd1577995f31279debf44634b",
  "segments": [
   {
-   "start": 442.44,
-   "end": 445.04,
+   "start": 0.0,
+   "end": 2.6,
    "text": "但我必须做出牺牲\nBut I have to make sacrifices."
   },
   {
-   "start": 445.31,
-   "end": 446.94,
+   "start": 2.87,
+   "end": 4.5,
    "text": "为了保护你\nTo protect you,"
   },
   {
-   "start": 447.7,
-   "end": 449.05,
+   "start": 5.26,
+   "end": 6.61,
    "text": "我很抱歉\nI'm sorry."
   },
   {
-   "start": 453.0,
-   "end": 455.07,
+   "start": 10.56,
+   "end": 12.63,
    "text": "我们之间永远不会有结果的\nIt was gonna workout between us."
   },
   {
-   "start": 457.92,
-   "end": 458.99,
+   "start": 15.48,
+   "end": 16.55,
    "text": "为什么\nWhy not?"
   },
   {
-   "start": 459.07,
-   "end": 460.6,
+   "start": 16.63,
+   "end": 18.16,
    "text": "因为 斯蒂芬\nBecause Stephen."
   },
   {
-   "start": 460.86,
-   "end": 463.09,
+   "start": 18.42,
+   "end": 20.65,
    "text": "你总是想做主刀的那一个\nYou have to be the one holding the knife."
   },
   {
-   "start": 463.86,
-   "end": 467.43,
+   "start": 21.42,
+   "end": 24.99,
    "text": "为此 我很敬佩你 但我无法为此爱上你\nAnd I always respected you for it, but I couldn't love you for it."
   }
- ]
+ ],
+ "film_offset_s": 442.44,
+ "clip_seconds": 25.0
 }

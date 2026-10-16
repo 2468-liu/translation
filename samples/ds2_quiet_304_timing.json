@@ -7,34 +7,36 @@
  "sha256": "71435a0c69aaca38bb13a313b0eb2615e13b46f84f89067fe339f5325b3f1837",
  "segments": [
   {
-   "start": 306.04,
-   "end": 307.76,
+   "start": 0.0,
+   "end": 1.72,
    "text": "在我消失期间\nWhile I was gone."
   },
   {
-   "start": 308.31,
-   "end": 309.79,
+   "start": 2.27,
+   "end": 3.75,
    "text": "谢谢你的关心\nThank you for asking."
   },
   {
-   "start": 311.04,
-   "end": 313.37,
+   "start": 5.0,
+   "end": 7.33,
    "text": "我失去了我的两只猫\nI lose both my cats."
   },
   {
-   "start": 315.99,
-   "end": 317.67,
+   "start": 9.95,
+   "end": 11.63,
    "text": "和我的兄弟\nAnd my brother,"
   },
   {
-   "start": 320.58,
-   "end": 321.83,
+   "start": 14.54,
+   "end": 15.79,
    "text": "我很抱歉\nI'm very sorry."
   },
   {
-   "start": 323.32,
-   "end": 324.53,
+   "start": 17.28,
+   "end": 18.49,
    "text": "谢谢\nThank you,"
   }
- ]
+ ],
+ "film_offset_s": 306.04,
+ "clip_seconds": 25.0
 }

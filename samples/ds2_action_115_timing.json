@@ -7,14 +7,16 @@
  "sha256": "884ff76941af0c6eb042c95427dfda2d1b902edbe4e4b46a98a196091b13f8a3",
  "segments": [
   {
-   "start": 129.1,
-   "end": 130.69,
+   "start": 0.0,
+   "end": 1.59,
    "text": "它太强大了\nIt's too strong!"
   },
   {
-   "start": 130.7,
-   "end": 132.36,
+   "start": 1.6,
+   "end": 3.26,
    "text": "我控制不住它\nI can't hold it!"
   }
- ]
+ ],
+ "film_offset_s": 129.1,
+ "clip_seconds": 25.0
 }

@@ -83,9 +83,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // The cadence switch, pressed while running. configPayload would also work but
   // would drag the api/style fields along with defaults, so this sends just the
   // one field the user changed.
-  if (message.type === "cadence") {
-    const ms = Number(message.partialIntervalMs);
-    if (ms > 0) sendJson({ type: "config", partial_interval_ms: ms });
+  // The language switch, changed dynamically while running.
+  if (message.type === "cadence" || message.type === "language" || message.type === "target-language" || message.type === "config") {
+    const payload = { type: "config" };
+    if (message.language !== undefined) {
+      payload.language = message.language || "auto";
+    }
+    if (message.targetLanguage !== undefined || message.target_language !== undefined) {
+      payload.target_language = message.targetLanguage || message.target_language || "zh";
+    }
+    if (message.partialIntervalMs !== undefined && Number(message.partialIntervalMs) > 0) {
+      payload.partial_interval_ms = Number(message.partialIntervalMs);
+    }
+    sendJson(payload);
     sendResponse({ ok: true });
     return false;
   }
@@ -102,6 +112,9 @@ function configPayload(message) {
     audioOnly: Boolean(message.audioOnly),
   };
   if (message.language) payload.language = message.language;
+  if (message.targetLanguage || message.target_language) {
+    payload.target_language = message.targetLanguage || message.target_language;
+  }
   if (typeof message.textOnly === "boolean") payload.textOnly = message.textOnly;
   if (message.fontPx != null && message.fontPx !== "") payload.fontPx = clampFont(message.fontPx);
   if (typeof message.color === "string") payload.color = message.color;

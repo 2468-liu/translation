@@ -7,79 +7,81 @@
  "sha256": "412192308252af2a20e607de78ac48a93607aede9688c772bfe9eb81c4e3e7f5",
  "segments": [
   {
-   "start": 859.67,
-   "end": 862.42,
+   "start": 0.0,
+   "end": 2.75,
    "text": "关于多元宇宙 你们有哪些经验\nHow much experience you guys have with Multiverse?"
   },
   {
-   "start": 862.42,
-   "end": 866.63,
+   "start": 2.75,
+   "end": 6.96,
    "text": "对于多元宇宙 我们最近的经验是和蜘蛛侠有关的一件事\nWe have the experience of the Multiverse most recently was an incident with Spider Man."
   },
   {
-   "start": 866.72,
-   "end": 867.49,
+   "start": 7.05,
+   "end": 7.82,
    "text": "什么侠\nWhat man?"
   },
   {
-   "start": 867.49,
-   "end": 868.33,
+   "start": 7.82,
+   "end": 8.66,
    "text": "蜘蛛侠\nSpider Man."
   },
   {
-   "start": 868.33,
-   "end": 869.95,
+   "start": 8.66,
+   "end": 10.28,
    "text": "他具有蜘蛛的能力\nHe has the powers of a spider."
   },
   {
-   "start": 869.95,
-   "end": 870.81,
+   "start": 10.28,
+   "end": 11.14,
    "text": "因此得名\nHence the name."
   },
   {
-   "start": 870.81,
-   "end": 871.83,
+   "start": 11.14,
+   "end": 12.16,
    "text": "好恶心\nGross."
   },
   {
-   "start": 871.92,
-   "end": 872.95,
+   "start": 12.25,
+   "end": 13.28,
    "text": "他长得像不像蜘蛛\nDoes he look like a spider?"
   },
   {
-   "start": 872.96,
-   "end": 874.06,
+   "start": 13.29,
+   "end": 14.39,
    "text": "不 不 更像是个人\nNo, no, more like a man."
   },
   {
-   "start": 874.07,
-   "end": 875.29,
+   "start": 14.4,
+   "end": 15.62,
    "text": "能爬墙 能吐丝\nClimbs walls, shoots webs."
   },
   {
-   "start": 875.3,
-   "end": 875.92,
+   "start": 15.63,
+   "end": 16.25,
    "text": "是的 没错\nYeah. Bingo."
   },
   {
-   "start": 875.93,
-   "end": 876.84,
+   "start": 16.26,
+   "end": 17.17,
    "text": "从屁股吐出来吗\nOut his butt?"
   },
   {
-   "start": 876.85,
-   "end": 878.31,
+   "start": 17.18,
+   "end": 18.64,
    "text": "不是\nNo."
   },
   {
-   "start": 878.31,
-   "end": 879.79,
+   "start": 18.64,
+   "end": 20.12,
    "text": "也许吧 我不知道\nMaybe, I don't know."
   },
   {
-   "start": 879.79,
-   "end": 881.21,
+   "start": 20.12,
+   "end": 21.54,
    "text": "说实话 希望不是\nHonestly, I hope not."
   }
- ]
+ ],
+ "film_offset_s": 859.67,
+ "clip_seconds": 25.0
 }

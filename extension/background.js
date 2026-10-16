@@ -167,7 +167,7 @@ function clampFont(px) {
   return Math.max(16, Math.min(40, Math.round(size)));
 }
 
-async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, apiModel, partialIntervalMs, dismissMs }) {
+async function start({ tabId, language, targetLanguage, audioOnly, apiEnabled, apiUrl, apiKey, apiModel, partialIntervalMs, dismissMs }) {
   captureError = "";
   await ensureBackend(audioOnly);
   // Chrome keeps a tab captured until its tracks end. Release the previous
@@ -184,6 +184,7 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
   const response = await sendWhenReady({
     type: "start-capture",
     language: language || "auto",
+    targetLanguage: targetLanguage || "zh",
     audioOnly: Boolean(audioOnly),
     apiEnabled: Boolean(apiEnabled),
     apiUrl: apiUrl || "",
@@ -202,6 +203,7 @@ async function start({ tabId, language, audioOnly, apiEnabled, apiUrl, apiKey, a
     running: true,
     tabId,
     language: language || "auto",
+    targetLanguage: targetLanguage || "zh",
   });
   await applyCaptionStyle();
   chrome.action.setBadgeText({ text: "ON" }).catch(() => {});

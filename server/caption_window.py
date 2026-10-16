@@ -12,9 +12,15 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-import tkinter.font as tkfont
-from tkinter import TclError
+try:
+    import tkinter as tk
+    import tkinter.font as tkfont
+    from tkinter import TclError
+except ImportError:
+    tk = None
+    tkfont = None
+    class TclError(Exception):
+        pass
 from pathlib import Path
 
 from . import perf
@@ -225,16 +231,8 @@ SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
 SW_SHOWNOACTIVATE = 4
 
-_LANG = {
-    "en": "英语",
-    "ja": "日语",
-    "ko": "韩语",
-    "fr": "法语",
-    "de": "德语",
-    "es": "西班牙语",
-    "ru": "俄语",
-    "zh": "中文",
-}
+from .translate import _LANG_NAME
+_LANG = _LANG_NAME
 
 
 def settle_shift(previous: str, incoming: str, width: int, wrap: int, measure,
@@ -1308,11 +1306,6 @@ class _Caption:
             return "block"
         self._clause_pending = cleaned
         if self._clause_fell_back:
-            # This clause has already spent its one fallback and is waiting for its
-            # punctuation. Measured on the first run: a three-second clause without
-            # punctuation was drawn seven times, once every 400ms, with the text growing
-            # each time -- which is the gradual growth block mode exists to remove, and
-            # it put first-character latency at 366ms against the 37ms baseline.
             return "block_wait"
         if self._clause_job is not None:
             self.root.after_cancel(self._clause_job)
@@ -1636,10 +1629,6 @@ def start_caption() -> None:
     root = Path(__file__).resolve().parents[1]
     kwargs = {}
     if sys.platform == "win32":
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 0
-        kwargs["startupinfo"] = startup
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     env = dict(os.environ)
     # The caption window is a second process. Appending to one shared file from

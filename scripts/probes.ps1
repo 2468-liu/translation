@@ -105,7 +105,26 @@ function Get-HyMt2Gguf {
         [string] $Dir = "",
         [switch] $BaseName
     )
-    if (-not $Dir) { $Dir = Join-Path (Split-Path -Parent $PSScriptRoot) "models\hy-mt2-1.8b" }
+    if (-not $Dir) {
+        $candidates = @(
+            "D:\TranslationDesktop\models\hy-mt2-1.8b",
+            (Join-Path (Split-Path -Parent $PSScriptRoot) "models\hy-mt2-1.8b"),
+            "D:\TranslationDesktop\models",
+            (Join-Path (Split-Path -Parent $PSScriptRoot) "models")
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) {
+                $check = Get-ChildItem (Join-Path $c "*Q4_K_M*.gguf") -ErrorAction SilentlyContinue
+                if ($check) {
+                    $Dir = $c
+                    break
+                }
+            }
+        }
+        if (-not $Dir) {
+            $Dir = Join-Path (Split-Path -Parent $PSScriptRoot) "models\hy-mt2-1.8b"
+        }
+    }
 
     # An explicit choice beats the pattern, so the guard has a way through. Without
     # one, putting a second weight in the directory wedges every script that starts a
@@ -134,4 +153,54 @@ models\hy-mt2-1.8b 里匹配 *Q4_K_M* 的权重有 $($found.Count) 个：$($foun
     if ($found.Count -eq 0) { return $null }
     if ($BaseName) { return $found[0].BaseName }
     return $found[0]
+}
+
+function Get-IndexTranslateGguf {
+    <#
+    .SYNOPSIS
+        The Index-Translate-2B Q4_K_M weight file, or $null.
+    #>
+    param(
+        [string] $Dir = "",
+        [switch] $BaseName
+    )
+    if (-not $Dir) {
+        $candidates = @(
+            "D:\TranslationDesktop\models\Index-Translate",
+            (Join-Path (Split-Path -Parent $PSScriptRoot) "models\Index-Translate"),
+            "D:\TranslationDesktop\models",
+            (Join-Path (Split-Path -Parent $PSScriptRoot) "models")
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) {
+                if (Test-Path (Join-Path $c "Index-Translate-2B.Q4_K_M.gguf")) {
+                    $Dir = $c
+                    break
+                }
+            }
+        }
+    }
+    if (-not $Dir -or -not (Test-Path $Dir)) { return $null }
+
+    if ($env:TRANSLATION_INDEX_GGUF) {
+        $named = Join-Path $Dir $env:TRANSLATION_INDEX_GGUF
+        if (Test-Path $named) {
+            $item = Get-Item $named
+            if ($BaseName) { return $item.BaseName }
+            return $item
+        }
+    }
+
+    $q4 = Get-ChildItem (Join-Path $Dir "*Index-Translate*Q4_K_M*.gguf") -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $q4) {
+        $q4 = Get-ChildItem (Join-Path $Dir "*Q4_K_M*.gguf") -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $q4) {
+        $q4 = Get-ChildItem (Join-Path $Dir "*Index-Translate*.gguf") -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if ($q4) {
+        if ($BaseName) { return $q4.BaseName }
+        return $q4
+    }
+    return $null
 }

@@ -7,14 +7,16 @@
  "sha256": "371871ab1cca62083d045cabaa5fe2dc5c96b1f634af0d12d6fbbadee340344e",
  "segments": [
   {
-   "start": 63.5,
-   "end": 64.95,
+   "start": 0.0,
+   "end": 1.45,
    "text": "那招杀死它了吗 没有\nDid that kill it? No."
   },
   {
-   "start": 64.95,
-   "end": 66.57,
+   "start": 1.45,
+   "end": 3.07,
    "text": "那个可以杀了它\nThat, that will kill it."
   }
- ]
+ ],
+ "film_offset_s": 63.5,
+ "clip_seconds": 25.0
 }

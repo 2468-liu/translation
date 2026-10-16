@@ -7,9 +7,11 @@
  "sha256": "fde8d1c6fe5654f7464d5e53169d52e5b74f7bc2b418be659f33f7826f7397a6",
  "segments": [
   {
-   "start": 268.44,
-   "end": 270.22,
+   "start": 0.0,
+   "end": 1.78,
    "text": "借过一下\nExcuse me."
   }
- ]
+ ],
+ "film_offset_s": 268.44,
+ "clip_seconds": 25.0
 }

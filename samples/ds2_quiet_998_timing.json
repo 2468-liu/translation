@@ -7,24 +7,26 @@
  "sha256": "7c757f0a305f43eff45a4b4d9188cc960aecd59848d26a9c7e4653d798b7cb9e",
  "segments": [
   {
-   "start": 1001.19,
-   "end": 1002.01,
+   "start": 0.0,
+   "end": 0.82,
    "text": "证明给我看\nProve it."
   },
   {
-   "start": 1010.54,
-   "end": 1011.66,
+   "start": 9.35,
+   "end": 10.47,
    "text": "那不是梦\nIt wasn't a dream"
   },
   {
-   "start": 1019.36,
-   "end": 1020.41,
+   "start": 18.17,
+   "end": 19.22,
    "text": "意味着\nThat means."
   },
   {
-   "start": 1022.38,
-   "end": 1025.97,
+   "start": 21.19,
+   "end": 24.78,
    "text": "梦是窥探我们在多元宇宙中的自我的窗口\nDreams are windows into the lives of our Multiversal selves."
   }
- ]
+ ],
+ "film_offset_s": 1001.19,
+ "clip_seconds": 25.0
 }

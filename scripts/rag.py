@@ -31,7 +31,7 @@ from pathlib import Path
 
 # AGENT.md is excluded: it is read in full every session by design, so indexing it
 # would put two copies of the same contract into every retrieval.
-INDEXED = ("REPORT.md", "STATE.md", "PLAN.md", "README.md", "samples/INDEX.md")
+INDEXED = ("REPORT.md", "STATE.md", "PLAN.md", "README.md", "samples/INDEX.md", "ARCHIVE.md")
 
 INDEX_PATH = Path("logs/rag_index.json")
 

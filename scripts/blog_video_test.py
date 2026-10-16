@@ -378,7 +378,11 @@ async def _play(timing: list[dict]) -> dict:
             print(f"play stopped at {state['audio_sec']:.1f}s: {exc}", flush=True)
         finally:
             task.cancel()
-    return _summarize(events, timing) | {"events": events, "duration_sec": round(pcm.shape[0] / SAMPLE_RATE, 3)}
+    return _summarize(events, timing) | {
+        "events": events,
+        "duration_sec": round(pcm.shape[0] / SAMPLE_RATE, 3),
+        "played_sec": round(state["audio_sec"], 3),
+    }
 
 
 def main() -> None:
@@ -415,11 +419,12 @@ def main() -> None:
         # hand or by a different tool will not have it. The six-minute run played
         # the whole clip and then raised KeyError on a field it could have checked
         # at the start.
-        missing = [k for k in ("start", "end", "text") if not timing or k not in timing[0]]
-        if missing:
-            raise SystemExit(
-                f"{_sample_timing()} rows are missing {missing}; each row needs start, end, text"
-            )
+        if timing:
+            missing = [k for k in ("start", "end", "text") if k not in timing[0]]
+            if missing:
+                raise SystemExit(
+                    f"{_sample_timing()} rows are missing {missing}; each row needs start, end, text"
+                )
         # Everything the summary and the latency probes assume about the timeline,
         # checked here rather than discovered at the end of a full-length clip.
         bad: list[str] = []
@@ -445,7 +450,7 @@ def main() -> None:
                 f"timeline ends at {previous_end:.1f}s but the clip is only {clip:.1f}s; "
                 "the zero points would be measured against speech that does not exist"
             )
-        if "i" not in timing[0]:
+        if timing and "i" not in timing[0]:
             for n, row in enumerate(timing):
                 row["i"] = n
             print(

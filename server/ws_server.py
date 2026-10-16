@@ -285,7 +285,11 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                     "captureEnabled": not LOOPBACK_ENABLED,
                 })
                 if "language" in data:
-                    session.set_language(data.get("language") or "auto")
+                    src_lang = data.get("language") or "auto"
+                    session.set_language(src_lang)
+                if "target_language" in data or "targetLanguage" in data:
+                    tgt_lang = data.get("target_language") or data.get("targetLanguage") or "zh"
+                    session.set_target_language(tgt_lang)
                 if any(key in data for key in ("apiEnabled", "apiUrl", "apiKey", "apiModel")):
                     session.set_api(data)
                 # The caption window's 250/750 switch reaches _switch_partial_interval
@@ -295,12 +299,25 @@ async def handle(ws, asr: AsrEngine | None) -> None:
                 if data.get("partial_interval_ms"):
                     _switch_partial_interval(int(data["partial_interval_ms"]))
                 _apply_caption_controls(data)
-                if session.api_error:
+                has_lang_update = ("language" in data or "target_language" in data or "targetLanguage" in data)
+                has_cadence_update = bool(data.get("partial_interval_ms"))
+                is_standalone_update = (has_lang_update or has_cadence_update) and not any(k in data for k in ("apiEnabled", "apiUrl", "apiKey", "apiModel", "textOnly", "fontPx", "color"))
+                if is_standalone_update:
+                    msg_parts = []
+                    if "language" in data:
+                        msg_parts.append(f"识别语种已设为 {data.get('language') or 'auto'}")
+                    if "target_language" in data or "targetLanguage" in data:
+                        tgt_val = data.get("target_language") or data.get("targetLanguage") or "zh"
+                        msg_parts.append(f"目标字幕已设为 {tgt_val}")
+                    if has_cadence_update:
+                        msg_parts.append(f"刷新步长已设为 {data.get('partial_interval_ms')}ms")
+                    notice = {"type": "status", "level": "info", "message": "，".join(msg_parts) + "（下一切片生效）"}
+                elif session.api_error:
                     notice = {"type": "status", "level": "warn", "message": session.api_error}
                 elif session.api:
                     notice = {"type": "status", "level": "info", "message": "已连接，翻译走外部接口"}
                 else:
-                    notice = {"type": "status", "level": "info", "message": "已连接，翻译走混元翻译"}
+                    notice = {"type": "status", "level": "info", "message": "已连接，翻译走 Index 影视翻译"}
                 await send(notice)
             elif data.get("type") == "media-start":
                 session.reset_for_media()

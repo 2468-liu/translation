@@ -37,9 +37,10 @@ class TestFireRedVad(unittest.TestCase):
             self.assertTrue(np.all(detector.caches[f"cache_{i}"] == 0.0))
 
     def test_pluggable_vad_selection_fallback(self):
-        # When TRANSLATION_VAD_BACKEND is unset or "silero", defaults to Silero or Energy
+        from server import config
         vad._VAD = None
-        os.environ["TRANSLATION_VAD_BACKEND"] = "silero"
+        old_val = config.get_vad_backend()
+        config.set_vad_backend("silero")
         try:
             detector = vad.load_vad()
             if SILERO_ONNX.exists():
@@ -47,18 +48,20 @@ class TestFireRedVad(unittest.TestCase):
             else:
                 self.assertIsInstance(detector, vad._Energy)
         finally:
-            os.environ.pop("TRANSLATION_VAD_BACKEND", None)
+            config.set_vad_backend(old_val)
             vad._VAD = None
 
     @unittest.skipUnless(FIRERED_ONNX.exists(), "FireRedVAD ONNX not found")
     def test_pluggable_vad_selection_firered(self):
+        from server import config
         vad._VAD = None
-        os.environ["TRANSLATION_VAD_BACKEND"] = "firered"
+        old_val = config.get_vad_backend()
+        config.set_vad_backend("firered")
         try:
             detector = vad.load_vad()
             self.assertIsInstance(detector, vad._FireRedVad)
         finally:
-            os.environ.pop("TRANSLATION_VAD_BACKEND", None)
+            config.set_vad_backend(old_val)
             vad._VAD = None
 
     def test_ui_vad_selection_and_persistence(self):

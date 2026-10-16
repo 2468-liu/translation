@@ -23,6 +23,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,9 +31,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Inside one replay the client sends audio every 100ms, so there is never a
 # long silence; two replays are always separated by a 17s restart pause.
-# A replay is ~185s and emits thousands of lines. Anything shorter is a restart
-# artefact or a leftover, never a run worth measuring.
-MIN_EVENTS = 200
+# A replay of blog_3min.mp4 (~185s) emits thousands of lines. Shorter test
+# clips (e.g. ds2_* at 25s) emit 50-150 lines. MIN_EVENTS is configurable via
+# TRANSLATION_PERF_MIN_EVENTS, defaulting to 10 so short clips are not discarded.
+MIN_EVENTS = int(os.environ.get("TRANSLATION_PERF_MIN_EVENTS", "10"))
 
 
 def code_identity(override: str | None = None) -> str:

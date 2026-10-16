@@ -227,17 +227,20 @@ class _FireRedVad:
 _VAD = None
 
 
-def load_vad():
+def load_vad(force_backend: str | None = None):
     global _VAD
-    if _VAD is not None:
+    from . import config
+
+    vad_choice = (force_backend or config.get_vad_backend()).lower().strip()
+    if _VAD is not None and getattr(_VAD, "name", "") == vad_choice:
         return _VAD
-    import os
-    vad_choice = os.environ.get("TRANSLATION_VAD_BACKEND", "").lower().strip()
+
     if vad_choice in ("firered", "fireredvad"):
         firered_dir = FIRERED_ONNX.parent
         if FIRERED_ONNX.exists() and FIRERED_ONNX.stat().st_size > 100_000:
             try:
                 _VAD = _FireRedVad(firered_dir)
+                _VAD.name = "firered"
                 print(f"VAD: firered {FIRERED_ONNX}")
                 return _VAD
             except Exception as exc:
@@ -245,6 +248,7 @@ def load_vad():
     if SILERO_ONNX.exists() and SILERO_ONNX.stat().st_size > 100_000:
         try:
             _VAD = _Silero(SILERO_ONNX)
+            _VAD.name = "silero"
             print(f"VAD: silero {SILERO_ONNX}")
             return _VAD
         except Exception as exc:
@@ -252,7 +256,15 @@ def load_vad():
     else:
         print("VAD: energy (silero onnx missing)")
     _VAD = _Energy()
+    _VAD.name = "energy"
     return _VAD
+
+
+def reload_vad(choice: str | None = None):
+    """Explicitly reset and reload the global VAD detector to the specified backend."""
+    global _VAD
+    _VAD = None
+    return load_vad(choice)
 
 
 class Tuning:

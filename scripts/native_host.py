@@ -392,12 +392,12 @@ def read_chain() -> str:
         # that cannot be read reports the wrong chain rather than no chain.
         data = json.loads(_runtime_path().read_text(encoding="utf-8-sig"))
     except (FileNotFoundError, ValueError, OSError):
-        return "whisper-hy"
+        return "nv-hy"
     for field in ("chain_running", "chain"):
         value = data.get(field)
         if isinstance(value, str) and value:
             return value
-    return "whisper-hy"
+    return "nv-hy"
 
 
 def write_chain(chain: str) -> str | None:
@@ -476,7 +476,7 @@ def restart_chain(chain: str) -> dict:
     hand to recover from a UI click. The last known-good chain is kept here rather than
     read from the file, because the file now names the chain being tried.
     """
-    if chain not in ("whisper-hy", "qwen3-hy", "gemma-e2e"):
+    if chain not in ("nv-in", "qwen3-in", "gemma-e2e"):
         return {"ok": False, "error": f"未实现的链路: {chain}", "rejected": True}
 
     previous = read_chain()
