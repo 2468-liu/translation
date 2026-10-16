@@ -22,9 +22,24 @@ MT_CONTEXT = 2048
 MT_NP = 3
 MT_NGL = 60
 
-# Cache / Prompt Checkpoint
-PROMPT_CACHE_ALL = 1
-PROMPT_CHECKPOINT = 1
+# Memory / Cache Leaks & Slot Eviction Control SSOT
+# --cache-ram 512: Cap prompt cache RAM to 512 MiB (llama default is 8192 MiB = 8GB, causing ballooning on Win/Linux)
+CACHE_RAM_MB = 512
+# --ctx-checkpoints 1: Prevent checkpoint cloning across parallel slots from bloating memory
+CTX_CHECKPOINTS = 1
+# --no-cache-idle-slots: Release disconnected/idle slots immediately, avoiding zombie slots
+NO_CACHE_IDLE_SLOTS = True
+
+
+def get_common_memory_args() -> List[str]:
+    """Generates canonical memory-cap and slot-eviction arguments for llama-server / llama.exe."""
+    args = [
+        "--cache-ram", str(CACHE_RAM_MB),
+        "--ctx-checkpoints", str(CTX_CHECKPOINTS),
+    ]
+    if NO_CACHE_IDLE_SLOTS:
+        args.append("--no-cache-idle-slots")
+    return args
 
 # ==============================================================================
 # 2. Continuous Silence Density Regulation Hyperparameters
@@ -120,6 +135,7 @@ def get_qwen_server_args(
         "-np", str(ASR_NP),
         "--no-webui",
     ])
+    cmd.extend(get_common_memory_args())
     return cmd
 
 
@@ -147,4 +163,5 @@ def get_mt_server_args(
     ])
     if is_index:
         cmd.extend(["--reasoning", "off"])
+    cmd.extend(get_common_memory_args())
     return cmd

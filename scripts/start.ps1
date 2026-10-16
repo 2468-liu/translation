@@ -511,6 +511,9 @@ if (Test-Port $MtPort) {
             "-t", "4",
             "-np", "3",
             "--no-webui",
+            "--cache-ram", "512",
+            "--ctx-checkpoints", "1",
+            "--no-cache-idle-slots",
             # -lv 4 is the lowest level that prints
             # "load_tensors: offloaded 33/33 layers to GPU"; without it the
             # startup log never shows whether -ngl actually landed.
@@ -607,7 +610,11 @@ if (Test-Port $MtPort) {
                         "-ngl", "99",
                         "-c", "2048",
                         "-t", "4",
-                        "-np", "4"
+                        "-np", "4",
+                        "--no-webui",
+                        "--cache-ram", "512",
+                        "--ctx-checkpoints", "1",
+                        "--no-cache-idle-slots"
                     )
                     Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
                        -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `
@@ -643,7 +650,11 @@ if (Test-Port $MtPort) {
                     "-ngl", "99",
                     "-c", "2048",
                     "-t", "4",
-                    "-np", "4"
+                    "-np", "4",
+                    "--no-webui",
+                    "--cache-ram", "512",
+                    "--ctx-checkpoints", "1",
+                    "--no-cache-idle-slots"
                 )
                 Start-Process -FilePath $qwenExe -WorkingDirectory $Root -ArgumentList $qwenLaunchArgs `
                    -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") `

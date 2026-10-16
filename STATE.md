@@ -22,13 +22,13 @@
 
 | 模块 | 生效配置 / 规格 | 说明 |
 |---|---|---|
-| **ASR 引擎** | Qwen3-ASR (0.6B Q8_0, 8099 端口, **-c 2048 -np 4 四槽位并发**) | SSOT 显存预算（512 tok/slot，最恶劣15s音频358 tok < 512，零OOM）；ASR P50 174ms |
+| **ASR 引擎** | Qwen3-ASR (0.6B Q8_0, 8099 端口, **-c 2048 -np 4 四槽位并发**) | SSOT 显存预算（512 tok/slot，最恶劣15s音频358 tok < 512，零OOM）；全局注入 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 严控内存；ASR P50 174ms |
 | **VAD 调度** | 连续静音密度调控曲线 `limit(ratio)` (4s~16s 动态伸缩) + 双引擎热切换 | 默认 Silero VAD (0.139ms/帧, 高抗BGM误报)；UI 无感切换 FireRedVAD (0.835ms/帧, 纯NumPy+DFSMN, 弱音耳语提升4~12%召回)；配置持久化 |
-| **翻译引擎** | Index-Translate-2B.Q4_K_M.gguf (8080 端口, **-c 2048 -np 3 三槽位并发**) | 关闭 reasoning 杜绝空转；MT TTFT P50 80ms |
+| **翻译引擎** | Index-Translate-2B.Q4_K_M.gguf (8080 端口, **-c 2048 -np 3 三槽位并发**) | 关闭 reasoning 杜绝空转；全局注入 `--cache-ram 512 --ctx-checkpoints 1 --no-cache-idle-slots` 严控内存；MT TTFT P50 80ms |
 | **流水线调度** | Block 块状直出 + 30s 持续静音自动缓存清理/GC | 杜绝长时间运行内存暗漏；端到端综合延迟 ~255ms |
 | **UI 呈现** | 原生置顶字幕窗 + 连续动态下潜消散 `DismissDelay(N)` (1.5s~6.0s) | 基于生理阅读速率自适应消散，短词不霸屏，长句不焦虑；双行滚动常驻 |
 | **音频采集** | WASAPI 系统回环 + Linux PipeWire/PulseAudio 支持 | 跨平台进程级精准音频抓取与增强 |
-| **自动化门禁** | pytest 359+ passed (100% 绿) + 红队自检工作流 (`redteam-audit`) | 编译部署直达 `D:\TranslationDesktop` 并产出 `TranslationDesktop-Release.zip` 及桌面源码包 |
+| **自动化门禁** | pytest 365+ passed (100% 绿) + 红队自检工作流 (`redteam-audit`) | 编译部署直达 `D:\TranslationDesktop` 并产出 `TranslationDesktop-Release.zip` 及桌面源码包 |
 
 ## 4. 当前推进队列
 
@@ -37,6 +37,7 @@
 3. **[测试 B 已完成] `ds2_*` 10 片段全量矩阵**：弱音 100% 满血召回；静音 100% CLEAN 零误触发；动作低信噪比宁漏勿误。
 4. **[测试 D/E/F 已完成] 真实长片体感回看**：《生活大爆炸》3分钟全场景集与《奇异博士2》20分钟（光照会篇章）长时回放完成，召回 96.2%~100%，双行消除短句抹杀，GPU 稳态 56°C / 10.7W（风扇停转）。
 5. **[测试 G 已完成] 双 VAD 引擎 A/B 矩阵横评与 UI 无感热重载**：完成全部 10 份 DS2、3 份 TBBT 及 4 份真实 BGM 伴奏全场景 17 项评测。密集对话一致率达 96.7%；轻声弱音 FireRed 召回提升 4.7%~12.1%；纯音乐伴奏 Silero 误触发率低 41.2% 更稳健；UI 菜单切换无需环境变量，配置落盘并在活会话中热更新生效。
+6. **[测试 H 已完成] llama.exe / llama-server 全局 SSOT 内存硬约束与防膨胀**：全局接入 `--cache-ram 512`（将 Prompt 缓存上限严控为 512MB）、`--ctx-checkpoints 1`（杜绝多 slot 检查点克隆膨胀）、`--no-cache-idle-slots`（连接断开即释放槽位，杜绝僵尸槽位残留）。通过 `server/serve_config.py` 统一下发，严格区分 `llama.exe serve` 与 `llama-server.exe` 语法，经 Windows 实测与 365 项自动化测试验证无回归。
 
 ## 5. 核心证伪与警示（Top 5 铁律）
 

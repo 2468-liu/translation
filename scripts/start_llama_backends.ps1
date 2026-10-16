@@ -32,6 +32,13 @@ $qwenMmproj = $qwenPaths[1]
 $LogDir = Join-Path $Root "logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 
+# Common memory & slot eviction controls (SSOT)
+$commonMemArgs = @(
+    "--cache-ram", "512",
+    "--ctx-checkpoints", "1",
+    "--no-cache-idle-slots"
+)
+
 # 8080 Index-Translate
 if (-not (Test-TcpPort 8080)) {
     Write-Host "Starting 8080 Index-Translate ($(Split-Path $LlamaExe -Leaf))..."
@@ -39,7 +46,7 @@ if (-not (Test-TcpPort 8080)) {
     $args80 += @(
         "-m", $indexGguf, "--host", "127.0.0.1", "--port", "8080",
         "-ngl", "60", "-c", "2048", "-t", "4", "-np", "3", "--no-webui", "-lv", "4", "--reasoning", "off"
-    )
+    ) + $commonMemArgs
     Start-Process -FilePath $LlamaExe -WorkingDirectory $Root -ArgumentList $args80 `
         -RedirectStandardOutput (Join-Path $LogDir "llama.out") -RedirectStandardError (Join-Path $LogDir "llama.err") -WindowStyle Hidden
 } else {
@@ -52,8 +59,8 @@ if (-not (Test-TcpPort 8099)) {
     $args99 = if ($isCli) { @("serve") } else { @() }
     $args99 += @(
         "-m", $qwenModel, "--mmproj", $qwenMmproj, "--host", "127.0.0.1", "--port", "8099",
-        "-ngl", "99", "-c", "2048", "-t", "4", "-np", "4"
-    )
+        "-ngl", "99", "-c", "2048", "-t", "4", "-np", "4", "--no-webui"
+    ) + $commonMemArgs
     Start-Process -FilePath $LlamaExe -WorkingDirectory $Root -ArgumentList $args99 `
         -RedirectStandardOutput (Join-Path $LogDir "llama8099.out") -RedirectStandardError (Join-Path $LogDir "llama8099.err") -WindowStyle Hidden
 } else {
