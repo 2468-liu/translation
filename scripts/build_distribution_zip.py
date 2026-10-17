@@ -56,12 +56,23 @@ EXCLUDE_FILES = {
 }
 
 
+import time
+
+
 def build_distribution_zip() -> None:
     repo_root = Path(__file__).resolve().parents[1]
+    desktop_dir = Path.home() / "Desktop"
     targets = [
+        repo_root / "Ubantu.zip",
+        repo_root / "Ubuntu.zip",
         repo_root / "translation-ubuntu-24.04.zip",
-        Path.home() / "Desktop" / "translation-ubuntu-24.04.zip",
     ]
+    if desktop_dir.exists():
+        targets.extend([
+            desktop_dir / "Ubantu.zip",
+            desktop_dir / "Ubuntu.zip",
+            desktop_dir / "translation-ubuntu-24.04.zip",
+        ])
 
     print(f"[Packaging] Scanning source directory: {repo_root}")
     temp_zip = repo_root / "translation-ubuntu-24.04.tmp.zip"
@@ -93,7 +104,14 @@ def build_distribution_zip() -> None:
                 # Normalize path for Linux
                 arcname = arcname.replace("\\", "/")
 
-                zf.write(file_path, arcname=arcname)
+                if ext == ".sh":
+                    file_bytes = file_path.read_bytes().replace(b"\r\n", b"\n")
+                    zinfo = zipfile.ZipInfo(arcname, date_time=time.localtime(file_path.stat().st_mtime)[:6])
+                    zinfo.external_attr = 0o755 << 16  # rwxr-xr-x
+                    zf.writestr(zinfo, file_bytes)
+                else:
+                    zf.write(file_path, arcname=arcname)
+
                 packed_count += 1
                 total_uncompressed_bytes += file_path.stat().st_size
 

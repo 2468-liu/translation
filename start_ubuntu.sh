@@ -11,10 +11,12 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
-# 针对 Wayland / X11 兼容性优化
-# 在 GNOME/Wayland 环境下，强制使用 xcb 确保悬浮字幕层绝对置顶与零穿透拦截
+# 针对 Wayland / X11 双轨兼容性优化
 if [ -z "$QT_QPA_PLATFORM" ]; then
-    export QT_QPA_PLATFORM=xcb
+    export QT_QPA_PLATFORM="xcb;wayland"
+fi
+if [ -z "$GDK_BACKEND" ]; then
+    export GDK_BACKEND="x11,wayland"
 fi
 
 # 屏蔽 Qt 无害警告
