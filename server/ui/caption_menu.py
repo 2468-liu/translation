@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 import time
@@ -109,7 +110,7 @@ REGIONAL_LANGS: list[tuple[str, str]] = [
 CADENCES: list[tuple[str, int]] = [
     ("🎬 电影追剧 (推荐·1000ms·静音省电)", 1000),
     ("⚡ 演讲对话 (平衡·500ms·快速响应)", 500),
-    ("🎙️ 极速同传 (实时·160ms·逐字流式)", 160),
+    ("🎙️ 极速同传 (实时·320ms·流式首选)", 320),
 ]
 
 QWEN_CADENCES: list[tuple[str, int]] = [
@@ -120,11 +121,11 @@ QWEN_CADENCES: list[tuple[str, int]] = [
 ]
 
 NV_CADENCES: list[tuple[str, int]] = [
+    ("⚖️ 均衡流式 320ms (Balanced·官方推荐·平衡首选)", 320),
+    ("🎯 高精长句 560ms (Accurate·官方长句·高保真)", 560),
+    ("💎 超高精度 1120ms (Most accurate·1.12s高精转录)", 1120),
     ("⚡ 最低延迟 80ms (Lowest latency·极致响应)", 80),
-    ("🚀 快速 160ms (Fast·官方推荐·平衡首选)", 160),
-    ("⚖️ 均衡 320ms (Balanced·模型默认·通用流式)", 320),
-    ("🎯 高准确率 560ms (Accurate·高保真低容错)", 560),
-    ("💎 最高准确率 1120ms (Most accurate·1.12s高精转录)", 1120),
+    ("⚠️ 快速切片 160ms (Fast·已弃用·易断裂)", 160),
 ]
 
 
@@ -195,9 +196,9 @@ class CaptionMenuBuilder:
         self.win._scene_speech_act.setData({"backend": "qwen3", "ms": 500})
         self.win.engine_cadence_group.addAction(self.win._scene_speech_act)
 
-        self.win._scene_stream_act = menu.addAction("🎙️ 极速同传 (Nemotron 160ms·流式)")
+        self.win._scene_stream_act = menu.addAction("🎙️ 极速同传 (Nemotron 320ms·推荐)")
         self.win._scene_stream_act.setCheckable(True)
-        self.win._scene_stream_act.setData({"backend": "nemotron", "ms": 160})
+        self.win._scene_stream_act.setData({"backend": "nemotron", "ms": 320})
         self.win.engine_cadence_group.addAction(self.win._scene_stream_act)
 
         # 1.1 高级切片微调 (紧凑二级菜单，文案精简，绝不翻折)
@@ -222,12 +223,12 @@ class CaptionMenuBuilder:
         act_nv_80.setData({"backend": "nemotron", "ms": 80})
         self.win.engine_cadence_group.addAction(act_nv_80)
 
-        act_nv_320 = adv_cadence_menu.addAction("NV 320ms (通用均衡流式)")
-        act_nv_320.setCheckable(True)
-        act_nv_320.setData({"backend": "nemotron", "ms": 320})
-        self.win.engine_cadence_group.addAction(act_nv_320)
+        act_nv_160 = adv_cadence_menu.addAction("NV 160ms (已弃用·易断裂)")
+        act_nv_160.setCheckable(True)
+        act_nv_160.setData({"backend": "nemotron", "ms": 160})
+        self.win.engine_cadence_group.addAction(act_nv_160)
 
-        act_nv_560 = adv_cadence_menu.addAction("NV 560ms (高保真准确率)")
+        act_nv_560 = adv_cadence_menu.addAction("NV 560ms (长句高保真·官方)")
         act_nv_560.setCheckable(True)
         act_nv_560.setData({"backend": "nemotron", "ms": 560})
         self.win.engine_cadence_group.addAction(act_nv_560)
@@ -239,7 +240,7 @@ class CaptionMenuBuilder:
 
         # Full arrays for test compatibility
         self.win._qwen_actions = [self.win._scene_movie_act, act_qwen_750, self.win._scene_speech_act, act_qwen_250]
-        self.win._nv_actions = [act_nv_80, self.win._scene_stream_act, act_nv_320, act_nv_560, act_nv_1120]
+        self.win._nv_actions = [act_nv_80, act_nv_160, self.win._scene_stream_act, act_nv_560, act_nv_1120]
 
         self.win.engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
@@ -412,9 +413,9 @@ class CaptionMenuBuilder:
         self.win._tray_scene_speech.setData({"backend": "qwen3", "ms": 500})
         self.win.tray_engine_cadence_group.addAction(self.win._tray_scene_speech)
 
-        self.win._tray_scene_stream = menu.addAction("🎙️ 极速同传 (Nemotron 160ms·流式)")
+        self.win._tray_scene_stream = menu.addAction("🎙️ 极速同传 (Nemotron 320ms·推荐)")
         self.win._tray_scene_stream.setCheckable(True)
-        self.win._tray_scene_stream.setData({"backend": "nemotron", "ms": 160})
+        self.win._tray_scene_stream.setData({"backend": "nemotron", "ms": 320})
         self.win.tray_engine_cadence_group.addAction(self.win._tray_scene_stream)
 
         # 1.1 高级切片微调 in tray
@@ -439,12 +440,12 @@ class CaptionMenuBuilder:
         tray_act_nv_80.setData({"backend": "nemotron", "ms": 80})
         self.win.tray_engine_cadence_group.addAction(tray_act_nv_80)
 
-        tray_act_nv_320 = tray_adv_menu.addAction("NV 320ms (通用均衡流式)")
-        tray_act_nv_320.setCheckable(True)
-        tray_act_nv_320.setData({"backend": "nemotron", "ms": 320})
-        self.win.tray_engine_cadence_group.addAction(tray_act_nv_320)
+        tray_act_nv_160 = tray_adv_menu.addAction("NV 160ms (已弃用·易断裂)")
+        tray_act_nv_160.setCheckable(True)
+        tray_act_nv_160.setData({"backend": "nemotron", "ms": 160})
+        self.win.tray_engine_cadence_group.addAction(tray_act_nv_160)
 
-        tray_act_nv_560 = tray_adv_menu.addAction("NV 560ms (高保真准确率)")
+        tray_act_nv_560 = tray_adv_menu.addAction("NV 560ms (长句高保真·官方)")
         tray_act_nv_560.setCheckable(True)
         tray_act_nv_560.setData({"backend": "nemotron", "ms": 560})
         self.win.tray_engine_cadence_group.addAction(tray_act_nv_560)
@@ -455,7 +456,7 @@ class CaptionMenuBuilder:
         self.win.tray_engine_cadence_group.addAction(tray_act_nv_1120)
 
         self.win._tray_qwen_actions = [self.win._tray_scene_movie, tray_act_qwen_750, self.win._tray_scene_speech, tray_act_qwen_250]
-        self.win._tray_nv_actions = [tray_act_nv_80, self.win._tray_scene_stream, tray_act_nv_320, tray_act_nv_560, tray_act_nv_1120]
+        self.win._tray_nv_actions = [tray_act_nv_80, tray_act_nv_160, self.win._tray_scene_stream, tray_act_nv_560, tray_act_nv_1120]
 
         self.win.tray_engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
@@ -695,7 +696,7 @@ class CaptionMenuBuilder:
         elif preset_key == "speech":
             self.apply_engine_cadence("qwen3", 500)
         elif preset_key == "stream":
-            self.apply_engine_cadence("nemotron", 160)
+            self.apply_engine_cadence("nemotron", 320)
 
     def _on_engine_cadence_triggered(self, action: QAction) -> None:
         if not action:
@@ -1005,8 +1006,8 @@ class CaptionMenuBuilder:
             cfg["partial_interval_ms"] = 1000
             self.win.set_cadence_ui(1000)
         else:
-            cfg["partial_interval_ms"] = 160
-            self.win.set_cadence_ui(160)
+            cfg["partial_interval_ms"] = 320
+            self.win.set_cadence_ui(320)
         config.save_desktop_config(cfg)
         QTimer.singleShot(10, lambda: self.win.config_changed.emit({"asr_backend": backend, "block_by_punct": True}))
 

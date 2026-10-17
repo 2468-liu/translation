@@ -114,51 +114,87 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
     is_win = (sys.platform == "win32")
     lib_filename = "nemo_speech_asr_c.dll" if is_win else "libnemo_speech_asr_c.so"
 
-    bin_candidates: list[Path] = [
-        # Windows candidates
-        config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin",
-        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin",
-        config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-windows-x86_64-cpu" / "bin",
-        # Linux candidates (Vulkan, CUDA, CPU - check both lib and bin)
-        config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib",
-        config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "bin",
-        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "lib",
-        config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "bin",
-        config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "lib",
-        config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "bin",
-        # Generic tools/nemo-speech paths
-        config.ROOT / "tools" / "nemo-speech" / "lib",
-        config.ROOT / "tools" / "nemo-speech" / "bin",
-        config.ROOT / "tools" / "nemo-speech",
-        # Installed directories
-        Path("D:/TranslationDesktop/tools/nemo-speech-vulkan/nemo-speech-0.2.0-windows-x86_64-vulkan/bin"),
-        Path("D:/TranslationDesktop/tools/nemo-speech-cpu/nemo-speech-0.2.0-windows-x86_64-cpu/bin"),
-        Path("/opt/translation/tools/nemo-speech/lib"),
-        Path("/usr/local/lib"),
-        Path("/usr/lib"),
-    ]
+    bin_candidates: list[Path] = []
+    if is_win:
+        local_app = os.environ.get("LOCALAPPDATA")
+        if local_app:
+            bin_candidates.extend([
+                Path(local_app) / "Programs" / "NeMoSpeech" / "bin",
+                Path(local_app) / "Programs" / "NeMoSpeech" / "lib",
+                Path(local_app) / "Programs" / "NeMoSpeech",
+                Path(local_app) / "nemo-speech" / "bin",
+                Path(local_app) / "nemo-speech" / "lib",
+                Path(local_app) / "nemo-speech",
+            ])
+        bin_candidates.extend([
+            Path.home() / "AppData" / "Local" / "Programs" / "NeMoSpeech" / "bin",
+            Path.home() / "AppData" / "Local" / "Programs" / "NeMoSpeech" / "lib",
+            Path.home() / "AppData" / "Local" / "nemo-speech" / "bin",
+            Path.home() / "AppData" / "Local" / "nemo-speech" / "lib",
+            Path.home() / ".local" / "share" / "nemo-speech" / "bin",
+            Path.home() / ".local" / "share" / "nemo-speech" / "lib",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "bin",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "lib",
+            config.ROOT / "tools" / "nemo-speech" / "bin",
+            config.ROOT / "tools" / "nemo-speech" / "lib",
+            Path("D:/TranslationDesktop/tools/nemo-speech-cuda/nemo-speech-0.2.0-windows-x86_64-cuda/bin"),
+            Path("D:/TranslationDesktop/tools/nemo-speech-cuda/bin"),
+            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-windows-x86_64-cpu" / "bin",
+            config.ROOT / "tools" / "nemo-speech-cpu" / "bin",
+            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin",
+        ])
+    else:
+        bin_candidates.extend([
+            Path.home() / ".local" / "share" / "nemo-speech" / "lib",
+            Path.home() / ".local" / "share" / "nemo-speech" / "bin",
+            Path.home() / ".local" / "lib",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "lib",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "bin",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "lib",
+            config.ROOT / "tools" / "nemo-speech-cuda" / "bin",
+            config.ROOT / "tools" / "nemo-speech" / "lib",
+            config.ROOT / "tools" / "nemo-speech" / "bin",
+            Path("/usr/local/cuda/lib64"),
+            Path("/opt/translation/tools/nemo-speech/lib"),
+            Path("/usr/local/lib"),
+            Path("/usr/lib"),
+            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "lib",
+            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "bin",
+            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib",
+            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "bin",
+        ])
+
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         mp = Path(meipass)
-        bin_candidates.insert(0, mp / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
-        bin_candidates.insert(1, mp / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib")
+        bin_candidates.insert(0, mp / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
+        bin_candidates.insert(1, mp / "tools" / "nemo-speech-cuda" / "lib")
         bin_candidates.insert(2, mp / "tools" / "nemo-speech" / "lib")
         bin_candidates.insert(3, mp / "tools" / "nemo-speech" / "bin")
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
-        bin_candidates.insert(0, app_dir / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
-        bin_candidates.insert(1, app_dir / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib")
-        bin_candidates.insert(2, app_dir / "_internal" / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin")
+        bin_candidates.insert(0, app_dir / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
+        bin_candidates.insert(1, app_dir / "tools" / "nemo-speech-cuda" / "lib")
+        bin_candidates.insert(2, app_dir / "_internal" / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
         bin_candidates.insert(3, app_dir / "tools" / "nemo-speech" / "lib")
+
     for bdir in bin_candidates:
         dll = bdir / lib_filename
         if dll.exists():
-            if hasattr(os, "add_dll_directory"):
-                try:
-                    os.add_dll_directory(str(bdir))
-                except OSError:
-                    pass
-            if not is_win:
+            if is_win:
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        os.add_dll_directory(str(bdir))
+                    except OSError:
+                        pass
+                    cuda_path = os.environ.get("CUDA_PATH")
+                    if cuda_path and (Path(cuda_path) / "bin").exists():
+                        try:
+                            os.add_dll_directory(str(Path(cuda_path) / "bin"))
+                        except OSError:
+                            pass
+            else:
                 orig_ld = os.environ.get("LD_LIBRARY_PATH", "")
                 if str(bdir) not in orig_ld:
                     os.environ["LD_LIBRARY_PATH"] = f"{bdir}:{orig_ld}" if orig_ld else str(bdir)
@@ -167,7 +203,18 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
                 return lib, str(bdir)
             except OSError:
                 if not is_win:
-                    for comp in ("libggml-base.so", "libggml-cpu.so", "libggml-vulkan.so", "libggml.so", "libllama.so", "libnemo_speech_asr.so"):
+                    for comp in (
+                        "libcublas.so.12",
+                        "libcublasLt.so.12",
+                        "libcudart.so.12",
+                        "libggml-cuda.so",
+                        "libggml-base.so",
+                        "libggml-cpu.so",
+                        "libggml-vulkan.so",
+                        "libggml.so",
+                        "libllama.so",
+                        "libnemo_speech_asr.so",
+                    ):
                         comp_p = bdir / comp
                         if comp_p.exists():
                             try:

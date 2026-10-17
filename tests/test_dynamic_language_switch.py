@@ -78,16 +78,16 @@ class TestDynamicLanguageSwitch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.context, [])
 
     def test_switch_cadence_applies_to_running_vad_and_next_slice(self):
-        from server import ws_server
+        from server import ws_server, config
         fake_asr = FakeAsr()
         session = Session(fake_asr)
-        self.assertEqual(session.vad.tuning.partial_interval_ms, 160)
+        self.assertEqual(session.vad.tuning.partial_interval_ms, config.PARTIAL_INTERVAL_MS)
 
         ws_server._CURRENT_SESSION = session
         try:
-            ws_server._switch_partial_interval(320)
+            ws_server._switch_partial_interval(560)
             # The running session's VAD tuning is immediately updated for the next slice
-            self.assertEqual(session.vad.tuning.partial_interval_ms, 320)
+            self.assertEqual(session.vad.tuning.partial_interval_ms, 560)
         finally:
             ws_server._CURRENT_SESSION = None
 

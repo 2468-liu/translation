@@ -178,18 +178,65 @@ def setup_model(models_dir: Path) -> bool:
     return download_file_with_resume(MODEL_URLS, target_model, desc="Nemotron-3.5 GGUF 模型")
 
 
-def setup_engine_binary(tools_dir: Path, preferred_accel: str = "vulkan") -> bool:
-    """Download and extract official NeMo-Speech precompiled binary."""
+def setup_engine_binary(tools_dir: Path, preferred_accel: str = "cuda") -> bool:
+    """Deploy official NeMo-Speech precompiled binary (prioritizing CUDA)."""
+    lib_name = "nemo_speech_asr_c.dll" if sys.platform == "win32" else "libnemo_speech_asr_c.so"
+
+    # Step 0: Check if official or custom installation already exists
+    from server.asr.nemotron import _resolve_nemo_speech_dll
+    try:
+        dll, path_str = _resolve_nemo_speech_dll()
+        log(f"✅ 检测到原生推理引擎已就绪: {path_str}")
+        return True
+    except Exception:
+        pass
+
+    tools_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: Try official one-line script installer (NVIDIA NeMo-Speech.cpp)
+    log("尝试运行 NVIDIA 官方一键安装脚本 (CUDA 优先)...")
+    if sys.platform == "win32":
+        powershell_bin = shutil.which("powershell.exe") or shutil.which("pwsh")
+        if powershell_bin:
+            try:
+                cmd = [powershell_bin, "-NoProfile", "-Command", "irm https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.ps1 | iex"]
+                log("执行官方 Windows 部署脚本: irm https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.ps1 | iex")
+                res = subprocess.run(cmd, timeout=120)
+                if res.returncode == 0:
+                    try:
+                        dll, path_str = _resolve_nemo_speech_dll()
+                        log(f"✅ 官方脚本安装成功，推理引擎已就绪: {path_str}")
+                        return True
+                    except Exception:
+                        log("⚠️ 官方安装脚本执行完成但未定位到动态库，转入备用镜像下载...")
+            except Exception as e:
+                log(f"⚠️ 官方脚本执行受阻: {e}，转入镜像备用下载...")
+    else:
+        curl_bin = shutil.which("curl")
+        sh_bin = shutil.which("sh")
+        if curl_bin and sh_bin:
+            try:
+                log("执行官方 Linux 部署脚本: curl -fsSL https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.sh | sh")
+                cmd = "curl -fsSL https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.sh | sh"
+                res = subprocess.run(cmd, shell=True, timeout=120)
+                if res.returncode == 0:
+                    try:
+                        dll, path_str = _resolve_nemo_speech_dll()
+                        log(f"✅ 官方脚本安装成功，推理引擎已就绪: {path_str}")
+                        return True
+                    except Exception:
+                        log("⚠️ 官方安装脚本执行完成但未定位到动态库，转入备用镜像下载...")
+            except Exception as e:
+                log(f"⚠️ 官方脚本执行受阻: {e}，转入镜像备用下载...")
+
+    # Step 2: Fallback to downloading official precompiled releases via mirrors
     os_key = "win32" if sys.platform == "win32" else "linux"
     pkg_map = ENGINE_PACKAGES.get(os_key, ENGINE_PACKAGES["linux"])
 
-    # Fallback order: preferred -> vulkan -> cuda -> cpu
     candidate_accels = [preferred_accel]
-    for acc in ("vulkan", "cuda", "cpu"):
+    for acc in ("cuda", "cpu", "vulkan"):
         if acc not in candidate_accels:
             candidate_accels.append(acc)
-
-    tools_dir.mkdir(parents=True, exist_ok=True)
 
     for accel in candidate_accels:
         archive_name = pkg_map.get(accel)
@@ -217,8 +264,6 @@ def setup_engine_binary(tools_dir: Path, preferred_accel: str = "vulkan") -> boo
                 with tarfile.open(target_archive, "r:gz") as t:
                     t.extractall(dest_extract_dir)
 
-            # Check if dynamic library is extracted
-            lib_name = "nemo_speech_asr_c.dll" if sys.platform == "win32" else "libnemo_speech_asr_c.so"
             found_lib = None
             for root, _, files in os.walk(dest_extract_dir):
                 if lib_name in files:
@@ -288,7 +333,7 @@ def main() -> int:
     parser.add_argument("-y", "--auto", "--yes", action="store_true", help="Non-interactive mode, agree to all prompts")
     parser.add_argument("--docker", action="store_true", help="Force secondary Docker container workflow")
     parser.add_argument("--check", action="store_true", help="Check current Nemotron readiness and exit")
-    parser.add_argument("--engine", choices=["vulkan", "cuda", "cpu"], default="vulkan", help="Preferred acceleration backend")
+    parser.add_argument("--engine", choices=["cuda", "cpu", "vulkan"], default="cuda", help="Preferred acceleration backend")
     parser.add_argument("--models-dir", type=str, default="", help="Custom models directory")
     args = parser.parse_args()
 

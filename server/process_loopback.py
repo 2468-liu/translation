@@ -137,22 +137,97 @@ class ProcessLoopbackManager:
         else:
             return self._enumerate_linux_sessions(max_entries)
 
+    def _get_linux_env(self) -> dict:
+        env = dict(os.environ)
+        env["LC_ALL"] = "C"
+        if "XDG_RUNTIME_DIR" not in env and hasattr(os, "getuid"):
+            try:
+                run_user = f"/run/user/{os.getuid()}"
+                if os.path.exists(run_user):
+                    env["XDG_RUNTIME_DIR"] = run_user
+            except Exception:
+                pass
+        return env
+
+    def _get_linux_default_sink_monitor(self) -> str:
+        env = self._get_linux_env()
+        try:
+            res = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=1.0, env=env)
+            if res.returncode == 0 and res.stdout.strip():
+                sink = res.stdout.strip()
+                return f"{sink}.monitor"
+        except Exception:
+            pass
+        try:
+            res = subprocess.run(["pactl", "list", "sinks", "short"], capture_output=True, text=True, timeout=1.0, env=env)
+            if res.returncode == 0 and res.stdout.strip():
+                first_line = res.stdout.strip().splitlines()[0]
+                parts = first_line.split()
+                if len(parts) >= 2:
+                    return f"{parts[1]}.monitor"
+        except Exception:
+            pass
+        return "@DEFAULT_SINK@.monitor"
+
+    def _resolve_linux_process_name(self, pid: int, raw_name: str) -> str:
+        name = raw_name
+        name_lower = name.lower()
+        if any(b in name_lower for b in ("chrome", "chromium", "google-chrome")):
+            return "Google Chrome"
+
+        # Check /proc/<pid>/cmdline
+        try:
+            cmdline_p = Path(f"/proc/{pid}/cmdline")
+            if cmdline_p.exists():
+                cmdline = cmdline_p.read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
+                if "chrome" in cmdline:
+                    return "Google Chrome"
+                if "firefox" in cmdline:
+                    return "Firefox"
+                if "edge" in cmdline:
+                    return "Microsoft Edge"
+        except Exception:
+            pass
+
+        # Check parent process in /proc/<pid>/stat
+        try:
+            stat_p = Path(f"/proc/{pid}/stat")
+            if stat_p.exists():
+                fields = stat_p.read_text(errors="ignore").split()
+                if len(fields) >= 4:
+                    ppid = int(fields[3])
+                    if ppid > 1:
+                        parent_cmd = Path(f"/proc/{ppid}/cmdline")
+                        if parent_cmd.exists():
+                            p_cmd = parent_cmd.read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
+                            if "chrome" in p_cmd:
+                                return "Google Chrome"
+        except Exception:
+            pass
+
+        return name
+
     def _enumerate_linux_sessions(self, max_entries: int = 32) -> List[dict]:
         import re
-        import subprocess
         result = []
+        env = self._get_linux_env()
         try:
-            res = subprocess.run(["pactl", "list", "sink-inputs"], capture_output=True, text=True, timeout=1.5)
+            res = subprocess.run(["pactl", "list", "sink-inputs"], capture_output=True, text=True, timeout=1.5, env=env)
             if res.returncode == 0:
-                blocks = res.stdout.split("Sink Input #")
+                # Support both English ("Sink Input #") and Chinese ("信宿输入 #") output
+                blocks = re.split(r"(?:Sink Input|信宿输入)\s*#\d+", res.stdout)
                 for blk in blocks[1:]:
                     pid_match = re.search(r'application\.process\.id\s*[=:]\s*"?(\d+)"?', blk)
                     name_match = re.search(r'(?:application\.name|media\.name|node\.name|application\.process\.binary)\s*[=:]\s*"?([^"\r\n]+)"?', blk)
-                    cork_match = re.search(r'Corked:\s*(yes|no)', blk, re.IGNORECASE)
+                    cork_match = re.search(r'(?:Corked|已暂停):\s*(yes|no|是|否)', blk, re.IGNORECASE)
                     if pid_match:
                         pid = int(pid_match.group(1))
-                        name = name_match.group(1).strip() if name_match else f"PID {pid}"
-                        is_active = (cork_match.group(1).lower() == "no") if cork_match else True
+                        raw_name = name_match.group(1).strip() if name_match else f"PID {pid}"
+                        name = self._resolve_linux_process_name(pid, raw_name)
+                        is_active = True
+                        if cork_match:
+                            val = cork_match.group(1).lower()
+                            is_active = (val in ("no", "否"))
                         result.append({"pid": pid, "name": name, "is_active": is_active})
                         if len(result) >= max_entries:
                             break
@@ -162,16 +237,27 @@ class ProcessLoopbackManager:
 
     def _find_linux_sink_input_index(self, target_pid: int) -> Optional[int]:
         import re
-        import subprocess
+        env = self._get_linux_env()
         try:
-            res = subprocess.run(["pactl", "list", "sink-inputs"], capture_output=True, text=True, timeout=1.5)
+            res = subprocess.run(["pactl", "list", "sink-inputs"], capture_output=True, text=True, timeout=1.5, env=env)
             if res.returncode == 0:
-                blocks = res.stdout.split("Sink Input #")
-                for blk in blocks[1:]:
-                    idx_match = re.match(r"^(\d+)", blk.strip())
-                    pid_match = re.search(r'application\.process\.id\s*[=:]\s*"?(\d+)"?', blk)
-                    if idx_match and pid_match and int(pid_match.group(1)) == target_pid:
-                        return int(idx_match.group(1))
+                matches = re.finditer(r"(?:Sink Input|信宿输入)\s*#(\d+)([\s\S]*?)(?=(?:Sink Input|信宿输入)\s*#|\Z)", res.stdout)
+                for m in matches:
+                    idx = int(m.group(1))
+                    body = m.group(2)
+                    pid_match = re.search(r'application\.process\.id\s*[=:]\s*"?(\d+)"?', body)
+                    if pid_match:
+                        p = int(pid_match.group(1))
+                        if p == target_pid:
+                            return idx
+                        try:
+                            stat_p = Path(f"/proc/{p}/stat")
+                            if stat_p.exists():
+                                fields = stat_p.read_text(errors="ignore").split()
+                                if len(fields) >= 4 and int(fields[3]) == target_pid:
+                                    return idx
+                        except Exception:
+                            pass
         except Exception:
             pass
         return None
@@ -214,7 +300,6 @@ class ProcessLoopbackManager:
         on_device_change_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         import shutil
-        import subprocess
         self.stop()
         self._current_pid = target_pid
         self._pcm_callback = pcm_callback
@@ -222,22 +307,24 @@ class ProcessLoopbackManager:
         self._on_device_change_callback = on_device_change_callback
         self._linux_stop = False
 
+        env = self._get_linux_env()
         cmd = None
         if target_pid > 0 and shutil.which("parec"):
             sink_idx = self._find_linux_sink_input_index(target_pid)
             if sink_idx is not None:
                 cmd = ["parec", f"--monitor-stream={sink_idx}", "--raw", "--format=s16le", "--rate=16000", "--channels=1"]
         if not cmd and shutil.which("parec"):
-            cmd = ["parec", "--raw", "--format=s16le", "--rate=16000", "--channels=1"]
+            monitor_source = self._get_linux_default_sink_monitor()
+            cmd = ["parec", "--raw", "--format=s16le", "--rate=16000", "--channels=1", "-d", monitor_source]
         elif not cmd and shutil.which("pw-record"):
-            cmd = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", "-"]
+            cmd = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", "--target", "@DEFAULT_MONITOR@", "-"]
 
         if not cmd:
             print("[ProcessLoopback] Neither parec nor pw-record found on Linux.")
             return False
 
         try:
-            self._linux_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._linux_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
             def _reader():
                 while not self._linux_stop and self._linux_proc and self._linux_proc.poll() is None:
                     raw = self._linux_proc.stdout.read(640)

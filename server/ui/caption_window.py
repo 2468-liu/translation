@@ -230,7 +230,7 @@ class QtCaptionWindow(QWidget):
         self.source_lang = str(cfg_init.get("language", "auto"))
         self.target_lang = str(cfg_init.get("target_language", "zh"))
         self.asr_backend: str = str(cfg_init.get("asr_backend", "qwen3"))
-        self.partial_interval_ms: int = int(cfg_init.get("partial_interval_ms", 1000 if self.asr_backend == "qwen3" else 160))
+        self.partial_interval_ms: int = int(cfg_init.get("partial_interval_ms", 1000 if self.asr_backend == "qwen3" else 320))
         self.current_audio_pid = 0
         self._is_capturing: bool = True
         self.source_line: str = ""

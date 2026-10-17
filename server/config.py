@@ -410,8 +410,9 @@ QWEN3_ASR_MAX_TOKENS = _env_int("TRANSLATION_QWEN3_ASR_MAX_TOKENS", 128)
 #
 # The engine matters here more than the number. turbo at 823ms per call cannot keep up
 # Nemotron 3.5 ASR uses 80ms chunk multiples. The official recommended default
-# for streaming subtitles is 160ms ([56, 1], 1 right-context frame).
-PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 160)
+# for streaming subtitles is 320ms ([56, 4]), with 560ms ([56, 7]) for long sentences.
+# 160ms is deprecated due to acoustic fragmentation and kernel scheduling overhead.
+PARTIAL_INTERVAL_MS = _env_int("TRANSLATION_PARTIAL_INTERVAL_MS", 320)
 
 # --------------------------------------------------------------- llama.cpp 版本
 #

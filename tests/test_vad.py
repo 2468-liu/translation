@@ -45,12 +45,12 @@ def splitter_for(pattern, **over):
 
 
 class ShippedCadenceTests(unittest.TestCase):
-    def test_the_default_is_160(self):
+    def test_the_default_is_320(self):
         """Pinned here rather than only in config.py so the number these tests used to
         depend on by accident has one visible home."""
         from server import config
 
-        self.assertEqual(config.PARTIAL_INTERVAL_MS, 160)
+        self.assertEqual(config.PARTIAL_INTERVAL_MS, 320)
 
     def test_the_test_cadence_is_shorter_than_the_shortest_utterance_these_tests_use(self):
         """Otherwise the helper's 120ms stops being enough and the failures come back

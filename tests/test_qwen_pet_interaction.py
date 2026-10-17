@@ -124,13 +124,13 @@ class TestScenePresetsIntegration:
         window.config_changed.connect(lambda cfg: emitted_configs.append(cfg))
 
         with patch("server.asr.nemotron.check_nemotron_status", return_value=(True, "就绪")):
-            # Switch to stream preset (Nemotron + 160ms)
+            # Switch to stream preset (Nemotron + 320ms)
             assert hasattr(window, "_scene_stream_act")
             window._scene_stream_act.trigger()
 
-            qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" and cfg.get("partial_interval_ms") == 160 for cfg in emitted_configs))
+            qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" and cfg.get("partial_interval_ms") == 320 for cfg in emitted_configs))
             assert window.asr_backend == "nemotron"
-            assert window.partial_interval_ms == 160
+            assert window.partial_interval_ms == 320
 
             # Switch back to movie preset (Qwen3 + 1000ms + rolling)
             assert hasattr(window, "_scene_movie_act")
