@@ -123,21 +123,22 @@ class TestScenePresetsIntegration:
         emitted_configs = []
         window.config_changed.connect(lambda cfg: emitted_configs.append(cfg))
 
-        # Switch to stream preset (Nemotron + 160ms)
-        assert hasattr(window, "_scene_stream_act")
-        window._scene_stream_act.trigger()
+        with patch("server.asr.nemotron.check_nemotron_status", return_value=(True, "就绪")):
+            # Switch to stream preset (Nemotron + 160ms)
+            assert hasattr(window, "_scene_stream_act")
+            window._scene_stream_act.trigger()
 
-        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" and cfg.get("partial_interval_ms") == 160 for cfg in emitted_configs))
-        assert window.asr_backend == "nemotron"
-        assert window.partial_interval_ms == 160
+            qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "nemotron" and cfg.get("partial_interval_ms") == 160 for cfg in emitted_configs))
+            assert window.asr_backend == "nemotron"
+            assert window.partial_interval_ms == 160
 
-        # Switch back to movie preset (Qwen3 + 1000ms + rolling)
-        assert hasattr(window, "_scene_movie_act")
-        window._scene_movie_act.trigger()
+            # Switch back to movie preset (Qwen3 + 1000ms + rolling)
+            assert hasattr(window, "_scene_movie_act")
+            window._scene_movie_act.trigger()
 
-        qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "qwen3" and cfg.get("partial_interval_ms") == 1000 for cfg in emitted_configs))
-        assert window.asr_backend == "qwen3"
-        assert window.partial_interval_ms == 1000
+            qtbot.waitUntil(lambda: any(cfg.get("asr_backend") == "qwen3" and cfg.get("partial_interval_ms") == 1000 for cfg in emitted_configs))
+            assert window.asr_backend == "qwen3"
+            assert window.partial_interval_ms == 1000
 
     def test_tray_scene_preset_selectable(self, qtbot, pet_and_coordinator):
         window, pet = pet_and_coordinator

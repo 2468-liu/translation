@@ -37,13 +37,14 @@ class DesktopBackendSwitchTests(unittest.TestCase):
     @patch("desktop_app.QLocalServer")
     @patch("desktop_app.QtCaptionWindow")
     @patch("desktop_app.Session")
+    @patch("server.asr.nemotron.check_nemotron_status", return_value=(True, "就绪"))
     @patch("desktop_app.ProcessLoopbackManager")
     @patch("desktop_app._ensure_llama_server")
     @patch("desktop_app._ensure_qwen_server")
     @patch("desktop_app.build_asr")
     @patch("desktop_app._kill_port")
     def test_switch_to_nemotron_seamlessly_docks_on_unified_pipeline(
-        self, mock_kill_port, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+        self, mock_kill_port, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_nemotron_status, mock_session, mock_win, mock_local_srv
     ):
         with patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "qwen3"}):
             app = DesktopApp(app=self.qapp)
@@ -192,9 +193,9 @@ class DesktopBackendSwitchTests(unittest.TestCase):
     @patch("desktop_app._ensure_llama_server")
     @patch("desktop_app._ensure_qwen_server")
     @patch("desktop_app.build_asr")
-    @patch("subprocess.Popen")
+    @patch("server.ui.download_dialog.ModelDownloadDialog")
     def test_switch_to_nemotron_missing_user_accepts_download_launches_script(
-        self, mock_popen, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
+        self, mock_dialog_cls, mock_build_asr, mock_qwen_srv, mock_llama_srv, mock_loopback, mock_session, mock_win, mock_local_srv
     ):
         with (
             patch("desktop_app.config.load_desktop_config", return_value={"asr_backend": "qwen3"}),
@@ -207,14 +208,16 @@ class DesktopBackendSwitchTests(unittest.TestCase):
 
             app = DesktopApp(app=self.qapp)
             app._current_asr_backend = "qwen3"
+            del app.window.menu_manager
+
+            mock_dlg_instance = MagicMock()
+            mock_dialog_cls.return_value = mock_dlg_instance
 
             app._switch_asr_backend("nemotron")
 
             mock_question.assert_called_once()
-            mock_popen.assert_called_once()
-            cmd_args = mock_popen.call_args[0][0]
-            self.assertIn("setup_nemotron.py", cmd_args[1])
-            self.assertIn("--auto", cmd_args)
+            mock_dialog_cls.assert_called_once_with(parent=app.window, target_model="nemotron")
+            mock_dlg_instance.start_download.assert_called_once()
             self.assertEqual(app._current_asr_backend, "qwen3")
             app.window.set_asr_backend_ui.assert_called_with("qwen3")
 

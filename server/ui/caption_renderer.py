@@ -24,13 +24,38 @@ from PyQt6.QtGui import (
 )
 
 
+_cjk_fonts_registered = False
+
+def _ensure_cjk_fonts():
+    global _cjk_fonts_registered
+    if _cjk_fonts_registered:
+        return
+    _cjk_fonts_registered = True
+    if sys.platform != "win32":
+        try:
+            from pathlib import Path
+            from PyQt6.QtGui import QFontDatabase
+            win_font_paths = [
+                Path("/mnt/c/Windows/Fonts/msyh.ttc"),
+                Path("/mnt/c/Windows/Fonts/msyhbd.ttc"),
+                Path("/mnt/c/Windows/Fonts/simsun.ttc"),
+                Path("/mnt/c/Windows/Fonts/simhei.ttf"),
+            ]
+            for p in win_font_paths:
+                if p.exists():
+                    QFontDatabase.addApplicationFont(str(p))
+        except Exception:
+            pass
+
 def get_caption_font(px: int, weight: QFont.Weight = QFont.Weight.Medium) -> QFont:
     """Returns a high-quality anti-aliased font with cross-platform fallback (Linux/Windows)."""
+    _ensure_cjk_fonts()
     font = QFont()
     if sys.platform == "win32":
         font.setFamilies(["Microsoft YaHei", "PingFang SC", "Segoe UI", "sans-serif"])
     else:
         font.setFamilies([
+            "Microsoft YaHei",
             "Noto Sans CJK SC",
             "Source Han Sans CN",
             "WenQuanYi Micro Hei",

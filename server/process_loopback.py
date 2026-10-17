@@ -146,12 +146,12 @@ class ProcessLoopbackManager:
             if res.returncode == 0:
                 blocks = res.stdout.split("Sink Input #")
                 for blk in blocks[1:]:
-                    pid_match = re.search(r'application\.process\.id\s*=\s*"(\d+)"', blk)
-                    name_match = re.search(r'application\.name\s*=\s*"([^"]+)"', blk)
+                    pid_match = re.search(r'application\.process\.id\s*[=:]\s*"?(\d+)"?', blk)
+                    name_match = re.search(r'(?:application\.name|media\.name|node\.name|application\.process\.binary)\s*[=:]\s*"?([^"\r\n]+)"?', blk)
                     cork_match = re.search(r'Corked:\s*(yes|no)', blk, re.IGNORECASE)
                     if pid_match:
                         pid = int(pid_match.group(1))
-                        name = name_match.group(1) if name_match else f"PID {pid}"
+                        name = name_match.group(1).strip() if name_match else f"PID {pid}"
                         is_active = (cork_match.group(1).lower() == "no") if cork_match else True
                         result.append({"pid": pid, "name": name, "is_active": is_active})
                         if len(result) >= max_entries:
@@ -169,7 +169,7 @@ class ProcessLoopbackManager:
                 blocks = res.stdout.split("Sink Input #")
                 for blk in blocks[1:]:
                     idx_match = re.match(r"^(\d+)", blk.strip())
-                    pid_match = re.search(r'application\.process\.id\s*=\s*"(\d+)"', blk)
+                    pid_match = re.search(r'application\.process\.id\s*[=:]\s*"?(\d+)"?', blk)
                     if idx_match and pid_match and int(pid_match.group(1)) == target_pid:
                         return int(idx_match.group(1))
         except Exception:

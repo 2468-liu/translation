@@ -118,21 +118,16 @@ class NemotronMenuProvisioningTests(unittest.TestCase):
             patch("server.asr.nemotron.check_nemotron_status", return_value=(False, "缺少模型权重")),
             patch.dict(os.environ, {"TRANSLATION_FORCE_INTERACTIVE": "1"}, clear=False),
             patch("PyQt6.QtWidgets.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes) as mock_q,
-            patch("subprocess.Popen") as mock_popen,
+            patch("server.ui.download_dialog.ModelDownloadDialog") as mock_dialog_cls,
         ):
+            mock_dlg = MagicMock()
+            mock_dialog_cls.return_value = mock_dlg
+
             builder.apply_engine_cadence("nemotron", 160)
 
             mock_q.assert_called_once()
-            mock_popen.assert_called_once()
-            cmd = mock_popen.call_args[0][0]
-            self.assertIn("setup_nemotron.py", str(cmd[1]))
-            self.assertIn("--auto", cmd)
-
-            # Must emit downloading toast
-            self.assertTrue(len(self.mock_win.received_commands) > 0)
-            toast_cmds = [c for c in self.mock_win.received_commands if c[0] == "toast"]
-            self.assertTrue(len(toast_cmds) > 0)
-            self.assertIn("已启动", toast_cmds[0][1])
+            mock_dialog_cls.assert_called_once_with(parent=self.mock_win, target_model="nemotron")
+            mock_dlg.start_download.assert_called_once()
 
     def test_check_nemotron_status_returns_tuple(self):
         ready, msg = check_nemotron_status()

@@ -22,10 +22,13 @@ def _signature(text: str) -> str:
     """Short stable digest of a line, for matching probes against a recording."""
     return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
 
-try:
-    import ctypes
-except ImportError:
-    ctypes = None
+if sys.platform.startswith("linux"):
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+    if "GDK_BACKEND" not in os.environ:
+        os.environ["GDK_BACKEND"] = "x11"
+    if "QT_LOGGING_RULES" not in os.environ:
+        os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false;qt.text.font.*=false"
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
@@ -125,11 +128,14 @@ from .prefix_freezer import MonotonicPrefixFreezer
 
 
 
+import ctypes
+
 class QtCaptionWindow(QWidget):
     """Modern frameless, translucent, topmost caption window."""
 
     command_received = pyqtSignal(str, object, float, float, bool)
     config_changed = pyqtSignal(dict)
+    model_download_finished = pyqtSignal(str)
 
     def __init__(
         self,
@@ -847,6 +853,9 @@ class QtCaptionWindow(QWidget):
         self._strip_frame()
         self._broadcast_state()
         self._paint()
+        if sys.platform != "win32":
+            self.raise_()
+            self.repaint()
 
     def withdraw(self) -> None:
         """Temporarily withdraw window without marking it permanently closed.

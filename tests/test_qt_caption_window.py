@@ -1,8 +1,15 @@
 """Unit tests for PyQt6-based subtitle overlay window (QtCaptionWindow)."""
 
 import json
+import os
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("GDK_BACKEND", "x11")
+    os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.qpa.*=false;qt.text.font.*=false")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -251,6 +258,7 @@ class QtCaptionWindowTests(unittest.TestCase):
         from PyQt6.QtGui import QMouseEvent
         from PyQt6.QtCore import Qt
 
+        self.window.resize(500, self.window.height())
         geo = self.window.geometry()
         right_pos = QPointF(float(geo.x() + self.window.width() - 5), float(geo.y() + 20))
         event = QMouseEvent(
@@ -652,10 +660,11 @@ class QtCaptionWindowTests(unittest.TestCase):
 
     def test_engine_switch_unified_block_by_punct(self):
         """Verify engine switch to Nemotron maintains unified block_by_punct=True."""
-        self.window.menu_manager.apply_engine_cadence("nemotron", 160)
-        self.assertTrue(self.window._block_by_punct)
-        self.window.menu_manager.apply_engine_cadence("qwen3", 1000)
-        self.assertTrue(self.window._block_by_punct)
+        with patch("server.asr.nemotron.check_nemotron_status", return_value=(True, "就绪")):
+            self.window.menu_manager.apply_engine_cadence("nemotron", 160)
+            self.assertTrue(self.window._block_by_punct)
+            self.window.menu_manager.apply_engine_cadence("qwen3", 1000)
+            self.assertTrue(self.window._block_by_punct)
 
     def test_begin_segment_safeguards_dismiss_timer(self):
         """begin_segment must not indefinitely strand captions if new segment has no text."""

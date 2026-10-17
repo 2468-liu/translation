@@ -575,27 +575,27 @@ class CaptionMenuBuilder:
         return "movie"
 
     def _launch_nemotron_download(self) -> None:
-        """Launch background one-click provisioning script and toast."""
-        script_py = config.ROOT / "scripts" / "setup_nemotron.py"
+        """Launch interactive model download dialog with real-time console and progress."""
         try:
-            cmd = [sys.executable, str(script_py), "--auto"]
-            creation_flags = 0
-            if sys.platform == "win32":
-                creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            subprocess.Popen(
-                cmd,
-                cwd=str(config.ROOT),
-                creationflags=creation_flags,
-            )
-            self.win.command_received.emit(
-                "toast", "🚀 已启动 Nemotron 极速引擎一键下载，正在后台拉取官方资源...", time.time(), time.time(), False
-            )
+            from .download_dialog import ModelDownloadDialog
+            dialog = ModelDownloadDialog(parent=self.win, target_model="nemotron")
+            self.win._download_dialog = dialog
+            dialog.download_finished.connect(self._on_model_download_finished)
+            dialog.start_download()
         except Exception as e:
             QMessageBox.critical(
                 self.win,
                 "启动下载失败",
-                f"启动自动下载脚本失败：{e}\n\n您也可以在终端手动运行：\npython scripts/setup_nemotron.py",
+                f"启动可视化下载工具失败：{e}\n\n您也可以在终端手动运行：\npython scripts/setup_nemotron.py",
             )
+
+    def _on_model_download_finished(self, success: bool, model_name: str) -> None:
+        if not success:
+            return
+        if model_name == "nemotron":
+            self._sync_engine_cadence_actions()
+            if hasattr(self.win, "model_download_finished"):
+                self.win.model_download_finished.emit(model_name)
 
     def apply_engine_cadence(self, backend: str, ms: int) -> None:
         if backend == "nemotron":
@@ -840,8 +840,18 @@ class CaptionMenuBuilder:
                 self.win.audio_group.addAction(act)
 
         self.win.audio_menu.addSeparator()
-        hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
-        hint_act.setEnabled(False)
+        is_linux_wsl = sys.platform != "win32" and (
+            os.path.exists("/mnt/wslg") or
+            "microsoft" in platform.uname().release.lower()
+        )
+        if is_linux_wsl:
+            wsl_act = self.win.audio_menu.addAction("ℹ️ WSL环境：正在接收Windows全局声卡混音")
+            wsl_act.setEnabled(False)
+            wsl_hint = self.win.audio_menu.addAction("💡 (Windows宿主机各进程定向捕获需在Windows原生运行)")
+            wsl_hint.setEnabled(False)
+        else:
+            hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
+            hint_act.setEnabled(False)
 
     def _on_audio_source_changed(self, action: QAction) -> None:
         if not action:

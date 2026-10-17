@@ -59,6 +59,14 @@ sys.excepthook = _global_exception_handler
 
 sys.path.insert(0, str(ROOT))
 
+if sys.platform.startswith("linux"):
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+    if "GDK_BACKEND" not in os.environ:
+        os.environ["GDK_BACKEND"] = "x11"
+    if "QT_LOGGING_RULES" not in os.environ:
+        os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false;qt.text.font.*=false"
+
 try:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -302,14 +310,36 @@ def _find_llama_server_exe() -> Path | None:
 
     exe_names = ["llama.exe", "llama-server.exe", "llama", "llama-server"] if sys.platform == "win32" else ["llama", "llama-server"]
 
-    # 1. Check system PATH (standard on Linux/Ubuntu and official Windows llama install)
+    # Ensure ~/.local/bin and ~/.llama-app are in PATH on Linux
+    if sys.platform != "win32":
+        for p in (Path.home() / ".local" / "bin", Path.home() / ".llama-app"):
+            ps = str(p)
+            if ps not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = ps + os.pathsep + os.environ.get("PATH", "")
+
+    # 1. Check direct candidates in standard folders (instantaneous O(1) checks without glob)
+    direct_candidates = [
+        Path.home() / ".local" / "bin" / ("llama.exe" if sys.platform == "win32" else "llama"),
+        Path.home() / ".local" / "bin" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+        Path.home() / ".llama-app" / ("llama.exe" if sys.platform == "win32" else "llama"),
+        Path.home() / ".llama-app" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+        Path("/usr/local/bin/llama"),
+        Path("/usr/local/bin/llama-server"),
+        ROOT / "tools" / "llama-server" / ("llama.exe" if sys.platform == "win32" else "llama"),
+        ROOT / "tools" / "llama-server" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+    ]
+    for cand in direct_candidates:
+        if cand.exists() and cand.is_file():
+            return cand
+
+    # 2. Check system PATH (standard on Linux/Ubuntu and official Windows llama install)
     import shutil
     for name in exe_names:
         which_path = shutil.which(name)
         if which_path and Path(which_path).exists():
             return Path(which_path)
 
-    # 2. Check LM Studio extensions (PRIORITY: 2.53.0 stable engine for mmproj, then latest CUDA12)
+    # 3. Check LM Studio extensions (PRIORITY: 2.53.0 stable engine for mmproj, then latest CUDA12)
     userprofile = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~"))
     lm_backends = userprofile / ".lmstudio" / "extensions" / "backends"
     if not lm_backends.exists():
@@ -331,27 +361,6 @@ def _find_llama_server_exe() -> Path | None:
                 sub_exe = cand / name
                 if sub_exe.exists():
                     return sub_exe
-
-    # 3. Check local tools/ and user home paths (e.g. ~/.local/bin/llama on Linux)
-    search_dirs = [
-        ROOT / "tools",
-        Path.cwd() / "tools",
-        Path.home() / ".local" / "bin",
-        Path.home() / ".llama-app",
-        Path("/usr/local/bin"),
-        Path("/opt/llama-server"),
-    ]
-    if getattr(sys, "frozen", False):
-        app_dir = Path(sys.executable).resolve().parent
-        search_dirs.insert(0, app_dir / "tools")
-        search_dirs.insert(1, app_dir / "_internal" / "tools")
-
-    for sdir in search_dirs:
-        if sdir.exists():
-            for name in exe_names:
-                for exe in sdir.glob(f"**/{name}"):
-                    if exe.exists() and exe.is_file():
-                        return exe
 
     return None
 
@@ -722,6 +731,8 @@ class DesktopApp:
 
         # Hook Window Config Changes directly to Session
         self.window.config_changed.connect(self._on_config_changed)
+        if hasattr(self.window, "model_download_finished"):
+            self.window.model_download_finished.connect(self._on_model_download_completed)
 
         # Background Audio Loopback & Worker Thread
         self.stop_event = asyncio.Event()
@@ -867,19 +878,14 @@ class DesktopApp:
                         QMessageBox.StandardButton.Yes,
                     )
                     if reply == QMessageBox.StandardButton.Yes:
-                        script_py = config.ROOT / "scripts" / "setup_nemotron.py"
-                        try:
-                            import subprocess
-                            cmd = [sys.executable, str(script_py), "--auto"]
-                            creation_flags = 0
-                            if sys.platform == "win32":
-                                creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                            subprocess.Popen(cmd, cwd=str(config.ROOT), creationflags=creation_flags)
-                            self.window.command_received.emit(
-                                "toast", "🚀 已启动 Nemotron 极速引擎一键下载，正在后台拉取官方资源...", time.time(), time.time(), False
-                            )
-                        except Exception as e:
-                            QMessageBox.critical(self.window, "启动下载失败", f"启动自动下载脚本失败: {e}")
+                        if hasattr(self.window, "menu_manager"):
+                            self.window.menu_manager._launch_nemotron_download()
+                        else:
+                            from server.ui.download_dialog import ModelDownloadDialog
+                            dialog = ModelDownloadDialog(parent=self.window, target_model="nemotron")
+                            self.window._download_dialog = dialog
+                            dialog.download_finished.connect(self._on_model_download_completed)
+                            dialog.start_download()
                     else:
                         self.window.command_received.emit(
                             "toast", "已取消切换，保持使用 Qwen3-ASR 通用模型", time.time(), time.time(), False
@@ -986,6 +992,26 @@ class DesktopApp:
             )
         finally:
             self._is_capturing = was_capturing
+
+    def _on_model_download_completed(self, *args) -> None:
+        model_name = "nemotron"
+        for a in args:
+            if isinstance(a, str):
+                model_name = a
+            elif isinstance(a, bool) and not a:
+                return
+
+        print(f"[DesktopApp] Model {model_name} download completed! Hot-refreshing and auto-switching...")
+        if model_name in ("nemotron", "nv"):
+            from server.asr.nemotron import check_nemotron_status
+            is_ready, reason = check_nemotron_status()
+            if is_ready:
+                self._switch_asr_backend("nemotron", cadence=160)
+                self.window.command_received.emit(
+                    "toast", "🎉 Nemotron 极速端侧引擎已自动装载生效！(无需重启程序)", time.time(), time.time(), False
+                )
+            else:
+                print(f"[DesktopApp] Model download finished but check_nemotron_status failed: {reason}")
 
     def _switch_audio_source(self, target_pid: int, name: str):
         if not self.loopback_mgr or not self.loopback_mgr.is_available:

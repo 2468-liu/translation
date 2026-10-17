@@ -11,7 +11,14 @@ import os
 import tempfile
 from pathlib import Path
 
+import sys
+
 os.environ.setdefault(
     "TRANSLATION_PERF_LOG",
     str(Path(tempfile.gettempdir()) / "translation-test-perf.log"),
 )
+
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("GDK_BACKEND", "x11")
+    os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.qpa.*=false;qt.text.font.*=false")
