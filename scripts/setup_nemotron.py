@@ -129,18 +129,45 @@ def setup_model(models_dir: Path) -> bool:
         log(f"✅ 模型文件已就绪: {target_model} ({target_model.stat().st_size/1048576:.1f} MB)")
         return True
 
+    flat_model = models_dir / MODEL_FILENAME
+    if flat_model.exists() and flat_model.stat().st_size > 500 * 1024 * 1024:
+        log(f"✅ 模型文件已就绪 (根目录): {flat_model} ({flat_model.stat().st_size/1048576:.1f} MB)")
+        return True
+
     # Check alternate locations
     alt_candidates = [
+        flat_model,
+        Path("/mnt/d/TranslationDesktop/models/NV3.5-ASR-0.6B") / MODEL_FILENAME,
+        Path("/mnt/d/models/NV3.5-ASR-0.6B") / MODEL_FILENAME,
         Path("D:/TranslationDesktop/models/NV3.5-ASR-0.6B") / MODEL_FILENAME,
         Path("D:/models/NV3.5-ASR-0.6B") / MODEL_FILENAME,
         ROOT_DIR / "models" / "NV3.5-ASR-0.6B" / MODEL_FILENAME,
+        Path.home() / ".cache" / "translation" / "models" / "NV3.5-ASR-0.6B" / MODEL_FILENAME,
+        Path.home() / "models" / "NV3.5-ASR-0.6B" / MODEL_FILENAME,
+        Path("/opt/translation/models/NV3.5-ASR-0.6B") / MODEL_FILENAME,
     ]
+    if sys.platform != "win32":
+        for m in (Path("/media"), Path("/run/media"), Path("/mnt")):
+            if m.exists():
+                for sub in ("d", "D", "DATA", "data"):
+                    alt_candidates.append(m / sub / "TranslationDesktop" / "models" / "NV3.5-ASR-0.6B" / MODEL_FILENAME)
+                    alt_candidates.append(m / sub / "models" / "NV3.5-ASR-0.6B" / MODEL_FILENAME)
+
     for alt in alt_candidates:
         if alt.exists() and alt.stat().st_size > 500 * 1024 * 1024:
             log(f"发现已有模型文件: {alt}")
             target_model.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if alt != target_model:
+                if alt.resolve() != target_model.resolve():
+                    if hasattr(os, "symlink") and sys.platform != "win32":
+                        try:
+                            if target_model.exists() or target_model.is_symlink():
+                                target_model.unlink()
+                            target_model.symlink_to(alt)
+                            log(f"✅ 成功建立软链接复用模型: {target_model} -> {alt}")
+                            return True
+                        except Exception as sym_e:
+                            log(f"软链接创建失败: {sym_e}，回退到文件复制...")
                     shutil.copy2(alt, target_model)
                 log(f"✅ 成功复用模型至: {target_model}")
                 return True
@@ -265,7 +292,14 @@ def main() -> int:
     parser.add_argument("--models-dir", type=str, default="", help="Custom models directory")
     args = parser.parse_args()
 
-    models_dir = Path(args.models_dir) if args.models_dir else (ROOT_DIR / "models")
+    if args.models_dir:
+        models_dir = Path(args.models_dir).resolve()
+    else:
+        try:
+            from server import config
+            models_dir = config.resolve_models_dir()
+        except Exception:
+            models_dir = ROOT_DIR / "models"
     tools_dir = ROOT_DIR / "tools"
 
     # Pre-check current status

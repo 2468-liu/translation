@@ -148,6 +148,8 @@ class CaptionMenuBuilder:
 
     def build_context_menu(self) -> QMenu:
         menu = QMenu(self.win)
+        menu.setMinimumWidth(180)
+        menu.setMaximumWidth(280)
         menu.setStyleSheet("""
             QMenu {
                 background-color: #1a1a24;
@@ -200,6 +202,8 @@ class CaptionMenuBuilder:
 
         # 1.1 高级切片微调 (紧凑二级菜单，文案精简，绝不翻折)
         adv_cadence_menu = menu.addMenu("⚙️ 高级切片微调")
+        adv_cadence_menu.setMinimumWidth(160)
+        adv_cadence_menu.setMaximumWidth(240)
 
         act_qwen_750 = adv_cadence_menu.addAction("Qwen3 750ms (连贯平衡)")
         act_qwen_750.setCheckable(True)
@@ -380,6 +384,8 @@ class CaptionMenuBuilder:
 
     def build_tray_menu(self) -> QMenu:
         menu = QMenu()
+        menu.setMinimumWidth(180)
+        menu.setMaximumWidth(280)
         menu.setStyleSheet(TRAY_MENU_STYLE)
 
         # 0. Primary Toggles
@@ -413,6 +419,8 @@ class CaptionMenuBuilder:
 
         # 1.1 高级切片微调 in tray
         tray_adv_menu = menu.addMenu("⚙️ 高级切片微调")
+        tray_adv_menu.setMinimumWidth(160)
+        tray_adv_menu.setMaximumWidth(240)
 
         tray_act_qwen_750 = tray_adv_menu.addAction("Qwen3 750ms (连贯平衡)")
         tray_act_qwen_750.setCheckable(True)
@@ -506,6 +514,10 @@ class CaptionMenuBuilder:
             self.safe_close_menus()
             return
 
+        now = time.monotonic()
+        if now - getattr(self, "_last_close_time", 0.0) < 0.25:
+            return
+
         self._sync_preset_actions(self.get_current_preset())
         self._sync_lang_actions()
         self._sync_vad_actions()
@@ -531,7 +543,10 @@ class CaptionMenuBuilder:
         if getattr(self.win, "_model_dir_act", None):
             self.win._model_dir_act.setText(f"📁 设置模型路径 (当前: {Path(config.MODELS_DIR).name})")
 
-        show_tray_menu_native(menu, int(self.win.winId()), pos)
+        try:
+            show_tray_menu_native(menu, int(self.win.winId()), pos)
+        finally:
+            self._last_close_time = time.monotonic()
 
     def show_tray_menu(self, pos: Optional[QPoint] = None) -> None:
         menu = self.tray_menu or getattr(self.win, "_tray_menu", None)
@@ -542,6 +557,11 @@ class CaptionMenuBuilder:
         if menu.isVisible():
             self.safe_close_menus()
             return
+
+        now = time.monotonic()
+        if now - getattr(self, "_last_close_time", 0.0) < 0.25:
+            return
+
         self._sync_preset_actions(self.get_current_preset())
         self._sync_lang_actions()
         self._sync_vad_actions()
@@ -561,7 +581,11 @@ class CaptionMenuBuilder:
             self.win._tray_bilingual_act.blockSignals(False)
         if getattr(self.win, "_tray_model_dir_act", None):
             self.win._tray_model_dir_act.setText(f"📁 设置模型路径 (当前: {Path(config.MODELS_DIR).name})")
-        show_tray_menu_native(menu, int(self.win.winId()), pos)
+
+        try:
+            show_tray_menu_native(menu, int(self.win.winId()), pos)
+        finally:
+            self._last_close_time = time.monotonic()
 
     def get_current_preset(self) -> str:
         backend = getattr(self.win, "asr_backend", "qwen3")
@@ -600,20 +624,37 @@ class CaptionMenuBuilder:
     def apply_engine_cadence(self, backend: str, ms: int) -> None:
         if backend == "nemotron":
             try:
-                from server.asr.nemotron import check_nemotron_status
+                from server.asr.nemotron import check_nemotron_status, _resolve_nemotron_model_path
                 is_ready, reason = check_nemotron_status()
+                has_model = True
+                try:
+                    _resolve_nemotron_model_path()
+                except Exception:
+                    has_model = False
             except Exception as e:
-                is_ready, reason = False, str(e)
+                is_ready, reason, has_model = False, str(e), False
 
             if not is_ready:
                 if not _is_testing_env():
+                    if has_model:
+                        msg = (
+                            f"检测到尚未配置 NVIDIA Nemotron 3.5 原生推理引擎：\n{reason}\n\n"
+                            "✅ 已检测到挂载/本地的模型权重文件，无需重复下载 700MB！\n"
+                            f"是否立即启动一键拉取原生极速推理引擎？（仅约 16MB，热生效）\n\n"
+                            "【是】：后台启动一键脚本拉取并配置官方推理引擎\n"
+                            "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型"
+                        )
+                    else:
+                        msg = (
+                            f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
+                            "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
+                            "【是】：后台启动一键脚本拉取并配置官方引擎\n"
+                            "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型"
+                        )
                     reply = QMessageBox.question(
                         self.win,
                         "未检测到 Nemotron 引擎组件",
-                        f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
-                        "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
-                        "【是】：后台启动一键脚本拉取并配置官方引擎\n"
-                        "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型",
+                        msg,
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.Yes,
                     )
@@ -788,18 +829,22 @@ class CaptionMenuBuilder:
         self._toggle_bilingual(checked)
 
     def safe_close_menus(self) -> None:
-        for m in (self.context_menu, self.tray_menu, getattr(self.win, "_context_menu", None), getattr(self.win, "_tray_menu", None)):
-            if not m:
-                continue
+        def _close_menu_tree(menu: Optional[QMenu]) -> None:
+            if not menu:
+                return
             try:
-                for act in m.actions():
+                for act in menu.actions():
                     sub = act.menu()
-                    if sub and sub.isVisible():
-                        sub.close()
-                if m.isVisible():
-                    m.close()
+                    if sub:
+                        _close_menu_tree(sub)
+                menu.hide()
+                menu.close()
             except Exception:
                 pass
+
+        for m in (self.context_menu, self.tray_menu, getattr(self.win, "_context_menu", None), getattr(self.win, "_tray_menu", None)):
+            _close_menu_tree(m)
+        self._last_close_time = time.monotonic()
 
     def _refresh_audio_menu(self) -> None:
         if not hasattr(self.win, "audio_menu") or not self.win.audio_menu:
@@ -999,8 +1044,8 @@ class CaptionMenuBuilder:
             current,
         )
         if path:
-            p = Path(path)
-            config.set_models_dir(p)
+            config.set_models_dir(Path(path))
+            p = config.MODELS_DIR
             if hasattr(self.win, "_model_dir_act") and self.win._model_dir_act:
                 self.win._model_dir_act.setText(f"📁 设置模型路径 (当前: {p.name})")
             QMessageBox.information(

@@ -96,6 +96,56 @@ def set_vad_backend(choice: str) -> None:
     save_desktop_config(cfg)
 
 
+def _has_valid_model_suite(dir_path: Path) -> bool:
+    if not dir_path.exists() or not dir_path.is_dir():
+        return False
+    # Check flat gguf files directly in dir_path
+    try:
+        for f in dir_path.glob("*.gguf"):
+            if f.stat().st_size > 50 * 1024 * 1024:
+                return True
+    except Exception:
+        pass
+    # Check standard subdirectories
+    for sub in ("NV3.5-ASR-0.6B", "Qwen-ASR-0.6B", "Index-Translate", "hy-mt2-1.8b"):
+        sub_dir = dir_path / sub
+        if sub_dir.exists() and sub_dir.is_dir():
+            try:
+                for f in sub_dir.glob("*.gguf"):
+                    if f.stat().st_size > 50 * 1024 * 1024:
+                        return True
+            except Exception:
+                pass
+    return False
+
+
+def normalize_models_dir(path: str | Path) -> Path:
+    """Normalize a user-selected or configured models directory path.
+    Handles cases where user selects:
+    1. An inner subfolder (e.g. Index-Translate, Qwen-ASR-0.6B, NV3.5-ASR-0.6B) -> step up to parent
+    2. A project directory containing a 'models' directory -> step into 'models'
+    3. Flat model directory or standard models directory -> as-is
+    """
+    p = Path(path).resolve()
+    if not p.exists():
+        return p
+
+    # If user selected an inner model folder, step up to parent
+    if p.name in ("Index-Translate", "Qwen-ASR-0.6B", "NV3.5-ASR-0.6B", "hy-mt2-1.8b", "firered_vad"):
+        parent = p.parent
+        if parent.exists() and (
+            any((parent / sub).exists() for sub in ("Index-Translate", "Qwen-ASR-0.6B", "NV3.5-ASR-0.6B", "hy-mt2-1.8b"))
+            or any(f.stat().st_size > 50 * 1024 * 1024 for f in parent.glob("*.gguf"))
+        ):
+            return parent
+
+    # If user selected repo/app root which contains a valid 'models' directory
+    if (p / "models").is_dir() and _has_valid_model_suite(p / "models"):
+        return p / "models"
+
+    return p
+
+
 def resolve_models_dir() -> Path:
     """Resolve models directory. Checks TRANSLATION_MODELS_DIR, desktop_config.json,
     case-insensitive Linux mount points (/mnt/DATA, /mnt/d, /DATA, /media/*), and local directories.
@@ -155,6 +205,8 @@ def resolve_models_dir() -> Path:
     candidates.extend([
         Path.home() / "models",
         Path.home() / ".cache" / "translation" / "models",
+        Path("/opt/translation/models"),
+        Path("/usr/local/share/translation/models"),
     ])
     if sys.platform != "win32":
         try:
@@ -165,14 +217,9 @@ def resolve_models_dir() -> Path:
         except Exception:
             pass
 
-    # Phase 1: prioritize directories containing full LLM/ASR model suites
+    # Phase 1: prioritize directories containing full LLM/ASR model suites with valid weights
     for c in candidates:
-        if c.exists() and (
-            (c / "Index-Translate").exists()
-            or (c / "Qwen-ASR-0.6B").exists()
-            or (c / "NV3.5-ASR-0.6B").exists()
-            or (c / "hy-mt2-1.8b").exists()
-        ):
+        if _has_valid_model_suite(c):
             return c.resolve()
 
     # Phase 2: directory with VAD or standalone gguf
@@ -193,12 +240,46 @@ MODELS_DIR = resolve_models_dir()
 def set_models_dir(path: str | Path) -> None:
     """Set custom models directory and update all model paths."""
     global MODELS_DIR, SILERO_ONNX, FIRERED_ONNX, QWEN3_ASR_MODEL, QWEN3_ASR_MMPROJ
-    p = Path(path).resolve()
+    p = normalize_models_dir(path)
     MODELS_DIR = p
-    SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
-    FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
-    QWEN3_ASR_MODEL = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
-    QWEN3_ASR_MMPROJ = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+
+    # Dynamic resolution for VAD models
+    if (MODELS_DIR / "silero_vad.onnx").exists():
+        SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+    elif (MODELS_DIR / "silero" / "silero_vad.onnx").exists():
+        SILERO_ONNX = MODELS_DIR / "silero" / "silero_vad.onnx"
+    else:
+        SILERO_ONNX = MODELS_DIR / "silero_vad.onnx"
+
+    if (MODELS_DIR / "firered_vad" / "firered_vad.onnx").exists():
+        FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
+    elif (MODELS_DIR / "firered_vad.onnx").exists():
+        FIRERED_ONNX = MODELS_DIR / "firered_vad.onnx"
+    else:
+        FIRERED_ONNX = MODELS_DIR / "firered_vad" / "firered_vad.onnx"
+
+    # Dynamic resolution for Qwen ASR model (subfolder or flat)
+    qwen_candidate = MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf"
+    if not qwen_candidate.exists() and (MODELS_DIR / "Qwen3-ASR-0.6B-Q8_0.gguf").exists():
+        qwen_candidate = MODELS_DIR / "Qwen3-ASR-0.6B-Q8_0.gguf"
+    elif not qwen_candidate.exists() and MODELS_DIR.exists():
+        for g in MODELS_DIR.glob("*.gguf"):
+            if "qwen" in g.name.lower() and "mmproj" not in g.name.lower() and g.stat().st_size > 50 * 1024 * 1024:
+                qwen_candidate = g
+                break
+    QWEN3_ASR_MODEL = qwen_candidate
+
+    # Dynamic resolution for Qwen mmproj
+    mmproj_candidate = MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+    if not mmproj_candidate.exists() and (MODELS_DIR / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf").exists():
+        mmproj_candidate = MODELS_DIR / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+    elif not mmproj_candidate.exists() and MODELS_DIR.exists():
+        for g in MODELS_DIR.glob("*.gguf"):
+            if "mmproj" in g.name.lower() and g.stat().st_size > 10 * 1024 * 1024:
+                mmproj_candidate = g
+                break
+    QWEN3_ASR_MMPROJ = mmproj_candidate
+
     cfg = load_desktop_config()
     cfg["models_dir"] = str(p)
     save_desktop_config(cfg)

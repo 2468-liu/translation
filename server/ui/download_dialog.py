@@ -86,19 +86,34 @@ class ModelDownloadDialog(QDialog):
         card_layout.setContentsMargins(20, 18, 20, 16)
         card_layout.setSpacing(10)
 
+        has_model = False
+        try:
+            from server.asr.nemotron import _resolve_nemotron_model_path
+            _resolve_nemotron_model_path()
+            has_model = True
+        except Exception:
+            has_model = False
+
         # Header Title
         title_box = QHBoxLayout()
-        title_lbl = QLabel("🚀 极速模型下载与自动配置 (Nemotron 3.5 ASR)", card)
+        header_text = "🚀 原生推理引擎自动配置 (Nemotron 3.5 ASR)" if has_model else "🚀 极速模型下载与自动配置 (Nemotron 3.5 ASR)"
+        title_lbl = QLabel(header_text, card)
         title_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold; border: none;")
         title_box.addWidget(title_lbl)
         card_layout.addLayout(title_box)
 
         # Subtitle description
-        desc_lbl = QLabel(
-            "正在拉取 NVIDIA 官方 Nemotron 3.5 GGUF 权重与原生推理引擎动态库 (约 700MB)\n"
-            "下载完成后将自动热刷新并无缝切换至极速同传模式，无需重启客户端。",
-            card,
-        )
+        if has_model:
+            desc_text = (
+                "✅ 已检测到挂载/本地的 Nemotron 3.5 GGUF 权重模型！\n"
+                f"跳过 700MB 下载，仅需下载 {'Windows' if sys.platform == 'win32' else 'Linux'} 原生极速推理引擎 (约 16MB)，下载后自动热生效。"
+            )
+        else:
+            desc_text = (
+                "正在拉取 NVIDIA 官方 Nemotron 3.5 GGUF 权重与原生推理引擎动态库 (约 700MB)\n"
+                "下载完成后将自动热刷新并无缝切换至极速同传模式，无需重启客户端。"
+            )
+        desc_lbl = QLabel(desc_text, card)
         desc_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; line-height: 1.4; border: none;")
         desc_lbl.setWordWrap(True)
         card_layout.addWidget(desc_lbl)
@@ -203,7 +218,7 @@ class ModelDownloadDialog(QDialog):
         self.proc.readyRead.connect(self._on_ready_read)
         self.proc.finished.connect(self._on_finished)
 
-        args = [str(script_py), "--auto"]
+        args = [str(script_py), "--auto", "--models-dir", str(config.MODELS_DIR)]
         self.append_log(f"$ {sys.executable} {' '.join(args)}")
         self.proc.start(sys.executable, args)
         self.show()

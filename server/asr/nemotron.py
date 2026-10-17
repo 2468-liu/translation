@@ -70,18 +70,41 @@ class _NemoRecognitionOptions(ctypes.Structure):
 def _resolve_nemotron_model_path() -> Path:
     candidates = [
         config.MODELS_DIR / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        config.MODELS_DIR / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
         config.ROOT / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        Path("/mnt/d/TranslationDesktop/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
+        Path("/mnt/d/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
         Path("D:/TranslationDesktop/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
         Path("D:/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
         Path.home() / ".cache" / "translation" / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        Path.home() / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        Path("/opt/translation/models/NV3.5-ASR-0.6B/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"),
     ]
+    if sys.platform != "win32":
+        for m in (Path("/media"), Path("/run/media"), Path("/mnt")):
+            if m.exists():
+                for sub in ("d", "D", "DATA", "data"):
+                    candidates.append(m / sub / "TranslationDesktop" / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
+                    candidates.append(m / sub / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
     if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).resolve().parent
         candidates.insert(0, app_dir / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
         candidates.append(Path.cwd() / "models" / "NV3.5-ASR-0.6B" / "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
     for p in candidates:
-        if p.exists():
+        if p.exists() and p.is_file() and p.stat().st_size > 500 * 1024 * 1024:
             return p
+
+    # Dynamic search in user-configured models directory
+    if config.MODELS_DIR.exists():
+        for g in config.MODELS_DIR.glob("*.gguf"):
+            if "nemotron" in g.name.lower() and g.is_file() and g.stat().st_size > 500 * 1024 * 1024:
+                return g
+        nv_sub = config.MODELS_DIR / "NV3.5-ASR-0.6B"
+        if nv_sub.exists():
+            for g in nv_sub.glob("*.gguf"):
+                if "nemotron" in g.name.lower() and g.is_file() and g.stat().st_size > 500 * 1024 * 1024:
+                    return g
+
     raise FileNotFoundError(
         f"Nemotron ASR model missing. Expected {candidates[0]}"
     )
@@ -135,8 +158,25 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
                     os.add_dll_directory(str(bdir))
                 except OSError:
                     pass
-            lib = ctypes.CDLL(str(dll))
-            return lib, str(bdir)
+            if not is_win:
+                orig_ld = os.environ.get("LD_LIBRARY_PATH", "")
+                if str(bdir) not in orig_ld:
+                    os.environ["LD_LIBRARY_PATH"] = f"{bdir}:{orig_ld}" if orig_ld else str(bdir)
+            try:
+                lib = ctypes.CDLL(str(dll))
+                return lib, str(bdir)
+            except OSError:
+                if not is_win:
+                    for comp in ("libggml-base.so", "libggml-cpu.so", "libggml-vulkan.so", "libggml.so", "libllama.so", "libnemo_speech_asr.so"):
+                        comp_p = bdir / comp
+                        if comp_p.exists():
+                            try:
+                                ctypes.CDLL(str(comp_p), mode=ctypes.RTLD_GLOBAL)
+                            except Exception:
+                                pass
+                    lib = ctypes.CDLL(str(dll))
+                    return lib, str(bdir)
+                raise
 
     # Fallback to system dynamic library search on POSIX/Linux
     if not is_win:

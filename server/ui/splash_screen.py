@@ -274,24 +274,43 @@ class SplashScreen(QWidget):
         selected_dir: list[Optional[Path]] = [None]
 
         def on_browse():
-            start_dir = "/mnt" if sys.platform != "win32" and Path("/mnt").exists() else str(Path.home())
+            from server.config import normalize_models_dir, set_models_dir
+            start_dir = None
+            if config.MODELS_DIR and config.MODELS_DIR.exists():
+                start_dir = str(config.MODELS_DIR)
+            elif sys.platform != "win32":
+                for m in ("/mnt/d/TranslationDesktop/models", "/mnt/d/models", "/mnt/d", "/media", "/DATA", "/mnt"):
+                    if Path(m).exists():
+                        start_dir = m
+                        break
+            elif Path("D:/TranslationDesktop/models").exists():
+                start_dir = "D:/TranslationDesktop/models"
+            elif Path("D:/").exists():
+                start_dir = "D:/"
+            if not start_dir:
+                start_dir = str(Path.home())
+
             folder = QFileDialog.getExistingDirectory(
                 dialog,
-                "请选择模型存放文件夹 (包含 Index-Translate / Qwen-ASR)",
+                "请选择模型存放文件夹 (支持包含 Index-Translate / Qwen-ASR / Nemotron 的根目录或直接包含模型的文件夹)",
                 start_dir,
             )
             if folder:
                 p = Path(folder).resolve()
-                selected_dir[0] = p
+                norm_p = normalize_models_dir(p)
+                set_models_dir(norm_p)
+                selected_dir[0] = norm_p
                 dialog.accept()
 
         def on_rescan():
+            from server.config import _has_valid_model_suite, set_models_dir
             p = config.resolve_models_dir()
-            if p.exists() and any((p / cand).exists() for cand in ("Qwen-ASR-0.6B", "Index-Translate", "silero_vad.onnx")):
+            if _has_valid_model_suite(p):
+                set_models_dir(p)
                 selected_dir[0] = p
                 dialog.accept()
             else:
-                title_lbl.setText("⚠️ 重新扫描仍未发现模型，请手动选择目录")
+                title_lbl.setText("⚠️ 重新扫描仍未发现有效模型文件，请手动选择目录")
 
         def on_exit():
             dialog.reject()
@@ -304,8 +323,10 @@ class SplashScreen(QWidget):
         dialog.exec()
 
         if selected_dir[0]:
-            self.set_progress(0.20, f"已绑定模型目录: {selected_dir[0].name}，正在装载...")
-            return selected_dir[0]
+            p = selected_dir[0]
+            config.set_models_dir(p)
+            self.set_progress(0.20, f"已绑定模型目录: {p.name}，正在装载...")
+            return p
         return None
 
     def paintEvent(self, event):

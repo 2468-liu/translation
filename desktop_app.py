@@ -61,9 +61,9 @@ sys.path.insert(0, str(ROOT))
 
 if sys.platform.startswith("linux"):
     if "QT_QPA_PLATFORM" not in os.environ:
-        os.environ["QT_QPA_PLATFORM"] = "xcb"
+        os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
     if "GDK_BACKEND" not in os.environ:
-        os.environ["GDK_BACKEND"] = "x11"
+        os.environ["GDK_BACKEND"] = "x11,wayland"
     if "QT_LOGGING_RULES" not in os.environ:
         os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false;qt.text.font.*=false"
 
@@ -395,6 +395,23 @@ def _ensure_llama_server(splash: Optional[SplashScreen] = None) -> subprocess.Po
             model_path = cand
             break
 
+    if not model_path and config.MODELS_DIR.exists():
+        for sub in ("Index-Translate", "hy-mt2-1.8b"):
+            sub_dir = config.MODELS_DIR / sub
+            if sub_dir.exists():
+                for g in sub_dir.glob("*.gguf"):
+                    if g.stat().st_size > 50 * 1024 * 1024:
+                        model_path = g
+                        break
+            if model_path:
+                break
+        if not model_path:
+            for g in config.MODELS_DIR.glob("*.gguf"):
+                name_l = g.name.lower()
+                if any(k in name_l for k in ("index", "translate", "hy", "mt2")) and g.stat().st_size > 50 * 1024 * 1024:
+                    model_path = g
+                    break
+
     if not model_path:
         print(f"[DesktopApp] WARNING: Translation model missing. Checked candidates: {model_candidates}")
         if splash:
@@ -509,7 +526,9 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
         return None
 
     model_candidates = [
+        config.QWEN3_ASR_MODEL,
         config.MODELS_DIR / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf",
+        config.MODELS_DIR / "Qwen3-ASR-0.6B-Q8_0.gguf",
         Path("D:/TranslationDesktop/models/Qwen-ASR-0.6B/Qwen3-ASR-0.6B-Q8_0.gguf"),
         ROOT / "models" / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf",
         Path.cwd() / "models" / "Qwen-ASR-0.6B" / "Qwen3-ASR-0.6B-Q8_0.gguf",
@@ -524,6 +543,19 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
             model_path = cand
             break
 
+    if not model_path and config.MODELS_DIR.exists():
+        qwen_sub = config.MODELS_DIR / "Qwen-ASR-0.6B"
+        if qwen_sub.exists():
+            for g in qwen_sub.glob("*.gguf"):
+                if "mmproj" not in g.name.lower() and g.stat().st_size > 50 * 1024 * 1024:
+                    model_path = g
+                    break
+        if not model_path:
+            for g in config.MODELS_DIR.glob("*.gguf"):
+                if "qwen" in g.name.lower() and "mmproj" not in g.name.lower() and g.stat().st_size > 50 * 1024 * 1024:
+                    model_path = g
+                    break
+
     if not model_path:
         print(f"[DesktopApp] WARNING: Qwen3-ASR model missing. Checked candidates: {model_candidates}")
         if splash:
@@ -535,7 +567,9 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
 
     mmproj_candidates = [
         model_path.parent / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+        config.QWEN3_ASR_MMPROJ,
         config.MODELS_DIR / "Qwen-ASR-0.6B" / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+        config.MODELS_DIR / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
         Path("D:/TranslationDesktop/models/Qwen-ASR-0.6B/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"),
     ]
     mmproj_path = None
@@ -543,6 +577,18 @@ def _ensure_qwen_server(splash: Optional[SplashScreen] = None) -> subprocess.Pop
         if cand.exists():
             mmproj_path = cand
             break
+
+    if not mmproj_path:
+        if model_path.parent.exists():
+            for g in model_path.parent.glob("*.gguf"):
+                if "mmproj" in g.name.lower() and g.stat().st_size > 10 * 1024 * 1024:
+                    mmproj_path = g
+                    break
+        if not mmproj_path and config.MODELS_DIR.exists():
+            for g in config.MODELS_DIR.glob("*.gguf"):
+                if "mmproj" in g.name.lower() and g.stat().st_size > 10 * 1024 * 1024:
+                    mmproj_path = g
+                    break
 
     if not mmproj_path:
         print(f"[DesktopApp] WARNING: mmproj file missing for Qwen3-ASR. Checked candidates: {mmproj_candidates}")
@@ -859,21 +905,38 @@ class DesktopApp:
         # Pre-flight check: Nemotron dynamic viability guard
         if target_backend == "nemotron":
             try:
-                from server.asr.nemotron import check_nemotron_status
+                from server.asr.nemotron import check_nemotron_status, _resolve_nemotron_model_path
                 is_ready, reason = check_nemotron_status()
+                has_model = True
+                try:
+                    _resolve_nemotron_model_path()
+                except Exception:
+                    has_model = False
             except Exception as e:
-                is_ready, reason = False, str(e)
+                is_ready, reason, has_model = False, str(e), False
 
             if not is_ready:
                 if not _is_testing_env():
                     from PyQt6.QtWidgets import QMessageBox
+                    if has_model:
+                        msg = (
+                            f"检测到尚未配置 NVIDIA Nemotron 3.5 原生推理引擎：\n{reason}\n\n"
+                            "✅ 已检测到挂载/本地的模型权重文件，无需重复下载 700MB！\n"
+                            f"是否立即启动一键拉取原生极速推理引擎？（仅约 16MB，热生效）\n\n"
+                            "【是】：后台启动一键脚本拉取并配置官方推理引擎\n"
+                            "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型"
+                        )
+                    else:
+                        msg = (
+                            f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
+                            "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
+                            "【是】：后台启动一键脚本拉取并配置官方引擎\n"
+                            "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型"
+                        )
                     reply = QMessageBox.question(
                         self.window,
                         "未检测到 Nemotron 引擎组件",
-                        f"检测到尚未配置 NVIDIA Nemotron 3.5 极速端侧引擎组件：\n{reason}\n\n"
-                        "是否立即启动一键自动拉取？（官方模型与推理引擎约 700MB）\n\n"
-                        "【是】：后台启动一键脚本拉取并配置官方引擎\n"
-                        "【否】：取消切换，安全保持使用 Qwen3-ASR 通用模型",
+                        msg,
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.Yes,
                     )
