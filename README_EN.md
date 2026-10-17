@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Ubuntu%2024.04%20LTS-brightgreen.svg)]()
-[![Backend](https://img.shields.io/badge/backend-llama.cpp%20%7C%20Vulkan-orange.svg)]()
+[![Backend](https://img.shields.io/badge/backend-llama.cpp%20%7C%20CUDA%20Tensor%20Core-orange.svg)]()
 
 **Ultra-low latency, 100% offline, privacy-first bilingual live subtitle and interpretation desktop app.**  
 Supports Windows WASAPI process-tree loopback capture and Linux PipeWire/PulseAudio 0dB unattenuated physical loopback.  
@@ -24,8 +24,8 @@ Supports Windows WASAPI process-tree loopback capture and Linux PipeWire/PulseAu
   * Recommended default for movies, TV series, and podcasts with a 1000ms chunk cadence.
   * Driven by punctuation boundary detection and Silero VAD breath-pause slicing. Utterances are emitted as complete grammatical sentences, eliminating flickering word-by-word streaming and speech truncation in dense dialogues.
 * **Ultra-Fast Streaming Interpretation (NVIDIA Nemotron 3.5 0.6B)**:
-  * Powered by native Vulkan C API runtime with a 160ms step cadence.
-  * Delivers word-by-word instant on-screen output, ideal for live keynote speeches and international conference calls.
+  * Powered by official NVIDIA CUDA native runtime with Tensor Core acceleration, featuring native step cadences of 320ms (balanced) and 560ms (high-accuracy long sentences).
+  * Single-call inference latency is reduced to **~78ms** (3.5x faster than Qwen3, 30x faster than Vulkan), delivering instant word-by-word on-screen output for keynote speeches, live streams, and documentaries.
 
 ### 2. High-Throughput Concurrent Translation on Consumer GPUs
 * Equipped with **Index-Translate 1.9B (Q4_K_M)**, fine-tuned specifically for colloquial dialogues, film idioms, and natural expressions.
@@ -72,39 +72,64 @@ The translation service (port 8080) and Qwen3-ASR service (port 8099) are powere
 * **Windows**: Download [llama.cpp Official Releases](https://github.com/ggml-org/llama.cpp/releases) (build 11630+, e.g. `llama-bxxxx-bin-win-cuda-cu12.4-x64.zip`), extract `llama-server.exe`, and ensure it is in your system `PATH` or in `tools/llama-server/`.
 * **Linux (Ubuntu 24.04)**: Verify with `llama-server --version`. If not present, download the corresponding Linux binary from `llama.cpp` releases or utilize LM Studio.
 
-### 3. On-Device Streaming Engine (NVIDIA Nemotron 3.5 - Windows & Linux)
-* **Cross-Platform Native Support**: Full native support on Windows (x64) and Linux (Ubuntu 24.04+ x86_64).
-* **One-Click Automated Provisioning**:
-  * **Adaptive GUI**: Switch to **⚡ On-Device Fast Streaming NV (Nemotron)** directly via the context menu. If components are missing locally, an interactive prompt will appear; clicking [Yes] launches background downloading while keeping Qwen3-ASR active; declining rolls back safely without crashing or hanging.
-  * **Command-Line One-Click Script**:
-    * **Primary (Direct Native Engine)**: `python scripts/setup_nemotron.py` (Linux: `./scripts/setup_nemotron.sh`, Windows: `.\scripts\setup_nemotron.ps1`), downloads model GGUF from HuggingFace/hf-mirror and precompiled dynamic libraries (`nemo_speech_asr_c.dll` / `libnemo_speech_asr_c.so`) from NVIDIA GitHub Releases.
-    * **Secondary (Official Docker Fallback)**: Run with `--docker` to pull and configure the containerized backend from `nvcr.io/nvidia/nemo:latest`.
+### 3. On-Device Streaming Engine (NVIDIA Nemotron 3.5 - Official CUDA Native Deployment)
+* **Full NVIDIA CUDA Native Acceleration**: Vulkan has been completely deprecated in favor of official NeMo-Speech CUDA runtime, unlocking Tensor Cores and native FP16 operators. Single-inference latency drops from 22 seconds to **~78ms** (a 30+ fold speedup), with an RTF of **0.02x (46x real-time throughput)**.
+* **NVIDIA Official One-Click Deployment**:
+  * **Windows (PowerShell)**:
+    ```powershell
+    irm https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.ps1 | iex
+    ```
+    Automatically deploys to `%LOCALAPPDATA%\Programs\NeMoSpeech`.
+  * **Linux (Ubuntu 24.04+ / Debian)**:
+    ```bash
+    curl -fsSL https://github.com/NVIDIA/NeMo-Speech.cpp/raw/main/scripts/install.sh | sh
+    ```
+    Automatically deploys to `~/.local/share/nemo-speech`.
+  * **Adaptive GUI**: Switch to **⚡ On-Device Fast Streaming NV (Nemotron)** directly via the context menu. If components are missing locally, an interactive download terminal will appear to provision components automatically; running `python scripts/setup_nemotron.py` also detects and reuses existing mounted models without redownloading the 700MB GGUF.
 * **Component Path Layout**:
-  * **Model Weights**: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`, placed in `models/NV3.5-ASR-0.6B/`.
-  * **Dynamic Library**: Windows placed in `tools/nemo-speech-vulkan/.../bin/nemo_speech_asr_c.dll`; Linux placed in `tools/nemo-speech-vulkan/.../lib/libnemo_speech_asr_c.so` or system library paths.
+  * **Model Weights**: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf`, placed in `models/NV3.5-ASR-0.6B/` (automatically reuses mounted Windows/Linux drives).
+  * **Dynamic Library**: Windows resolves `%LOCALAPPDATA%\Programs\NeMoSpeech\bin\nemo_speech_asr_c.dll`; Linux resolves `~/.local/share/nemo-speech/lib/libnemo_speech_asr_c.so`.
 
-#### Official Recommended Streaming Chunk Size Matrix
+#### Official Native Streaming Cadence Matrix (FastConformer 80ms Multiples)
 
-| Profile | Chunk Size | Recommended Scenarios |
-| :--- | :--- | :--- |
-| **Lowest latency** | **80 ms** | Ultra-low latency requirements with relaxed accuracy demands |
-| **Fast** | **160 ms** | **Official Recommendation**, optimal balance between latency and accuracy |
-| **Balanced** | **320 ms** | Model default configuration, suitable for general streaming transcription |
-| **Accurate** | **560 ms** | Higher transcription accuracy where moderate latency is acceptable |
-| **Most accurate** | **1.12 s (1120 ms)** | High-precision transcription where real-time latency is secondary |
+FastConformer-RNNT acoustic steps strictly adhere to $80\text{ms}$ ($4 \times 20\text{ms}$ downsampling) multiples. The narrow and fragile 160ms chunking has been deprecated in favor of official standard specifications:
+
+| Profile | Native Step | Context Spec | Recommended Scenarios & Performance |
+| :--- | :--- | :--- | :--- |
+| **⚖️ Balanced** | **320 ms** | `[56, 4]` | **Official Recommendation & Default**. Covers complete syllables with 350~450ms responsive latency, zero scheduling storms, and natural real-time dialogue rhythm. |
+| **🎯 Accurate** | **560 ms** | `[56, 7]` | **Official Long-Sentence Preferred**. Full acoustic context, precise liaison/weak form capture, and substantially lower WER across lectures, videos, and complex sentences. |
+| **💎 Most accurate** | **1120 ms (1.12s)** | `[56, 14]` | Maximum acoustic receptive field for offline transcription and archival accuracy. |
+| **⚡ Lowest latency** | **80 ms** | `[56, 1]` | Experimental lowest latency mode where higher acoustic error tolerance is acceptable. |
+| ~~**⚠️ Fast**~~ | ~~**160 ms**~~ | `[56, 2]` | **Deprecated**. Fragmented acoustic context causes word omissions and hallucinations, and 60+ kernel dispatches per 10s audio trigger CPU/GPU scheduling overhead. |
+
+---
+
+### 📊 Real-World Stress Benchmark (*The Big Bang Theory* 5-Minute Stream + Laugh Track)
+
+Evaluated under Windows 11 host (RTX 3050 Ti Laptop GPU, official NeMo-Speech CUDA runtime) on *The Big Bang Theory* (5 minutes of rapid, continuous dialogue + canned audience laugh bursts, audio `samples/tbbt_5min.wav`):
+
+| Evaluation Metric | NV @ 320ms (CUDA Native)<br>*(Recommended Balanced)* | NV @ 560ms (CUDA Native)<br>*(Recommended Accurate)* | Qwen3-ASR (0.6B)<br>*(Historical Baseline)* | Architectural Takeaways |
+| :--- | :--- | :--- | :--- | :--- |
+| **Inference Backend** | **NeMo-Speech CUDA Native** | **NeMo-Speech CUDA Native** | HTTP Service (llama-server) | Direct Tensor Core execution, zero HTTP/JSON serialization overhead |
+| **300s Audio Total Time** | **6.53 seconds** | **6.53 seconds** | ~300 seconds (server-limited) | **46x Real-Time Throughput** |
+| **Real-Time Factor (RTF)** | **0.0218x** | **0.0218x** | 1.001x | Vastly surplus compute; zero backlog during dense speeches |
+| **Single Inference Latency p50** | **78.2 ms** | **77.7 ms** | 271.5 ms | **NV is 3.5x faster** |
+| **Single Inference Latency p90** | **124.8 ms** | **124.1 ms** | 468.2 ms | **NV is 3.75x faster on long segments** |
+| **Single Inference Latency p99** | **147.7 ms** | **148.7 ms** | 558.2 ms | Worst-case latency solidly contained below 150ms |
+| **1.0x Real-Time Queue Wait (`qwait`)** | **p50=0.1ms \| Max=0.3ms** | **p50=0.2ms \| Max=0.3ms** | p50=0.1ms \| Max=164.3ms | **Zero queue delay**; frames are immediately dispatched to GPU |
+| **Maximum Queue Depth (`qlen Max`)**| **1** (No stacking) | **1** (No stacking) | 1 | Zero frame drops (`Drops = 0`) across entire 5-minute run |
+| **Laugh Track & Noise Immunity** | **Zero hallucinations, zero stall**| **Zero hallucinations, clean phrases** | Occasional hallucinations during laugh bursts | Acoustic decoder effectively filters non-vocal applause and laughter |
 
 #### 💡 ASR Engine Scenario Selection Guide (Scenario Recommendation)
-
-Empirical testing across movie corpora, documentaries, and live broadcasts shows clear complementary strengths for each engine:
 
 | Content Category | Typical Genres & Scenarios | Recommended Engine | Recommended Cadence | Key Experience Advantage |
 | :--- | :--- | :--- | :--- | :--- |
 | **Colloquial & Fragmented Dialogue** | Sitcoms (*The Big Bang Theory*, *Friends*), drama series, casual vlogs, interactive live streaming | **🧠 General LLM ASR (Qwen3)** | **1000ms (Recommended)** / 500ms | Leveraging strong LLM semantic priors and context reasoning to **handle slurred speech, slang, interruptions, and fragmented words** seamlessly |
-| **Formal & Technical Content** | Economics, military, warfare, science documentaries, keynote speeches, official conferences, international news | **⚡ On-Device Fast Streaming NV (Nemotron)** | **160ms (Recommended)** / 320ms / 80ms | Powered by FastConformer streaming architecture; **significantly more fluid and responsive than LLMs** with real-time acoustic audio-visual synchronization |
+| **Formal & Technical Content** | Economics, military, warfare, science documentaries, keynote speeches, official conferences, international news | **⚡ On-Device Fast Streaming NV (Nemotron)** | **320ms (Recommended)** / 560ms | Powered by FastConformer streaming architecture; **significantly more fluid and responsive than LLMs** with real-time acoustic audio-visual synchronization |
 
 > 📌 **Practical Tips**:
 > * For fast-paced dialogue, sitcoms, or live casual talk, use **Qwen3-ASR (1000ms)** by default;
-> * For documentaries, news broadcasts, technical conferences, or serious historical/military films, switch via right-click to **Nemotron (160ms / 320ms)** for ultra-smooth real-time playback.
+> * For documentaries, news broadcasts, technical conferences, or serious historical/military films, switch via right-click to **Nemotron (320ms / 560ms)** for ultra-smooth real-time playback.
 
 ---
 

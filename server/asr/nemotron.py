@@ -387,7 +387,9 @@ class NemotronAsrEngine:
         self._lib, self._bin_dir = _resolve_nemo_speech_dll()
         self._setup_c_api()
 
-        target_gpu = _detect_best_vulkan_gpu()
+        is_vulkan = "vulkan" in str(self._bin_dir).lower()
+        target_gpu = _detect_best_vulkan_gpu() if is_vulkan else 0
+        backend_name = "vulkan" if is_vulkan else "cuda"
         backend = _NemoBackendConfig(size=ctypes.sizeof(_NemoBackendConfig), gpu=target_gpu)
         model_path_bytes = str(model_path).encode("utf-8")
         model = _NemoModelConfig(size=ctypes.sizeof(_NemoModelConfig), path=model_path_bytes, name=None)
@@ -402,22 +404,22 @@ class NemotronAsrEngine:
         if res != 0:
             err = self._lib.nemo_speech_asr_last_error()
             err_msg = err.decode("utf-8", errors="replace") if err else str(res)
-            print(f"ASR Nemotron Vulkan(gpu={target_gpu}) create failed ({err_msg}); trying default Vulkan(gpu=0)")
+            print(f"ASR Nemotron {backend_name.upper()}(gpu={target_gpu}) create failed ({err_msg}); trying default gpu=0")
             backend.gpu = 0
             res = self._lib.nemo_speech_asr_create(ctypes.byref(cfg), ctypes.byref(self._recognizer))
             if res != 0:
-                print(f"ASR Nemotron Vulkan(gpu=0) failed; falling back to CPU (gpu=-1)")
+                print(f"ASR Nemotron {backend_name.upper()}(gpu=0) failed; falling back to CPU (gpu=-1)")
                 backend.gpu = -1
                 res = self._lib.nemo_speech_asr_create(ctypes.byref(cfg), ctypes.byref(self._recognizer))
                 if res != 0:
                     err = self._lib.nemo_speech_asr_last_error()
                     err_msg = err.decode("utf-8", errors="replace") if err else str(res)
-                    raise RuntimeError(f"Nemotron ASR initialization failed on Vulkan and CPU: {err_msg}")
+                    raise RuntimeError(f"Nemotron ASR initialization failed on {backend_name} and CPU: {err_msg}")
                 print(f"ASR loading Nemotron 3.5 ASR from {model_path.name} (backend=nemotron-cpu)")
             else:
-                print(f"ASR loading Nemotron 3.5 ASR from {model_path.name} (backend=nemotron-vulkan gpu=0)")
+                print(f"ASR loading Nemotron 3.5 ASR from {model_path.name} (backend=nemotron-{backend_name} gpu=0)")
         else:
-            print(f"ASR loading Nemotron 3.5 ASR from {model_path.name} (backend=nemotron-vulkan gpu={target_gpu})")
+            print(f"ASR loading Nemotron 3.5 ASR from {model_path.name} (backend=nemotron-{backend_name} gpu={target_gpu})")
 
     def _setup_c_api(self):
         lib = self._lib
