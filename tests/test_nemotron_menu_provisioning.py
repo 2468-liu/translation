@@ -72,25 +72,25 @@ class NemotronMenuProvisioningTests(unittest.TestCase):
         builder = CaptionMenuBuilder(self.mock_win)
         menu = builder.build_context_menu()
         self.assertIsNotNone(menu)
-        self.assertEqual(len(self.mock_win._nv_actions), 5)
+        self.assertEqual(len(self.mock_win._nv_actions), 3)
         for act in self.mock_win._nv_actions:
             self.assertTrue(act.isEnabled())
             self.assertTrue(act.isCheckable())
             data = act.data()
             self.assertEqual(data.get("backend"), "nemotron")
-            self.assertIn(data.get("ms"), [80, 160, 320, 560, 1120])
+            self.assertIn(data.get("ms"), [320, 560, 1120])
 
     def test_nemotron_tray_menu_is_enabled_across_all_platforms(self):
         builder = CaptionMenuBuilder(self.mock_win)
         tray_menu = builder.build_tray_menu()
         self.assertIsNotNone(tray_menu)
-        self.assertEqual(len(self.mock_win._tray_nv_actions), 5)
+        self.assertEqual(len(self.mock_win._tray_nv_actions), 3)
         for act in self.mock_win._tray_nv_actions:
             self.assertTrue(act.isEnabled())
             self.assertTrue(act.isCheckable())
             data = act.data()
             self.assertEqual(data.get("backend"), "nemotron")
-            self.assertIn(data.get("ms"), [80, 160, 320, 560, 1120])
+            self.assertIn(data.get("ms"), [320, 560, 1120])
 
     def test_nemotron_missing_user_declines_download_rolls_back(self):
         builder = CaptionMenuBuilder(self.mock_win)
@@ -101,7 +101,7 @@ class NemotronMenuProvisioningTests(unittest.TestCase):
             patch.dict(os.environ, {"TRANSLATION_FORCE_INTERACTIVE": "1"}, clear=False),
             patch("PyQt6.QtWidgets.QMessageBox.question", return_value=QMessageBox.StandardButton.No) as mock_q,
         ):
-            builder.apply_engine_cadence("nemotron", 160)
+            builder.apply_engine_cadence("nemotron", 320)
 
             mock_q.assert_called_once()
             # Must emit rollback toast
@@ -123,7 +123,7 @@ class NemotronMenuProvisioningTests(unittest.TestCase):
             mock_dlg = MagicMock()
             mock_dialog_cls.return_value = mock_dlg
 
-            builder.apply_engine_cadence("nemotron", 160)
+            builder.apply_engine_cadence("nemotron", 320)
 
             mock_q.assert_called_once()
             mock_dialog_cls.assert_called_once_with(parent=self.mock_win, target_model="nemotron")

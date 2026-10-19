@@ -35,9 +35,9 @@ const sessionStatusText = document.getElementById("sessionStatusText");
 
 // Must equal server/config.py PARTIAL_INTERVAL_MS.
 // Nemotron 3.5 ASR uses 80ms chunk multiples. The official recommended default
-// for streaming subtitles is 160ms ([56, 1], 1 right-context frame).
-const DEFAULT_CADENCE_MS = 160;
-const NV_CADENCE_PRESETS = [80, 160, 320, 560, 1120];
+// for streaming subtitles is 320ms ([56, 4], 4 right-context frames).
+const DEFAULT_CADENCE_MS = 320;
+const NV_CADENCE_PRESETS = [320, 560, 1120];
 
 let cadenceCommit = null;
 let dismissCommit = null;
@@ -165,16 +165,12 @@ function paintCadence(ms) {
   if (cadenceValue) cadenceValue.textContent = String(v);
   if (cadenceReadout) cadenceReadout.textContent = String(v);
   if (cadenceHint) {
-    if (v === 80) {
-      cadenceHint.textContent = "80ms [56, 0]：极限极速档，适合全双工对讲，延迟极低但依赖声学稳定性。";
-    } else if (v === 160) {
-      cadenceHint.textContent = "160ms [56, 1]：官方推荐直播/视频同传黄金档，字幕线性流畅流出，低延迟高准确率。";
-    } else if (v === 320) {
-      cadenceHint.textContent = "320ms [56, 3]：平稳平衡档，字幕更新更稳健，兼顾低延迟与低抖动。";
+    if (v === 320) {
+      cadenceHint.textContent = "320ms [56, 4]：官方推荐流式首选档，字幕稳健流出，兼顾低延迟与稳定性。";
     } else if (v === 560) {
-      cadenceHint.textContent = "560ms [56, 6]：高抗噪档，背景音乐嘈杂或语速极快时抗干扰更强。";
+      cadenceHint.textContent = "560ms [56, 7]：官方高精长句档，长句与视频识别率更佳，抗噪声能力强。";
     } else if (v === 1120) {
-      cadenceHint.textContent = "1120ms [56, 13]：高精精翻档，字词识别率最佳，适合离线或长句听写。";
+      cadenceHint.textContent = "1120ms [56, 14]：超高精翻档，字词识别率最佳，适合离线或长句听写。";
     } else {
       cadenceHint.textContent = `当前步长 ${v}ms。`;
     }

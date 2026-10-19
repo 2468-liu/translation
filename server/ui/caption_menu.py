@@ -117,15 +117,12 @@ QWEN_CADENCES: list[tuple[str, int]] = [
     ("🎬 1000ms (推荐·整句原子直出·抗高密度对白)", 1000),
     ("⚖️ 750ms (平衡·整句完整连贯)", 750),
     ("⚡ 500ms (快速·适合演讲对话)", 500),
-    ("⏱️ 250ms (高频切块·试探刷新)", 250),
 ]
 
 NV_CADENCES: list[tuple[str, int]] = [
     ("⚖️ 均衡流式 320ms (Balanced·官方推荐·平衡首选)", 320),
     ("🎯 高精长句 560ms (Accurate·官方长句·高保真)", 560),
     ("💎 超高精度 1120ms (Most accurate·1.12s高精转录)", 1120),
-    ("⚡ 最低延迟 80ms (Lowest latency·极致响应)", 80),
-    ("⚠️ 快速切片 160ms (Fast·已弃用·易断裂)", 160),
 ]
 
 
@@ -211,22 +208,7 @@ class CaptionMenuBuilder:
         act_qwen_750.setData({"backend": "qwen3", "ms": 750})
         self.win.engine_cadence_group.addAction(act_qwen_750)
 
-        act_qwen_250 = adv_cadence_menu.addAction("Qwen3 250ms (高频试探)")
-        act_qwen_250.setCheckable(True)
-        act_qwen_250.setData({"backend": "qwen3", "ms": 250})
-        self.win.engine_cadence_group.addAction(act_qwen_250)
-
         adv_cadence_menu.addSeparator()
-
-        act_nv_80 = adv_cadence_menu.addAction("NV 80ms (极限超低延迟)")
-        act_nv_80.setCheckable(True)
-        act_nv_80.setData({"backend": "nemotron", "ms": 80})
-        self.win.engine_cadence_group.addAction(act_nv_80)
-
-        act_nv_160 = adv_cadence_menu.addAction("NV 160ms (已弃用·易断裂)")
-        act_nv_160.setCheckable(True)
-        act_nv_160.setData({"backend": "nemotron", "ms": 160})
-        self.win.engine_cadence_group.addAction(act_nv_160)
 
         act_nv_560 = adv_cadence_menu.addAction("NV 560ms (长句高保真·官方)")
         act_nv_560.setCheckable(True)
@@ -239,8 +221,8 @@ class CaptionMenuBuilder:
         self.win.engine_cadence_group.addAction(act_nv_1120)
 
         # Full arrays for test compatibility
-        self.win._qwen_actions = [self.win._scene_movie_act, act_qwen_750, self.win._scene_speech_act, act_qwen_250]
-        self.win._nv_actions = [act_nv_80, act_nv_160, self.win._scene_stream_act, act_nv_560, act_nv_1120]
+        self.win._qwen_actions = [self.win._scene_movie_act, act_qwen_750, self.win._scene_speech_act]
+        self.win._nv_actions = [self.win._scene_stream_act, act_nv_560, act_nv_1120]
 
         self.win.engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
@@ -428,22 +410,7 @@ class CaptionMenuBuilder:
         tray_act_qwen_750.setData({"backend": "qwen3", "ms": 750})
         self.win.tray_engine_cadence_group.addAction(tray_act_qwen_750)
 
-        tray_act_qwen_250 = tray_adv_menu.addAction("Qwen3 250ms (高频试探)")
-        tray_act_qwen_250.setCheckable(True)
-        tray_act_qwen_250.setData({"backend": "qwen3", "ms": 250})
-        self.win.tray_engine_cadence_group.addAction(tray_act_qwen_250)
-
         tray_adv_menu.addSeparator()
-
-        tray_act_nv_80 = tray_adv_menu.addAction("NV 80ms (极限超低延迟)")
-        tray_act_nv_80.setCheckable(True)
-        tray_act_nv_80.setData({"backend": "nemotron", "ms": 80})
-        self.win.tray_engine_cadence_group.addAction(tray_act_nv_80)
-
-        tray_act_nv_160 = tray_adv_menu.addAction("NV 160ms (已弃用·易断裂)")
-        tray_act_nv_160.setCheckable(True)
-        tray_act_nv_160.setData({"backend": "nemotron", "ms": 160})
-        self.win.tray_engine_cadence_group.addAction(tray_act_nv_160)
 
         tray_act_nv_560 = tray_adv_menu.addAction("NV 560ms (长句高保真·官方)")
         tray_act_nv_560.setCheckable(True)
@@ -455,8 +422,8 @@ class CaptionMenuBuilder:
         tray_act_nv_1120.setData({"backend": "nemotron", "ms": 1120})
         self.win.tray_engine_cadence_group.addAction(tray_act_nv_1120)
 
-        self.win._tray_qwen_actions = [self.win._tray_scene_movie, tray_act_qwen_750, self.win._tray_scene_speech, tray_act_qwen_250]
-        self.win._tray_nv_actions = [tray_act_nv_80, tray_act_nv_160, self.win._tray_scene_stream, tray_act_nv_560, tray_act_nv_1120]
+        self.win._tray_qwen_actions = [self.win._tray_scene_movie, tray_act_qwen_750, self.win._tray_scene_speech]
+        self.win._tray_nv_actions = [self.win._tray_scene_stream, tray_act_nv_560, tray_act_nv_1120]
 
         self.win.tray_engine_cadence_group.triggered.connect(self._on_engine_cadence_triggered)
 
@@ -595,7 +562,7 @@ class CaptionMenuBuilder:
             return "movie"
         elif backend == "qwen3" and ms == 500:
             return "speech"
-        elif backend == "nemotron" or ms in (80, 160, 320, 560, 1120):
+        elif backend == "nemotron" or ms in (320, 560, 1120):
             return "stream"
         return "movie"
 

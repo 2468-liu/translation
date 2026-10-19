@@ -506,17 +506,10 @@ class QtCaptionWindowTests(unittest.TestCase):
 
         # Verify Qwen3 & NV engine choices exist across direct actions and advanced cadence submenu
         qwen_ms = [a.data().get("ms") for a in self.window._qwen_actions]
-        self.assertIn(1000, qwen_ms)
-        self.assertIn(750, qwen_ms)
-        self.assertIn(500, qwen_ms)
-        self.assertIn(250, qwen_ms)
+        self.assertEqual(sorted(qwen_ms), [500, 750, 1000])
 
         nv_ms = [a.data().get("ms") for a in self.window._nv_actions]
-        self.assertIn(80, nv_ms)
-        self.assertIn(160, nv_ms)
-        self.assertIn(320, nv_ms)
-        self.assertIn(560, nv_ms)
-        self.assertIn(1120, nv_ms)
+        self.assertEqual(sorted(nv_ms), [320, 560, 1120])
 
         # Verify appearance sub-menu items (only visual geometry, font, color; no punct or nested bilingual remnants)
         style_act = next(a for a in ctx_menu.actions() if "字幕外观设置" in a.text())
@@ -661,7 +654,7 @@ class QtCaptionWindowTests(unittest.TestCase):
     def test_engine_switch_unified_block_by_punct(self):
         """Verify engine switch to Nemotron maintains unified block_by_punct=True."""
         with patch("server.asr.nemotron.check_nemotron_status", return_value=(True, "就绪")):
-            self.window.menu_manager.apply_engine_cadence("nemotron", 160)
+            self.window.menu_manager.apply_engine_cadence("nemotron", 320)
             self.assertTrue(self.window._block_by_punct)
             self.window.menu_manager.apply_engine_cadence("qwen3", 1000)
             self.assertTrue(self.window._block_by_punct)

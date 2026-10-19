@@ -753,20 +753,18 @@
     <!-- Cadence Gear Presets (NV 官方推荐档位制) -->
     <div class="drawer-row" style="margin-top: 4px;">
       <span class="drawer-label">刷新步长 (NV档位制)</span>
-      <span class="drawer-value"><span id="cadenceValue">160</span> ms</span>
+      <span class="drawer-value"><span id="cadenceValue">320</span> ms</span>
     </div>
     <select id="cadenceSelect" class="lang-select-box" style="margin-top: 6px;">
-      <option value="80">80ms · 极限极速档 ([56, 0] 全双工对讲)</option>
-      <option value="160" selected>160ms · 实时同传黄金档 ([56, 1] 推荐默认)</option>
-      <option value="320">320ms · 平稳平衡档 ([56, 3] 兼顾低延迟与稳定性)</option>
-      <option value="560">560ms · 高抗噪档 ([56, 6] 嘈杂环境与快语速)</option>
-      <option value="1120">1120ms · 高精精翻档 ([56, 13] 离线/长句最佳准确率)</option>
+      <option value="320" selected>320ms · 均衡流式档 ([56, 4] 官方推荐·平衡首选)</option>
+      <option value="560">560ms · 高精长句档 ([56, 7] 官方长句·高保真)</option>
+      <option value="1120">1120ms · 超高精度档 ([56, 14] 1.12s高精转录)</option>
     </select>
     <div class="range-grid" style="display: none;">
-      <input id="cadenceSlider" type="range" min="80" max="1120" step="80" value="160" />
-      <output id="cadenceReadout" for="cadenceSlider">160</output>
+      <input id="cadenceSlider" type="range" min="320" max="1120" step="80" value="320" />
+      <output id="cadenceReadout" for="cadenceSlider">320</output>
     </div>
-    <p class="hint" id="cadenceHint">官方推荐 160ms 黄金档。字幕实时流式输出，兼顾超低延迟与精准度。</p>
+    <p class="hint" id="cadenceHint">官方推荐 320ms 均衡档。字幕稳健流式输出，兼顾低延迟与精准度。</p>
 
     <!-- External API -->
     <div class="drawer-row" style="margin-top: 6px;">
