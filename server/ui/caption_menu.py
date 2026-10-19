@@ -930,10 +930,6 @@ class CaptionMenuBuilder:
         act_global.setData(0)
         self.win.audio_group.addAction(act_global)
 
-        act_refresh = self.win.audio_menu.addAction("🔄 刷新会话列表")
-        act_refresh.setData("refresh")
-        self.win.audio_group.addAction(act_refresh)
-
         try:
             from server.process_loopback import ProcessLoopbackManager
             mgr = ProcessLoopbackManager()
@@ -986,9 +982,9 @@ class CaptionMenuBuilder:
             wsl_hint.setEnabled(False)
         else:
             if active_sessions:
-                hint_act = self.win.audio_menu.addAction("💡 仅显示正在发声的应用（播放视频后自动展示）")
+                hint_act = self.win.audio_menu.addAction("💡 划入即实时刷新 · 仅显示正在发声的应用")
             else:
-                hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
+                hint_act = self.win.audio_menu.addAction("💡 划入即实时刷新 · 未出现目标请先播放声音")
             hint_act.setEnabled(False)
 
         apply_compact_menu_style(self.win.audio_menu)
@@ -996,13 +992,9 @@ class CaptionMenuBuilder:
     def _on_audio_source_changed(self, action: QAction) -> None:
         if not action:
             return
-        data = action.data()
-        if data == "refresh":
-            self._refresh_audio_menu()
-            return
         self.safe_close_menus()
         try:
-            pid = int(data)
+            pid = int(action.data())
         except (TypeError, ValueError):
             pid = 0
         name = action.text()
