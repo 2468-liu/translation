@@ -59,6 +59,25 @@ class ProcessLoopbackTests(unittest.TestCase):
         self.mgr.stop()
         self.assertFalse(self.mgr.is_running())
 
+    def test_is_self_or_internal_filters_own_app(self):
+        my_pid = os.getpid()
+        self.assertTrue(self.mgr._is_self_or_internal(my_pid, "chrome.exe"))
+        self.assertTrue(self.mgr._is_self_or_internal(99999, "TranslationDesktop.exe"))
+        self.assertTrue(self.mgr._is_self_or_internal(99999, "translationdesktop"))
+        self.assertTrue(self.mgr._is_self_or_internal(99999, "python.exe"))
+        self.assertTrue(self.mgr._is_self_or_internal(99999, "pythonw.exe"))
+        self.assertTrue(self.mgr._is_self_or_internal(99999, "audiodg.exe"))
+        self.assertFalse(self.mgr._is_self_or_internal(99999, "chrome.exe"))
+        self.assertFalse(self.mgr._is_self_or_internal(99999, "potplayer64.exe"))
+
+    def test_enumerate_sessions_excludes_self(self):
+        sessions = self.mgr.enumerate_sessions()
+        pids = [s["pid"] for s in sessions]
+        names = [s["name"].lower() for s in sessions]
+        self.assertNotIn(os.getpid(), pids)
+        self.assertFalse(any("translationdesktop" in n for n in names))
+        self.assertFalse(any("python" in n for n in names))
+
 
 if __name__ == "__main__":
     unittest.main()

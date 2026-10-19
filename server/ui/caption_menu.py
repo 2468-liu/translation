@@ -814,14 +814,66 @@ class CaptionMenuBuilder:
             _close_menu_tree(m)
         self._last_close_time = time.monotonic()
 
+    @staticmethod
+    def _get_app_display_name(raw_name: str) -> str:
+        clean = raw_name.strip()
+        lower = clean.lower()
+        stem = lower[:-4] if lower.endswith(".exe") else lower
+
+        mapping = {
+            "chrome": "Google Chrome",
+            "msedge": "Microsoft Edge",
+            "firefox": "Mozilla Firefox",
+            "brave": "Brave Browser",
+            "opera": "Opera",
+            "vivaldi": "Vivaldi",
+            "360chrome": "360极速浏览器",
+            "360se": "360安全浏览器",
+            "sogouexplorer": "搜狗浏览器",
+            "potplayer": "PotPlayer",
+            "potplayer64": "PotPlayer",
+            "vlc": "VLC Media Player",
+            "mpc-hc": "MPC-HC",
+            "mpc-hc64": "MPC-HC",
+            "mpv": "MPV Player",
+            "kmplayer": "KMPlayer",
+            "kmplayer64": "KMPlayer",
+            "wmplayer": "Windows Media Player",
+            "cloudmusic": "网易云音乐",
+            "qqmusic": "QQ音乐",
+            "kugou": "酷狗音乐",
+            "kuwo": "酷我音乐",
+            "spotify": "Spotify",
+            "foobar2000": "foobar2000",
+            "bilibili": "哔哩哔哩",
+            "douyin": "抖音",
+            "wechat": "微信",
+            "wxwork": "企业微信",
+            "dingtalk": "钉钉",
+            "feishu": "飞书",
+            "zoom": "Zoom",
+            "teams": "Microsoft Teams",
+            "discord": "Discord",
+            "telegram": "Telegram",
+        }
+        for k, v in mapping.items():
+            if stem == k or stem.startswith(k):
+                return v
+
+        if lower.endswith(".exe"):
+            return clean[:-4]
+        return clean
+
     def _refresh_audio_menu(self) -> None:
         if not hasattr(self.win, "audio_menu") or not self.win.audio_menu:
             return
         self.win.audio_menu.clear()
 
+        cur_pid = getattr(self.win, "current_audio_pid", 0)
+
         act_global = self.win.audio_menu.addAction("● 全局系统声音 (默认)")
         act_global.setCheckable(True)
-        act_global.setChecked(self.win.current_audio_pid == 0)
+        act_global.setChecked(cur_pid == 0)
         act_global.setData(0)
         self.win.audio_group.addAction(act_global)
 
@@ -836,21 +888,38 @@ class CaptionMenuBuilder:
         except Exception:
             sessions = []
 
-        if sessions:
-            sessions.sort(key=lambda s: (not s.get("is_active", False), s.get("name", "").lower()))
-            self.win.audio_menu.addSeparator()
-            for s in sessions:
+        # Filter: Exclude self, and ONLY display actively emitting audio sessions (or currently selected target PID)
+        active_sessions = []
+        for s in sessions:
+            pid = s["pid"]
+            is_active = bool(s.get("is_active", False))
+            # Must be actively emitting sound OR currently selected target PID
+            if is_active or (cur_pid > 0 and pid == cur_pid):
+                active_sessions.append(s)
+
+        self.win.audio_menu.addSeparator()
+
+        if active_sessions:
+            active_sessions.sort(key=lambda s: (not s.get("is_active", False), s.get("name", "").lower()))
+            for s in active_sessions:
                 pid = s["pid"]
-                name = s["name"]
-                is_active = s["is_active"]
-                label = f"{name} (PID: {pid})"
+                raw_name = s["name"]
+                is_active = bool(s.get("is_active", False))
+                display_name = self._get_app_display_name(raw_name)
+
                 if is_active:
-                    label += " [正在发声]"
+                    label = f"🔊 {display_name} (PID: {pid}) [正在发声]"
+                else:
+                    label = f"🔈 {display_name} (PID: {pid}) [已暂停]"
+
                 act = self.win.audio_menu.addAction(label)
                 act.setCheckable(True)
-                act.setChecked(self.win.current_audio_pid == pid)
+                act.setChecked(cur_pid == pid)
                 act.setData(pid)
                 self.win.audio_group.addAction(act)
+        else:
+            empty_act = self.win.audio_menu.addAction("🔈 (当前暂无发声应用 · 播放视频后自动显示)")
+            empty_act.setEnabled(False)
 
         self.win.audio_menu.addSeparator()
         is_linux_wsl = sys.platform != "win32" and (
@@ -863,7 +932,10 @@ class CaptionMenuBuilder:
             wsl_hint = self.win.audio_menu.addAction("💡 (Windows宿主机各进程定向捕获需在Windows原生运行)")
             wsl_hint.setEnabled(False)
         else:
-            hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
+            if active_sessions:
+                hint_act = self.win.audio_menu.addAction("💡 仅显示正在发声的应用（播放视频后自动展示）")
+            else:
+                hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
             hint_act.setEnabled(False)
 
     def _on_audio_source_changed(self, action: QAction) -> None:

@@ -531,6 +531,31 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertTrue(any("字幕功能设置" in t for t in action_texts))
         self.assertTrue(any("退出程序" in t for t in action_texts))
 
+    def test_audio_menu_filters_inactive_and_formats_names(self):
+        mock_sessions = [
+            {"pid": 4956, "name": "chrome.exe", "is_active": True},
+            {"pid": 4120, "name": "Antigravity.exe", "is_active": False},
+            {"pid": 8888, "name": "potplayer64.exe", "is_active": True},
+        ]
+        with patch("server.process_loopback.ProcessLoopbackManager.enumerate_sessions", return_value=mock_sessions):
+            self.window.menu_manager._refresh_audio_menu()
+            actions = self.window.audio_menu.actions()
+            texts = [a.text() for a in actions if a.text()]
+
+            # Must contain active sessions formatted with friendly names
+            self.assertTrue(any("Google Chrome" in t and "[正在发声]" in t for t in texts))
+            self.assertTrue(any("PotPlayer" in t and "[正在发声]" in t for t in texts))
+
+            # Must EXCLUDE inactive Antigravity
+            self.assertFalse(any("Antigravity" in t for t in texts))
+
+    def test_audio_menu_empty_shows_placeholder(self):
+        with patch("server.process_loopback.ProcessLoopbackManager.enumerate_sessions", return_value=[]):
+            self.window.menu_manager._refresh_audio_menu()
+            actions = self.window.audio_menu.actions()
+            texts = [a.text() for a in actions if a.text()]
+            self.assertTrue(any("暂无发声应用" in t for t in texts))
+
     def test_monotonic_prefix_freezing_in_window(self):
         self.window._block_by_punct = False
 

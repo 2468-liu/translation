@@ -113,7 +113,45 @@ class ProcessLoopbackManager:
         import shutil
         return bool(shutil.which("pactl") or shutil.which("pw-record") or shutil.which("parec"))
 
-    def enumerate_sessions(self, max_entries: int = 32) -> List[dict]:
+    def _is_self_or_internal(self, pid: int, name: str) -> bool:
+        if pid <= 4 or pid == os.getpid():
+            return True
+        try:
+            if hasattr(os, "getppid") and pid == os.getppid():
+                return True
+        except Exception:
+            pass
+
+        n_lower = name.lower().strip()
+        self_names = {
+            "translationdesktop.exe",
+            "translationdesktop",
+            "python.exe",
+            "pythonw.exe",
+            "python3.exe",
+            "python",
+            "python3",
+            "pytest.exe",
+            "pytest",
+            "llama-server.exe",
+            "llama-box.exe",
+            "llama-server",
+            "qwen3.exe",
+            "qwen3",
+            "ffmpeg.exe",
+            "parec",
+            "pw-record",
+            "pulseaudio",
+            "pipewire",
+            "audiodg.exe",
+            "system",
+            "idle",
+        }
+        if n_lower in self_names or n_lower.startswith("translationdesktop"):
+            return True
+        return False
+
+    def enumerate_sessions(self, max_entries: int = 32, active_only: bool = False) -> List[dict]:
         """Returns list of active audio sessions: [{'pid': int, 'name': str, 'is_active': bool}]."""
         if sys.platform == "win32":
             if not self._dll:
@@ -125,17 +163,35 @@ class ProcessLoopbackManager:
                 result = []
                 for i in range(count):
                     e = entries_arr[i]
+                    pid = int(e.pid)
+                    name = str(e.name)
+                    is_active = bool(e.isActive)
+                    if self._is_self_or_internal(pid, name):
+                        continue
+                    if active_only and not is_active:
+                        continue
                     result.append({
-                        "pid": int(e.pid),
-                        "name": str(e.name),
-                        "is_active": bool(e.isActive),
+                        "pid": pid,
+                        "name": name,
+                        "is_active": is_active,
                     })
                 return result
             except Exception as e:
                 print(f"[ProcessLoopback] EnumerateAudioSessions error: {e}")
                 return []
         else:
-            return self._enumerate_linux_sessions(max_entries)
+            raw = self._enumerate_linux_sessions(max_entries)
+            result = []
+            for s in raw:
+                pid = s["pid"]
+                name = s["name"]
+                is_active = s["is_active"]
+                if self._is_self_or_internal(pid, name):
+                    continue
+                if active_only and not is_active:
+                    continue
+                result.append(s)
+            return result
 
     def _get_linux_env(self) -> dict:
         env = dict(os.environ)
