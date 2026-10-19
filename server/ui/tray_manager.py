@@ -34,7 +34,8 @@ TRAY_MENU_STYLE = """
         color: #f3f4f6;
         border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 8px;
-        padding: 6px;
+        padding: 4px;
+        margin: 0px;
         font-size: 13px;
     }
     QMenu::item {

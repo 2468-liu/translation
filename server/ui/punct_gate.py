@@ -180,7 +180,7 @@ class CaptionDisplayBuffer:
             return self.render()
 
         now = time.monotonic()
-        dt = (now - self.last_update_ts) if self.last_update_ts > 0 else 999.0
+        dt = (now - self.last_update_ts) if self.last_update_ts != 0.0 else 999.0
 
         # 规则 1：如果上一句刚出不到 min_dwell_sec 秒，且两句合起来不超过 max_inline_chars 字 -> 同行直接拼接！
         if self.line2 and dt < self.min_dwell_sec and (len(self.line2) + len(text) <= self.max_inline_chars):
@@ -201,12 +201,12 @@ class CaptionDisplayBuffer:
         # 基于人类生理阅读速度的动态留存保护：
         # 成年人扫视基线 1.5s + 每个汉字/词 220ms 解码时间，最低留存 6.0 秒
         now = time.monotonic()
-        if self.line1 and self.line1_update_ts > 0:
+        if self.line1 and self.line1_update_ts != 0.0:
             char_count = len(self.line1.strip())
             line1_ttl = max(6.0, 1.5 + char_count * 0.22)
             if now - self.line1_update_ts > line1_ttl:
                 self.line1 = ""
-        elif self.last_update_ts > 0 and (now - self.last_update_ts > 8.0):
+        elif self.last_update_ts != 0.0 and (now - self.last_update_ts > 8.0):
             self.line1 = ""
         if self.line1 and self.line2:
             return f"{self.line1}\n{self.line2}"

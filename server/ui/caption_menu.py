@@ -16,7 +16,15 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QCursor
-from PyQt6.QtWidgets import QFileDialog, QMenu, QMessageBox, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QMessageBox,
+    QProxyStyle,
+    QStyle,
+    QWidget,
+)
 
 if TYPE_CHECKING:
     from .caption_window import QtCaptionWindow
@@ -136,6 +144,49 @@ def _is_testing_env() -> bool:
     )
 
 
+class CompactMenuStyle(QProxyStyle):
+    """Custom proxy style to guarantee zero-gap and smooth hover tracking for submenus."""
+
+    def pixelMetric(self, metric, option=None, widget=None):
+        if metric == QStyle.PixelMetric.PM_SubMenuOverlap:
+            # Return -3px so the child submenu physically overlaps 3px into the parent menu boundary,
+            # completely eliminating any invisible gaps or cursor dropouts between menus.
+            return -3
+        return super().pixelMetric(metric, option, widget)
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_Menu_SubMenuPopupDelay:
+            # 250ms tolerance delay before closing or switching submenus
+            return 250
+        if hint == QStyle.StyleHint.SH_Menu_SloppySubMenus:
+            # Enable Qt's diagonal sloppy submenu tracking triangle
+            return 1
+        return super().styleHint(hint, option, widget, returnData)
+
+
+_global_compact_menu_style: Optional[CompactMenuStyle] = None
+
+
+def apply_compact_menu_style(menu: QMenu) -> None:
+    """Apply CompactMenuStyle to menu and all of its recursive child submenus,
+    and configure the QApplication instance if available.
+    """
+    global _global_compact_menu_style
+    if _global_compact_menu_style is None:
+        _global_compact_menu_style = CompactMenuStyle()
+
+    app = QApplication.instance()
+    if app and app.style() != _global_compact_menu_style:
+        try:
+            app.setStyle(_global_compact_menu_style)
+        except Exception:
+            pass
+
+    menu.setStyle(_global_compact_menu_style)
+    for sub in menu.findChildren(QMenu):
+        sub.setStyle(_global_compact_menu_style)
+
+
 class CaptionMenuBuilder:
     """Builds and wires context menus and callbacks for QtCaptionWindow."""
 
@@ -146,20 +197,20 @@ class CaptionMenuBuilder:
 
     def build_context_menu(self) -> QMenu:
         menu = QMenu(self.win)
-        menu.setMinimumWidth(180)
-        menu.setMaximumWidth(280)
+        menu.setMinimumWidth(200)
         menu.setStyleSheet("""
             QMenu {
                 background-color: #1a1a24;
                 color: #e2e8f0;
                 border: 1px solid rgba(255, 255, 255, 0.14);
                 border-radius: 8px;
-                padding: 6px;
+                padding: 4px;
+                margin: 0px;
                 font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans CN', 'WenQuanYi Micro Hei', 'Ubuntu Sans', 'Segoe UI', sans-serif;
                 font-size: 13px;
             }
             QMenu::item {
-                padding: 6px 28px 6px 14px;
+                padding: 6px 24px 6px 14px;
                 border-radius: 4px;
             }
             QMenu::item:selected {
@@ -200,8 +251,7 @@ class CaptionMenuBuilder:
 
         # 1.1 高级切片微调 (紧凑二级菜单，文案精简，绝不翻折)
         adv_cadence_menu = menu.addMenu("⚙️ 高级切片微调")
-        adv_cadence_menu.setMinimumWidth(160)
-        adv_cadence_menu.setMaximumWidth(240)
+        adv_cadence_menu.setMinimumWidth(180)
 
         act_qwen_750 = adv_cadence_menu.addAction("Qwen3 750ms (连贯平衡)")
         act_qwen_750.setCheckable(True)
@@ -362,13 +412,13 @@ class CaptionMenuBuilder:
         exit_act = menu.addAction("退出程序")
         exit_act.triggered.connect(self.win._on_quit_app_triggered)
 
+        apply_compact_menu_style(menu)
         self.context_menu = menu
         return menu
 
     def build_tray_menu(self) -> QMenu:
         menu = QMenu()
-        menu.setMinimumWidth(180)
-        menu.setMaximumWidth(280)
+        menu.setMinimumWidth(200)
         menu.setStyleSheet(TRAY_MENU_STYLE)
 
         # 0. Primary Toggles
@@ -402,8 +452,7 @@ class CaptionMenuBuilder:
 
         # 1.1 高级切片微调 in tray
         tray_adv_menu = menu.addMenu("⚙️ 高级切片微调")
-        tray_adv_menu.setMinimumWidth(160)
-        tray_adv_menu.setMaximumWidth(240)
+        tray_adv_menu.setMinimumWidth(180)
 
         tray_act_qwen_750 = tray_adv_menu.addAction("Qwen3 750ms (连贯平衡)")
         tray_act_qwen_750.setCheckable(True)
@@ -469,6 +518,7 @@ class CaptionMenuBuilder:
         tray_exit_act = menu.addAction("退出程序")
         tray_exit_act.triggered.connect(self.win._on_quit_app_triggered)
 
+        apply_compact_menu_style(menu)
         self.tray_menu = menu
         return menu
 
@@ -512,6 +562,7 @@ class CaptionMenuBuilder:
             self.win._model_dir_act.setText(f"📁 设置模型路径 (当前: {Path(config.MODELS_DIR).name})")
 
         try:
+            apply_compact_menu_style(menu)
             show_tray_menu_native(menu, int(self.win.winId()), pos)
         finally:
             self._last_close_time = time.monotonic()
@@ -551,6 +602,7 @@ class CaptionMenuBuilder:
             self.win._tray_model_dir_act.setText(f"📁 设置模型路径 (当前: {Path(config.MODELS_DIR).name})")
 
         try:
+            apply_compact_menu_style(menu)
             show_tray_menu_native(menu, int(self.win.winId()), pos)
         finally:
             self._last_close_time = time.monotonic()
@@ -868,6 +920,7 @@ class CaptionMenuBuilder:
         if not hasattr(self.win, "audio_menu") or not self.win.audio_menu:
             return
         self.win.audio_menu.clear()
+        self.win.audio_menu.setMinimumWidth(200)
 
         cur_pid = getattr(self.win, "current_audio_pid", 0)
 
@@ -937,6 +990,8 @@ class CaptionMenuBuilder:
             else:
                 hint_act = self.win.audio_menu.addAction("💡 未出现目标应用？请先让其播放声音再打开此菜单")
             hint_act.setEnabled(False)
+
+        apply_compact_menu_style(self.win.audio_menu)
 
     def _on_audio_source_changed(self, action: QAction) -> None:
         if not action:
@@ -1114,4 +1169,6 @@ class CaptionMenuBuilder:
         current: str,
     ):
         sub = parent.addMenu(title)
+        sub.setMinimumWidth(180)
+        apply_compact_menu_style(sub)
         self._populate_lang_group(sub, group, items, current)
