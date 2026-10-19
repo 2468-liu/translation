@@ -133,51 +133,18 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
             Path.home() / "AppData" / "Local" / "nemo-speech" / "lib",
             Path.home() / ".local" / "share" / "nemo-speech" / "bin",
             Path.home() / ".local" / "share" / "nemo-speech" / "lib",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "bin",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "lib",
-            config.ROOT / "tools" / "nemo-speech" / "bin",
-            config.ROOT / "tools" / "nemo-speech" / "lib",
-            Path("D:/TranslationDesktop/tools/nemo-speech-cuda/nemo-speech-0.2.0-windows-x86_64-cuda/bin"),
-            Path("D:/TranslationDesktop/tools/nemo-speech-cuda/bin"),
-            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-windows-x86_64-cpu" / "bin",
-            config.ROOT / "tools" / "nemo-speech-cpu" / "bin",
-            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-windows-x86_64-vulkan" / "bin",
+            Path("C:/Program Files/NVIDIA/NeMoSpeech/bin"),
+            Path("C:/Program Files/NeMoSpeech/bin"),
         ])
     else:
         bin_candidates.extend([
             Path.home() / ".local" / "share" / "nemo-speech" / "lib",
             Path.home() / ".local" / "share" / "nemo-speech" / "bin",
             Path.home() / ".local" / "lib",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "lib",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-linux-x86_64-cuda" / "bin",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "lib",
-            config.ROOT / "tools" / "nemo-speech-cuda" / "bin",
-            config.ROOT / "tools" / "nemo-speech" / "lib",
-            config.ROOT / "tools" / "nemo-speech" / "bin",
             Path("/usr/local/cuda/lib64"),
-            Path("/opt/translation/tools/nemo-speech/lib"),
             Path("/usr/local/lib"),
             Path("/usr/lib"),
-            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "lib",
-            config.ROOT / "tools" / "nemo-speech-cpu" / "nemo-speech-0.2.0-linux-x86_64-cpu" / "bin",
-            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "lib",
-            config.ROOT / "tools" / "nemo-speech-vulkan" / "nemo-speech-0.2.0-linux-x86_64-vulkan" / "bin",
         ])
-
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        mp = Path(meipass)
-        bin_candidates.insert(0, mp / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
-        bin_candidates.insert(1, mp / "tools" / "nemo-speech-cuda" / "lib")
-        bin_candidates.insert(2, mp / "tools" / "nemo-speech" / "lib")
-        bin_candidates.insert(3, mp / "tools" / "nemo-speech" / "bin")
-    if getattr(sys, "frozen", False):
-        app_dir = Path(sys.executable).resolve().parent
-        bin_candidates.insert(0, app_dir / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
-        bin_candidates.insert(1, app_dir / "tools" / "nemo-speech-cuda" / "lib")
-        bin_candidates.insert(2, app_dir / "_internal" / "tools" / "nemo-speech-cuda" / "nemo-speech-0.2.0-windows-x86_64-cuda" / "bin")
-        bin_candidates.insert(3, app_dir / "tools" / "nemo-speech" / "lib")
 
     for bdir in bin_candidates:
         dll = bdir / lib_filename
@@ -210,7 +177,6 @@ def _resolve_nemo_speech_dll() -> tuple[ctypes.CDLL, str]:
                         "libggml-cuda.so",
                         "libggml-base.so",
                         "libggml-cpu.so",
-                        "libggml-vulkan.so",
                         "libggml.so",
                         "libllama.so",
                         "libnemo_speech_asr.so",
