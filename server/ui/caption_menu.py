@@ -388,14 +388,7 @@ class CaptionMenuBuilder:
         self.win._context_toggle_visibility_act = menu.addAction("隐藏字幕")
         self.win._context_toggle_visibility_act.triggered.connect(self.win._on_toggle_visibility_triggered)
 
-        # 6. Pet Widget toggle
-        self.win._show_pet_act = self.win._pet_toggle_act = menu.addAction("🐾 显示桌面挂件")
-        self.win._pet_toggle_act.setCheckable(True)
-        has_pet = bool(getattr(self.win, "pet_widget", None) and self.win.pet_widget.isVisible())
-        self.win._pet_toggle_act.setChecked(has_pet)
-        self.win._pet_toggle_act.toggled.connect(self.win._on_show_pet_toggled)
-
-        # 7. Clear Caption
+        # 6. Clear Caption
         clear_act = menu.addAction("清空当前字幕")
         clear_act.triggered.connect(self.win._on_clear_triggered)
 
@@ -542,11 +535,6 @@ class CaptionMenuBuilder:
         if getattr(self.win, "_toggle_capture_act", None):
             is_cap = getattr(self.win, "_is_capturing", True)
             self.win._toggle_capture_act.setText("⏸ 暂停识别与翻译" if is_cap else "▶ 开启识别与翻译")
-        if getattr(self.win, "_show_pet_act", None):
-            has_pet = bool(getattr(self.win, "pet_widget", None) and self.win.pet_widget.isVisible())
-            self.win._show_pet_act.blockSignals(True)
-            self.win._show_pet_act.setChecked(has_pet)
-            self.win._show_pet_act.blockSignals(False)
         if getattr(self.win, "_context_toggle_visibility_act", None):
             is_vis = self.win.isVisible() and self.win.visible
             self.win._context_toggle_visibility_act.setText("隐藏字幕" if is_vis else "显示字幕")

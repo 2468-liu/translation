@@ -30,7 +30,6 @@ class DummyCaptionWindow(QWidget):
         self.font_px = 20
         self.font_color = "#ffffff"
         self.dismiss_ms = 3000
-        self.pet_widget = None
 
         self._on_toggle_capture_triggered = MagicMock()
         self._on_rolling_two_lines_toggled = MagicMock()
@@ -39,8 +38,6 @@ class DummyCaptionWindow(QWidget):
         self._on_maximize_width_triggered = MagicMock()
         self._on_reset_width_triggered = MagicMock()
         self._on_toggle_visibility_triggered = MagicMock()
-        self._on_toggle_pet_triggered = MagicMock()
-        self._on_show_pet_toggled = MagicMock()
         self._on_clear_triggered = MagicMock()
         self.show_history_drawer = MagicMock()
 

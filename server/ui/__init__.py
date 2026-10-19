@@ -1,4 +1,4 @@
-"""UI package: Subtitle overlay, pet widget coordination, window resizing, tray manager, and topmost pinning."""
+"""UI package: Subtitle overlay, window resizing, tray manager, and topmost pinning."""
 
 from __future__ import annotations
 

@@ -83,7 +83,6 @@ from ..caption_timing import (
     _lcs_len,
 )
 from ..config import BLOCK_OUTPUT, _env_int
-from ..qt_pet_widget import DesktopPetWidget
 
 from .win32_topmost import (
     HWND_TOPMOST,
@@ -240,7 +239,7 @@ class QtCaptionWindow(QWidget):
         self._tray_icon: Optional[QSystemTrayIcon] = None
         self._tray_menu: Optional[QMenu] = None
         self._text_only_act: Optional[QAction] = None
-        self.pet_widget: Optional[DesktopPetWidget] = None
+        self.pet_widget = None
 
         # Modular Controllers
         self.fade_animator = CaptionFadeAnimator(self)
@@ -250,7 +249,6 @@ class QtCaptionWindow(QWidget):
 
         self._init_window()
         self._init_ui()
-        self._init_pet_widget()
         self._init_tray_and_menus()
         self.command_received.connect(self._handle_command)
 
@@ -431,10 +429,6 @@ class QtCaptionWindow(QWidget):
         self.menu_manager.safe_close_menus()
         QTimer.singleShot(10, self._toggle_visibility)
 
-    def _on_show_pet_toggled(self, checked: bool):
-        self.menu_manager.safe_close_menus()
-        self._toggle_pet_visibility(checked)
-
     def _on_clear_triggered(self):
         self.menu_manager.safe_close_menus()
         QTimer.singleShot(10, self.clear)
@@ -545,20 +539,6 @@ class QtCaptionWindow(QWidget):
             if hasattr(self, "_tray_menu") and self._tray_menu and not self._tray_menu.isVisible():
                 self._show_tray_menu(QCursor.pos())
 
-    def _init_pet_widget(self):
-        try:
-            self.pet_widget = DesktopPetWidget(parent=None, coordinator=self)
-            self.pet_widget.sync_text_only_state(self.text_only, notify_bubble=False)
-            cfg = config.load_desktop_config()
-            if cfg.get("show_pet", False):
-                self.pet_widget.show()
-                self.pet_widget.raise_()
-            else:
-                self.pet_widget.hide()
-        except Exception as e:
-            print(f"[QtCaptionWindow] Pet widget init error: {e}")
-            self.pet_widget = None
-
     def toggle_capture(self, from_source: str = "internal"):
         target_state = not getattr(self, "_is_capturing", True)
         self.set_capturing(target_state, from_source=from_source)
@@ -572,11 +552,7 @@ class QtCaptionWindow(QWidget):
         if getattr(self, "_tray_toggle_capture_act", None):
             self._tray_toggle_capture_act.setText("⏸ 暂停识别与翻译" if self._is_capturing else "▶ 开启识别与翻译")
 
-        # 2. Synchronize Pet Widget (Child 2)
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_capture_state(self._is_capturing, notify_bubble=(from_source != "init"))
-
-        # 3. Update Status and notify Backend pipeline
+        # 2. Update Status and notify Backend pipeline
         if self._is_capturing:
             self.set_status(self.source_lang)
         else:
@@ -601,33 +577,11 @@ class QtCaptionWindow(QWidget):
         if getattr(self, "_context_toggle_visibility_act", None):
             self._context_toggle_visibility_act.setText("隐藏字幕" if is_vis else "显示字幕")
 
-        # Synchronize Pet Widget (Child 2)
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_caption_visibility(is_vis, notify_bubble=(from_source == "pet"))
-
     def _toggle_visibility(self):
         self.toggle_caption_visibility(from_source="tray")
 
-    def _toggle_pet_visibility(self, checked: bool):
-        if getattr(self, "pet_widget", None):
-            if checked:
-                self.pet_widget.show()
-                self.pet_widget.raise_()
-            else:
-                self.pet_widget.hide()
-        cfg = config.load_desktop_config()
-        cfg["show_pet"] = bool(checked)
-        config.save_desktop_config(cfg)
-        if getattr(self, "_show_pet_act", None) and self._show_pet_act.isChecked() != checked:
-            self._show_pet_act.blockSignals(True)
-            self._show_pet_act.setChecked(checked)
-            self._show_pet_act.blockSignals(False)
-
     def _quit_app(self):
         self.hide()
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.close()
-            self.pet_widget.deleteLater()
         app = QApplication.instance()
         if app:
             app.quit()
@@ -653,14 +607,7 @@ class QtCaptionWindow(QWidget):
                 self._text_only_act.setChecked(self.text_only)
                 self._text_only_act.blockSignals(False)
 
-        # 4. Synchronize Child 3: Desktop Pet Widget
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_text_only_state(
-                self.text_only,
-                notify_bubble=(from_source in ("caption_box", "tray", "pet")),
-            )
-
-        # 5. Visual styling & state broadcast
+        # 4. Visual styling & state broadcast
         self._strip_frame()
         self._broadcast_state()
         self.update()
@@ -821,9 +768,6 @@ class QtCaptionWindow(QWidget):
             except Exception:
                 pass
         self._paint()
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.show()
-            self.pet_widget.raise_()
         self.command_received.emit("toast", "程序已在运行中", time.time(), time.time(), False)
         if self._tray_icon and self._tray_icon.isVisible() and self._tray_icon.supportsMessages():
             try:
@@ -846,8 +790,6 @@ class QtCaptionWindow(QWidget):
             self.setWindowOpacity(1.0)
         if ctypes and sys.platform == "win32":
             ctypes.windll.user32.ShowWindow(self.hwnd(), 4)  # SW_SHOWNOACTIVATE
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_caption_visibility(True)
         if getattr(self, "_toggle_visibility_act", None):
             self._toggle_visibility_act.setText("隐藏字幕")
         self._strip_frame()
@@ -867,8 +809,6 @@ class QtCaptionWindow(QWidget):
         super().hide()
         if ctypes and sys.platform == "win32":
             ctypes.windll.user32.ShowWindow(self.hwnd(), 0)  # SW_HIDE
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_caption_visibility(False)
         if getattr(self, "_toggle_visibility_act", None):
             self._toggle_visibility_act.setText("显示字幕")
         self._broadcast_state()
@@ -909,8 +849,6 @@ class QtCaptionWindow(QWidget):
         super().hide()
         if ctypes and sys.platform == "win32":
             ctypes.windll.user32.ShowWindow(self.hwnd(), 0)  # SW_HIDE
-        if getattr(self, "pet_widget", None):
-            self.pet_widget.sync_caption_visibility(False)
         if getattr(self, "_toggle_visibility_act", None):
             self._toggle_visibility_act.setText("显示字幕")
         self._broadcast_state()
@@ -1497,9 +1435,6 @@ class QtCaptionWindow(QWidget):
             self.update()
         elif kind == "raise":
             self.activate_existing()
-        elif kind in ("pulse", "audio_active"):
-            if getattr(self, "pet_widget", None):
-                self.pet_widget.sync_audio_activity(bool(value))
 
 
 

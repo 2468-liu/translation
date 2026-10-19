@@ -82,12 +82,10 @@ class TestSingleInstanceIpcCriterion:
         server.close()
         QLocalServer.removeServer(test_server_name)
 
-    def test_activate_existing_restores_window_visibility_and_pet(self, qtbot):
-        """Calling activate_existing() on QtCaptionWindow must restore window and pet to foreground."""
+    def test_activate_existing_restores_window_visibility(self, qtbot):
+        """Calling activate_existing() on QtCaptionWindow must restore window to foreground."""
         window = QtCaptionWindow(scale=1.0)
         qtbot.addWidget(window)
-        if window.pet_widget:
-            qtbot.addWidget(window.pet_widget)
 
         # Put window into hidden state
         window.hide()
@@ -100,12 +98,8 @@ class TestSingleInstanceIpcCriterion:
         assert window.closed is False
         assert window.visible is True
         assert window.isVisible() is True
-        if window.pet_widget:
-            assert window.pet_widget.isVisible() is True
 
         window.close()
-        if window.pet_widget:
-            window.pet_widget.close()
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows subprocess test")
     def test_secondary_instance_detection_latency_under_500ms(self):

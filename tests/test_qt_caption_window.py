@@ -498,7 +498,7 @@ class QtCaptionWindowTests(unittest.TestCase):
         self.assertTrue(any("目标语言" in t for t in top_action_texts), "Missing target lang menu")
         self.assertTrue(any("字幕外观设置" in t for t in top_action_texts), "Missing appearance menu")
         self.assertTrue(any("隐藏字幕" in t for t in top_action_texts), "Missing hide caption")
-        self.assertTrue(any("桌面挂件" in t for t in top_action_texts), "Missing pet toggle")
+        self.assertFalse(any("桌面挂件" in t for t in top_action_texts), "Pet toggle should be completely removed")
         self.assertTrue(any("清空当前字幕" in t for t in top_action_texts), "Missing clear caption")
         self.assertTrue(any("设置模型路径" in t for t in top_action_texts), "Missing model path")
         self.assertTrue(any("查看对话历史记录" in t for t in top_action_texts), "Missing peek history")
