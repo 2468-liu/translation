@@ -30,12 +30,12 @@ elif command -v llama-server &> /dev/null; then
     LLAMA_EXE="$(command -v llama-server)"
 elif [ -f "$HOME/.local/bin/llama" ]; then
     LLAMA_EXE="$HOME/.local/bin/llama"
+elif [ -f "/usr/local/bin/llama" ]; then
+    LLAMA_EXE="/usr/local/bin/llama"
 elif [ -f "$ROOT/tools/llama-server/llama-server" ]; then
     LLAMA_EXE="$ROOT/tools/llama-server/llama-server"
 elif [ -f "$ROOT/tools/llama" ]; then
     LLAMA_EXE="$ROOT/tools/llama"
-elif [ -f "/usr/local/bin/llama" ]; then
-    LLAMA_EXE="/usr/local/bin/llama"
 fi
 
 if [ -z "$LLAMA_EXE" ] || [ ! -x "$LLAMA_EXE" ]; then

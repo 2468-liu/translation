@@ -308,8 +308,6 @@ def _find_llama_server_exe() -> Path | None:
     if custom and Path(custom).exists():
         return Path(custom)
 
-    exe_names = ["llama.exe", "llama-server.exe", "llama", "llama-server"] if sys.platform == "win32" else ["llama", "llama-server"]
-
     # Ensure ~/.local/bin and ~/.llama-app are in PATH on Linux
     if sys.platform != "win32":
         for p in (Path.home() / ".local" / "bin", Path.home() / ".llama-app"):
@@ -317,50 +315,75 @@ def _find_llama_server_exe() -> Path | None:
             if ps not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = ps + os.pathsep + os.environ.get("PATH", "")
 
-    # 1. Check direct candidates in standard folders (instantaneous O(1) checks without glob)
-    direct_candidates = [
-        Path.home() / ".local" / "bin" / ("llama.exe" if sys.platform == "win32" else "llama"),
-        Path.home() / ".local" / "bin" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
-        Path.home() / ".llama-app" / ("llama.exe" if sys.platform == "win32" else "llama"),
-        Path.home() / ".llama-app" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+    import shutil
+
+    # 1. Official llama.exe / llama CLI (FIRST PRIORITY / PREFERRED ENGINE)
+    official_cli_name = "llama.exe" if sys.platform == "win32" else "llama"
+    which_cli = shutil.which(official_cli_name)
+    if which_cli and Path(which_cli).exists():
+        return Path(which_cli)
+
+    cli_direct_candidates = [
+        Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps" / "llama.exe",
+        Path.home() / ".local" / "bin" / official_cli_name,
+        Path.home() / ".llama-app" / official_cli_name,
         Path("/usr/local/bin/llama"),
-        Path("/usr/local/bin/llama-server"),
-        ROOT / "tools" / "llama-server" / ("llama.exe" if sys.platform == "win32" else "llama"),
-        ROOT / "tools" / "llama-server" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+        Path("/usr/bin/llama"),
     ]
-    for cand in direct_candidates:
+    for cand in cli_direct_candidates:
         if cand.exists() and cand.is_file():
             return cand
 
-    # 2. Check system PATH (standard on Linux/Ubuntu and official Windows llama install)
-    import shutil
-    for name in exe_names:
-        which_path = shutil.which(name)
-        if which_path and Path(which_path).exists():
-            return Path(which_path)
+    # 2. Standalone llama-server in system PATH or user bins (SECOND PRIORITY)
+    server_name = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    which_server = shutil.which(server_name)
+    if which_server and Path(which_server).exists():
+        return Path(which_server)
 
-    # 3. Check LM Studio extensions (PRIORITY: 2.53.0 stable engine for mmproj, then latest CUDA12)
+    server_direct_candidates = [
+        Path.home() / ".local" / "bin" / server_name,
+        Path.home() / ".llama-app" / server_name,
+        Path("/usr/local/bin/llama-server"),
+        Path("/usr/bin/llama-server"),
+    ]
+    for cand in server_direct_candidates:
+        if cand.exists() and cand.is_file():
+            return cand
+
+    # 3. LM Studio extensions backends (THIRD PRIORITY: newest CUDA 12 backend)
     userprofile = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~"))
     lm_backends = userprofile / ".lmstudio" / "extensions" / "backends"
     if not lm_backends.exists():
         lm_backends = Path(os.path.expanduser("~/.cache/lm-studio/extensions/backends"))
 
     if lm_backends.exists():
-        p53 = lm_backends / "llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.53.0" / "llama-server.exe"
-        if p53.exists():
-            return p53
-        for name in exe_names:
-            candidates = sorted(
-                lm_backends.glob(f"*{name}*"),
-                key=lambda p: p.name,
-                reverse=True,
-            )
-            for cand in candidates:
-                if cand.is_file():
-                    return cand
-                sub_exe = cand / name
-                if sub_exe.exists():
-                    return sub_exe
+        import re
+
+        def _parse_version(name: str) -> tuple[int, ...]:
+            m = re.findall(r"\d+", name)
+            return tuple(int(x) for x in m) if m else (0,)
+
+        backend_dirs = [d for d in lm_backends.iterdir() if d.is_dir() and "llama.cpp" in d.name.lower()]
+
+        def _backend_sort_key(d: Path):
+            is_cuda = 1 if "cuda" in d.name.lower() else 0
+            return (is_cuda, _parse_version(d.name))
+
+        backend_dirs.sort(key=_backend_sort_key, reverse=True)
+        for b_dir in backend_dirs:
+            for s_name in ("llama-server.exe", "llama-server", "llama.exe", "llama"):
+                target = b_dir / s_name
+                if target.exists() and target.is_file():
+                    return target
+
+    # 4. Optional fallback to tools folder if physically present
+    tools_candidates = [
+        ROOT / "tools" / "llama-server" / ("llama.exe" if sys.platform == "win32" else "llama"),
+        ROOT / "tools" / "llama-server" / ("llama-server.exe" if sys.platform == "win32" else "llama-server"),
+    ]
+    for cand in tools_candidates:
+        if cand.exists() and cand.is_file():
+            return cand
 
     return None
 
